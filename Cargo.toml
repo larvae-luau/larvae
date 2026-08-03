@@ -15,6 +15,7 @@ include = [
     "LICENSE.md",
     "CHANGELOG.md",
     "larvae.schema.json",
+    "assets/larvae.png",
 ]
 
 [dependencies]
@@ -35,6 +36,7 @@ toml = { version = "0.8", default-features = false, features = ["parse"] }
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 walkdir = "2"
 xxhash-rust = { version = "0.8.18", features = ["xxh3"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [dev-dependencies]
 tempfile = "3"
@@ -67,6 +69,14 @@ opt-level = "z"
 [profile.release.package.self-replace]
 opt-level = "z"
 [profile.release.package.semver]
+opt-level = "z"
+[profile.release.package.zip]
+opt-level = "z"
+[profile.release.package.flate2]
+opt-level = "z"
+[profile.release.package.miniz_oxide]
+opt-level = "z"
+[profile.release.package.zlib-rs]
 opt-level = "z"
 
 [workspace]

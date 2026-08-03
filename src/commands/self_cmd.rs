@@ -108,22 +108,35 @@ fn update(force: bool) -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    // Release assets are named larvae-{os}-{arch}[.exe] from std::env::consts
-    let asset_name = format!(
-        "larvae-{}-{}{}",
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-        std::env::consts::EXE_SUFFIX
-    );
+    /*
+    Release assets are named larvae-{os}-{arch} from std::env::consts, zipped
+    with the archive taking the binary's name. A bare uncompressed asset under
+    the same stem is still accepted so an older release stays installable.
+    */
+    let stem = format!("larvae-{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+    let zip_name = format!("{stem}.zip");
+    let bare_name = format!("{stem}{}", std::env::consts::EXE_SUFFIX);
 
-    let Some(asset) = release.assets.iter().find(|a| a.name == asset_name) else {
-        bail!("release v{latest} has no asset named {asset_name}");
+    let Some(asset) = release
+        .assets
+        .iter()
+        .find(|a| a.name == zip_name)
+        .or_else(|| release.assets.iter().find(|a| a.name == bare_name))
+    else {
+        bail!("release v{latest} has no asset named {zip_name}");
     };
 
     eprintln!("Downloading {} v{latest}", asset.name);
 
-    let bytes = http::get_bytes(&asset.browser_download_url)?;
-    let staged = std::env::temp_dir().join(&asset_name);
+    let downloaded = http::get_bytes(&asset.browser_download_url)?;
+
+    let bytes = if asset.name == zip_name {
+        unzip_binary(&downloaded).with_context(|| format!("failed to unpack {}", asset.name))?
+    } else {
+        downloaded
+    };
+
+    let staged = std::env::temp_dir().join(&bare_name);
 
     std::fs::write(&staged, &bytes)
         .with_context(|| format!("failed to stage {}", staged.display()))?;
@@ -140,6 +153,72 @@ fn update(force: bool) -> Result<ExitCode> {
     ui::print_success(&format!("Updated larvae v{current} -> v{latest}"));
 
     Ok(ExitCode::SUCCESS)
+}
+
+/*
+Pull the binary out of a release archive. The workflow packs exactly one file,
+named for the executable rather than the asset, so we look for that name and
+fall back to the only file present. Entry paths are never used on disk, only
+their base name is read, so a crafted `../` path in the archive goes nowhere.
+*/
+fn unzip_binary(archive: &[u8]) -> Result<Vec<u8>> {
+    use std::io::Read;
+
+    /// A release binary is a few megabytes, anything near this is not one
+    const MAX_UNPACKED: u64 = 256 * 1024 * 1024;
+
+    let want = format!("larvae{}", std::env::consts::EXE_SUFFIX);
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(archive))
+        .context("not a readable zip archive")?;
+
+    let mut files = Vec::new();
+    let mut exact = None;
+
+    for i in 0..zip.len() {
+        let entry = zip
+            .by_index(i)
+            .with_context(|| format!("entry {i} is unreadable"))?;
+
+        if !entry.is_file() {
+            continue;
+        }
+
+        let base = entry.name().rsplit(['/', '\\']).next().unwrap_or_default();
+
+        if base == want {
+            exact = Some(i);
+        }
+
+        files.push(i);
+    }
+
+    let index = match (exact, files.as_slice()) {
+        (Some(i), _) => i,
+
+        (None, [only]) => *only,
+
+        (None, []) => bail!("the archive holds no files"),
+
+        (None, _) => bail!("the archive has no entry named {want}"),
+    };
+
+    let mut entry = zip.by_index(index)?;
+
+    if entry.size() > MAX_UNPACKED {
+        bail!(
+            "{} unpacks to {} bytes, refusing",
+            entry.name(),
+            entry.size()
+        );
+    }
+
+    let mut out = Vec::with_capacity(entry.size() as usize);
+
+    entry
+        .read_to_end(&mut out)
+        .context("failed to decompress the archive")?;
+
+    Ok(out)
 }
 
 fn uninstall() -> Result<ExitCode> {
@@ -262,6 +341,67 @@ fn windows_path_add(bin_dir: &Path) -> anyhow::Result<bool> {
     broadcast_environment_change();
 
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Cursor, Write};
+
+    /// A deflated archive holding each (name, contents) pair
+    fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+
+        for (name, body) in entries {
+            writer.start_file(*name, options).unwrap();
+            writer.write_all(body).unwrap();
+        }
+
+        writer.finish().unwrap().into_inner()
+    }
+
+    fn exe_name() -> String {
+        format!("larvae{}", std::env::consts::EXE_SUFFIX)
+    }
+
+    #[test]
+    fn the_named_entry_wins_over_its_neighbours() {
+        let archive = zip_of(&[
+            ("README.md", b"docs"),
+            (&exe_name(), b"binary"),
+            ("LICENSE.md", b"mit"),
+        ]);
+
+        assert_eq!(unzip_binary(&archive).unwrap(), b"binary");
+    }
+
+    #[test]
+    fn a_nested_path_is_matched_on_its_base_name() {
+        let archive = zip_of(&[(&format!("larvae-1.0/{}", exe_name()), b"binary")]);
+
+        assert_eq!(unzip_binary(&archive).unwrap(), b"binary");
+    }
+
+    #[test]
+    fn a_lone_file_is_taken_whatever_it_is_called() {
+        let archive = zip_of(&[("some-other-name", b"binary")]);
+
+        assert_eq!(unzip_binary(&archive).unwrap(), b"binary");
+    }
+
+    #[test]
+    fn an_ambiguous_archive_is_an_error() {
+        let archive = zip_of(&[("one", b"a"), ("two", b"b")]);
+
+        assert!(unzip_binary(&archive).is_err());
+    }
+
+    #[test]
+    fn junk_is_not_an_archive() {
+        assert!(unzip_binary(b"not a zip at all").is_err());
+    }
 }
 
 /// Tell running processes the environment moved, without it only a logout works
