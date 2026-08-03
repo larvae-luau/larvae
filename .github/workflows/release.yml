@@ -1,0 +1,142 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and publish
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Cheap and first: a tag that disagrees with Cargo.toml would publish the
+  # wrong version to crates.io, where it cannot be taken back.
+  verify:
+    name: Verify the tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: tag
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag || github.ref_name }}"
+          VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "tag $TAG does not match Cargo.toml version $VERSION" >&2
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.asset }}
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # asset is what `self update` looks for, it is larvae-{os}-{arch}
+          # spelled exactly as std::env::consts reports them at runtime
+          - asset: larvae-linux-x86_64
+            target: x86_64-unknown-linux-musl
+            runs-on: ubuntu-latest
+          - asset: larvae-linux-aarch64
+            target: aarch64-unknown-linux-musl
+            runs-on: ubuntu-24.04-arm
+          - asset: larvae-macos-x86_64
+            target: x86_64-apple-darwin
+            runs-on: macos-latest
+          - asset: larvae-macos-aarch64
+            target: aarch64-apple-darwin
+            runs-on: macos-latest
+          - asset: larvae-windows-x86_64
+            target: x86_64-pc-windows-msvc
+            runs-on: windows-latest
+          - asset: larvae-windows-aarch64
+            target: aarch64-pc-windows-msvc
+            runs-on: windows-latest
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # musl links statically, so one linux binary runs on any distro
+      - name: musl toolchain
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # The archive takes the asset name, the binary inside keeps its own, so
+      # `self update` knows what to pull out no matter which one it downloaded.
+      - name: Package
+        if: runner.os != 'Windows'
+        run: zip -j -9 "${{ matrix.asset }}.zip" "target/${{ matrix.target }}/release/larvae"
+
+      - name: Package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path "target\${{ matrix.target }}\release\larvae.exe" -DestinationPath "${{ matrix.asset }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}.zip
+          if-no-files-found: error
+
+  release:
+    name: GitHub release
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.verify.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "$TAG" --generate-notes
+          fi
+
+          gh release upload "$TAG" dist/*.zip --clobber
+
+  crates:
+    name: Publish to crates.io
+    needs: [verify, release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo publish --locked --token "$CARGO_REGISTRY_TOKEN"
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_SECRET }}
