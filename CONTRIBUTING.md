@@ -101,7 +101,7 @@ directory to open.
 | `src/project/` | Rojo project files and `.luaurc` |
 | `src/rules/` | builtin transforms, darklua parity in one folder and ours in the other |
 | `src/rules/edits.rs` | the edit model and the splice every transform ends up in |
-| `src/config/` | one file per table in `coldluau.toml` |
+| `src/config/` | one file per table in `larvae.toml` |
 | `src/pipeline/` | discovery, the parallel loop, writing output |
 | `src/commands/` | one file per CLI command |
 | `src/ui.rs` | all theming, the brand color lives here and nowhere else |
@@ -121,7 +121,7 @@ comments explain the reasoning where it is not obvious.
 
 Rules live in `src/rules/`. darklua parity rules go in `darklua/` and ours go
 in `native/`. A new one needs four things, the implementation, an entry in
-`RulesConfig`, and an entry in `coldluau.schema.json` so editors know about
+`RulesConfig`, and an entry in `larvae.schema.json` so editors know about
 it. Add a test in `tests/e2e_rules.rs` showing the before and after.
 
 Register it in that module's `wants` and `apply`. `wants` decides whether a
@@ -154,6 +154,6 @@ clean error, never a stack overflow.
 ## Reporting a bug
 
 The most useful report is a small Luau file plus the config that mishandles
-it, and what you expected instead. If coldluau emitted a require that fails at
+it, and what you expected instead. If larvae emitted a require that fails at
 runtime, say which container the requiring script lives in, that detail is
 usually the whole answer.

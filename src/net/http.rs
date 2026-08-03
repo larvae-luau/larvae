@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result, bail};
 
-const USER_AGENT: &str = concat!("coldluau/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("larvae/", env!("CARGO_PKG_VERSION"));
 
 fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()

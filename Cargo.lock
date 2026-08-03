@@ -146,32 +146,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
-name = "coldluau"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "dirs",
- "globset",
- "json5",
- "notify-debouncer-full",
- "rayon",
- "regex",
- "self-replace",
- "semver",
- "serde",
- "serde_json",
- "tempfile",
- "terminal_size",
- "toml",
- "ureq",
- "walkdir",
- "windows-sys 0.61.2",
- "winreg",
- "xxhash-rust",
-]
-
-[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -516,6 +490,32 @@ checksum = "07293a4e297ac234359b510362495713f75ea345d5307140414f20c69ffeb087"
 dependencies = [
  "bitflags",
  "libc",
+]
+
+[[package]]
+name = "larvae"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "dirs",
+ "globset",
+ "json5",
+ "notify-debouncer-full",
+ "rayon",
+ "regex",
+ "self-replace",
+ "semver",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "terminal_size",
+ "toml",
+ "ureq",
+ "walkdir",
+ "windows-sys 0.61.2",
+ "winreg",
+ "xxhash-rust",
 ]
 
 [[package]]

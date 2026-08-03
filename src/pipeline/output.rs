@@ -13,7 +13,7 @@ pub(super) fn write_atomic(dest: &Path, bytes: &[u8]) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
 
-    let tmp = dest.with_extension("coldluau-tmp");
+    let tmp = dest.with_extension("larvae-tmp");
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, dest)?;
 
@@ -25,7 +25,7 @@ pub(super) fn copy_atomic(from: &Path, dest: &Path) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
 
-    let tmp = dest.with_extension("coldluau-tmp");
+    let tmp = dest.with_extension("larvae-tmp");
     std::fs::copy(from, &tmp)?;
     std::fs::rename(&tmp, dest)?;
 

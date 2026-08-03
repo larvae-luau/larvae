@@ -1,7 +1,7 @@
 //! [defines], compile time constants
 
-use coldluau::config::Config;
-use coldluau::pipeline;
+use larvae::config::Config;
+use larvae::pipeline;
 
 mod common;
 use common::*;
@@ -10,7 +10,7 @@ fn project(config: &str, source: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
 
-    write(root, "coldluau.toml", config);
+    write(root, "larvae.toml", config);
     write(root, "src/main.luau", source);
 
     dir
@@ -122,7 +122,7 @@ fn a_name_luau_cannot_hold_fails_at_load() {
 
 #[test]
 fn defines_count_as_a_rule_in_the_summary() {
-    use coldluau::rules::Family;
+    use larvae::rules::Family;
 
     let tmp = project(
         &format!("{BASE}\n[defines]\nDEBUG = false\n"),

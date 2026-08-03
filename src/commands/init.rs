@@ -1,4 +1,4 @@
-//! `coldluau init`, scaffold a starter coldluau.toml
+//! `larvae init`, scaffold a starter larvae.toml
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -8,10 +8,10 @@ use anyhow::{Result, bail};
 use crate::ui;
 
 pub fn run(root: &Path) -> Result<ExitCode> {
-    let path = root.join("coldluau.toml");
+    let path = root.join("larvae.toml");
 
     if path.exists() {
-        bail!("coldluau.toml already exists");
+        bail!("larvae.toml already exists");
     }
 
     let project = crate::project::rojo::find_project(root, None)
@@ -26,7 +26,7 @@ pub fn run(root: &Path) -> Result<ExitCode> {
 
     let mut template = format!(
         "{schema}\n\
-         # coldluau configuration, run `coldluau schema` for editor completion.\n\
+         # larvae configuration, run `larvae schema` for editor completion.\n\
          {project_note}",
         schema = crate::commands::schema::directive()
     );
@@ -69,7 +69,7 @@ fn report(found: &crate::commands::detect::Detected) {
 
     if !found.luaurc_aliases.is_empty() {
         eprintln!(
-            "  .luaurc already defines @{}, coldluau uses those as they are",
+            "  .luaurc already defines @{}, larvae uses those as they are",
             found.luaurc_aliases.join(", @")
         );
     }
@@ -90,8 +90,8 @@ fn slashed(path: &Path) -> String {
         .join("/")
 }
 
-/// Entries coldluau's outputs need ignored
-const IGNORE_ENTRIES: [&str; 2] = [".coldluau/", "dist/"];
+/// Entries larvae's outputs need ignored
+const IGNORE_ENTRIES: [&str; 2] = [".larvae/", "dist/"];
 
 /// Keep the output dirs ignored, append to an existing .gitignore or offer to create one
 fn ensure_gitignore(root: &Path) -> Result<()> {
@@ -122,7 +122,7 @@ fn ensure_gitignore(root: &Path) -> Result<()> {
         std::fs::write(&path, out)?;
         ui::print_success(&format!("Added {} to .gitignore", missing.join(" and ")));
     } else if ui::confirm(
-        "No .gitignore found. Create one ignoring .coldluau/ and dist/?",
+        "No .gitignore found. Create one ignoring .larvae/ and dist/?",
         true,
     ) {
         std::fs::write(&path, format!("{}\n", IGNORE_ENTRIES.join("\n")))?;
@@ -148,7 +148,7 @@ mod tests {
     fn gitignore_matching() {
         assert!(ignores("dist/\n", "dist/"));
         assert!(ignores("/dist\n", "dist/"));
-        assert!(ignores("target\n.coldluau\n", ".coldluau/"));
+        assert!(ignores("target\n.larvae\n", ".larvae/"));
         assert!(!ignores("distros/\n", "dist/"));
         assert!(!ignores("", "dist/"));
     }

@@ -37,7 +37,7 @@ pub fn mount_table(
             Some(dm) => mounts.push(Mount { fs: normalize(&root.join(fs_rel)), dm }),
 
             None => diags.push(Diag::error(
-                Path::new("coldluau.toml"),
+                Path::new("larvae.toml"),
                 format!("[requires.mounts] \"{fs_rel}\" = \"{dm_value}\": value must be an @game/... path"),
             )),
         }
@@ -145,7 +145,7 @@ pub fn epoch(
         epoch.add_file(&root.join(rel));
     }
 
-    let cfg_path = root.join("coldluau.toml");
+    let cfg_path = root.join("larvae.toml");
 
     if cfg_path.exists() {
         epoch.add_file(&cfg_path);

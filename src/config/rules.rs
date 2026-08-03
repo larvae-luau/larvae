@@ -1,4 +1,4 @@
-//! The [rules] table, darklua's names verbatim plus coldluau's own
+//! The [rules] table, darklua's names verbatim plus larvae's own
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -23,7 +23,7 @@ pub struct RulesConfig {
     #[serde(default)]
     pub append_text_comment: Option<AppendTextComment>,
 
-    /// coldluau only, ex: "strict" writes `--!strict` at the top
+    /// larvae only, ex: "strict" writes `--!strict` at the top
     #[serde(default)]
     pub add_luau_directive: Option<String>,
 
@@ -110,7 +110,7 @@ pub struct RulesConfig {
     #[serde(default)]
     pub rename_variables: bool,
 
-    // --- coldluau only, no darklua rule does any of these ---
+    // --- larvae only, no darklua rule does any of these ---
     /// Statement position calls to drop, ex: ["print", "debug.profilebegin"]
     #[serde(default)]
     pub remove_calls: Option<RemoveCalls>,
@@ -306,7 +306,7 @@ fn default_location() -> String {
     "start".to_string()
 }
 
-/// Where a rule name lives in coldluau
+/// Where a rule name lives in larvae
 pub enum RuleStatus {
     /// Works today
     Done,
@@ -319,14 +319,14 @@ pub enum RuleStatus {
 }
 
 /*
-Every darklua rule name (32 of them) plus coldluau's own, so a ported
+Every darklua rule name (32 of them) plus larvae's own, so a ported
 darklua config gets a useful message rather than "unknown key"
 */
 pub fn rule_status(name: &str) -> Option<RuleStatus> {
     use RuleStatus::*;
 
     Some(match name {
-        // coldluau rules
+        // larvae rules
         "const_requires"
         | "remove_comments"
         | "append_text_comment"
@@ -364,7 +364,7 @@ pub fn rule_status(name: &str) -> Option<RuleStatus> {
         | "remove_unused_variable"
         | "rename_variables"
         | "remove_unused_while" => Done,
-        // not rules in coldluau
+        // not rules in larvae
         "convert_require" => Elsewhere("the [requires] section handles requires"),
 
         "inject_global_value" => Elsewhere("use [defines] instead"),

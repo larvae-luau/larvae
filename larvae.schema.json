@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://raw.githubusercontent.com/coldluau/cli/master/coldluau.schema.json",
-  "title": "coldluau.toml",
-  "description": "Configuration for coldluau, a fast Luau preprocessor: aliases to Roblox-native string requires, and more.",
+  "$id": "https://raw.githubusercontent.com/larvae-luau/larvae/master/larvae.schema.json",
+  "title": "larvae.toml",
+  "description": "Configuration for larvae, one toolchain for all of Luau: transforms today, formatting and linting next.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -147,7 +147,7 @@
         },
         "cache_dir": {
           "type": "string",
-          "default": ".coldluau",
+          "default": ".larvae",
           "description": "Cache directory; add to .gitignore."
         }
       }
@@ -243,7 +243,7 @@
       }
     },
     "rojo": {
-      "description": "Rojo project integration: auto-derived mounts and the derived build project in .coldluau/.",
+      "description": "Rojo project integration: auto-derived mounts and the derived build project in .larvae/.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -284,7 +284,7 @@
         "const_requires": {
           "type": "boolean",
           "default": false,
-          "description": "coldluau only. Turn `local X = require(...)` into `const X = require(...)`. Skips multi bindings and annotated locals. Implemented."
+          "description": "larvae only. Turn `local X = require(...)` into `const X = require(...)`. Skips multi bindings and annotated locals. Implemented."
         },
         "remove_comments": {
           "description": "Remove comments. `true`, or a table with `except` regexes for comments to keep (defaults to [\"^--!\"] so Luau directives survive; set [] to match darklua). Implemented.",
@@ -333,7 +333,7 @@
         },
         "add_luau_directive": {
           "type": "string",
-          "description": "coldluau only. Write a Luau directive at the top of every file, ex: \"strict\" emits --!strict. An existing directive of the same family is left alone. Implemented.",
+          "description": "larvae only. Write a Luau directive at the top of every file, ex: \"strict\" emits --!strict. An existing directive of the same family is left alone. Implemented.",
           "examples": [
             "strict",
             "nonstrict",
@@ -342,7 +342,7 @@
           ]
         },
         "remove_calls": {
-          "description": "coldluau only. Remove statement position calls to the named functions, ex: print or debug.profilebegin. Names may be dotted paths; method calls and computed callees are never matched, and a call whose value is used is left alone. Implemented.",
+          "description": "larvae only. Remove statement position calls to the named functions, ex: print or debug.profilebegin. Names may be dotted paths; method calls and computed callees are never matched, and a call whose value is used is left alone. Implemented.",
           "oneOf": [
             {
               "type": "array",
@@ -375,16 +375,16 @@
         "use_get_service": {
           "type": "boolean",
           "default": false,
-          "description": "coldluau only. Rewrite `game.Players` into `game:GetService(\"Players\")` for the known services, which keeps working when a service is renamed or not created yet. A local named game defeats it. Implemented."
+          "description": "larvae only. Rewrite `game.Players` into `game:GetService(\"Players\")` for the known services, which keeps working when a service is renamed or not created yet. A local named game defeats it. Implemented."
         },
         "dedupe_requires": {
           "type": "boolean",
           "default": false,
-          "description": "coldluau only. Top level `local X = require(...)` statements that resolve to the same module collapse, the later ones become aliases of the first. Skips const, annotated and multi binding locals. Implemented."
+          "description": "larvae only. Top level `local X = require(...)` statements that resolve to the same module collapse, the later ones become aliases of the first. Skips const, annotated and multi binding locals. Implemented."
         },
         "inject_module_path": {
           "type": "string",
-          "description": "coldluau only. Name of a constant defined at the top of every file that references it, holding that file's DataModel path, ex: \"@game/ReplicatedStorage/shared/util\". Warns when no mount covers the file. Implemented.",
+          "description": "larvae only. Name of a constant defined at the top of every file that references it, holding that file's DataModel path, ex: \"@game/ReplicatedStorage/shared/util\". Warns when no mount covers the file. Implemented.",
           "examples": [
             "MODULE_PATH"
           ]
@@ -392,7 +392,7 @@
         "freeze_module": {
           "type": "boolean",
           "default": false,
-          "description": "coldluau only. Wrap a module's returned table in `table.freeze`, only when nothing can write to it, so field writes, rebinds and metatable patterns turn the rule off for that file. Implemented."
+          "description": "larvae only. Wrap a module's returned table in `table.freeze`, only when nothing can write to it, so field writes, rebinds and metatable patterns turn the rule off for that file. Implemented."
         },
         "compute_expression": {
           "type": "boolean",
@@ -639,7 +639,7 @@
         },
         "modules_identifier": {
           "type": "string",
-          "default": "__COLDLUAU_MODULES"
+          "default": "__LARVAE_MODULES"
         },
         "tree_shake": {
           "type": "boolean",
@@ -684,7 +684,7 @@
       }
     },
     "check": {
-      "description": "CI-gate diagnostics for `coldluau check`. (M3)",
+      "description": "CI-gate diagnostics for `larvae check`. (M3)",
       "type": "object",
       "additionalProperties": false,
       "properties": {

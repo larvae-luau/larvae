@@ -1,7 +1,7 @@
 /*!
 The edit model
 
-Every transform in coldluau says what it wants as a byte range replacement
+Every transform in larvae says what it wants as a byte range replacement
 against the original source. Bytes nobody touched are copied straight
 through, which is what makes retain-lines free and keeps a whole file close
 to memcpy speed
@@ -19,7 +19,7 @@ pub type Edit = (u32, u32, String);
 /*
 Which bucket a rule reports under when the run finishes
 
-Native means the rule ships inside coldluau, which is all of them today.
+Native means the rule ships inside larvae, which is all of them today.
 The split that matters later is against transforms a user writes in their
 own repo, so the summary can say where a change came from once extensions
 land rather than lumping everything together
@@ -28,7 +28,7 @@ land rather than lumping everything together
 pub enum Family {
     /// The require rewriter, it gets its own line in the summary
     Requires,
-    /// Built into coldluau, both our own rules and the darklua parity set
+    /// Built into larvae, both our own rules and the darklua parity set
     Native,
     /// A transform loaded from the user's repo, lands with extensions in M3
     Extension,

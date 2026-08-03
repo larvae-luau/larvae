@@ -1,7 +1,7 @@
 /*!
-coldluau's own rules
+larvae's own rules
 
-Rules with no darklua equivalent, they lean on what only coldluau knows,
+Rules with no darklua equivalent, they lean on what only larvae knows,
 resolved require forms and the datamodel path of every file. Same contract
 as the parity rules, walk the tree, push byte edits, keep newline counts
 when deleting multiline spans
@@ -157,7 +157,7 @@ pub(crate) mod test_support {
     use crate::syntax::scan::RequireSite;
     use crate::syntax::{lexer, parser, scan};
 
-    /// Run the coldluau rules over a source and return the spliced output
+    /// Run the larvae rules over a source and return the spliced output
     pub fn run(rules: &str, src: &str) -> String {
         run_full(rules, src, None, &mut Vec::new())
     }

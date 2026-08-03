@@ -79,7 +79,7 @@ pub fn scan(root: &Path, project: Option<&Project>) -> Detected {
     }
 }
 
-/// Alias names a root .luaurc already defines, coldluau honours those as is
+/// Alias names a root .luaurc already defines, larvae honours those as is
 fn luaurc_aliases(root: &Path) -> Vec<String> {
     let Ok(text) = std::fs::read_to_string(root.join(".luaurc")) else {
         return Vec::new();

@@ -117,7 +117,7 @@ impl<'a> Resolver<'a> {
                 return Rewrite::Keep;
             }
 
-            // coldluau.toml wins per key, then .luaurc upward walk
+            // larvae.toml wins per key, then .luaurc upward walk
             let (value, base_dir): (&str, &Path) = if let Some(v) = self.toml_aliases.get(&name) {
                 (v.as_str(), self.root)
             } else if let Some((v, dir)) = self.luaurc.lookup(&ctx.dir, &name) {
@@ -129,7 +129,7 @@ impl<'a> Resolver<'a> {
                         format!("require(\"{spec}\"): unknown alias @{name}"),
                     )
                     .at(src, offset)
-                    .with_help("define it under [aliases] in coldluau.toml or in a .luaurc"),
+                    .with_help("define it under [aliases] in larvae.toml or in a .luaurc"),
                 );
 
                 return Rewrite::Keep;

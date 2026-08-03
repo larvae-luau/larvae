@@ -2,19 +2,19 @@
 
 use std::io::IsTerminal;
 
-/// coldluau's brand color, #87FDFF
-pub const BRAND: (u8, u8, u8) = (0x87, 0xFD, 0xFF);
+/// larvae's brand color, #10E694
+pub const BRAND: (u8, u8, u8) = (0x10, 0xE6, 0x94);
 
 /// ANSI truecolor foreground escape for the brand color
-pub const BRAND_FG: &str = "\x1b[38;2;135;253;255m";
+pub const BRAND_FG: &str = "\x1b[38;2;16;230;148m";
 pub const RESET: &str = "\x1b[0m";
 pub const BOLD: &str = "\x1b[1m";
 
-/// Dark end of the gradient (#2F9EC4), error accents use this instead of an off theme red
-pub const DEEP_FG: &str = "\x1b[38;2;47;158;196m";
-/// Darker steps of the same blue for a diagnostic's secondary lines
-pub const DARK_FG: &str = "\x1b[38;2;35;118;147m";
-pub const DARKER_FG: &str = "\x1b[38;2;26;89;110m";
+/// Dark end of the gradient (#0F9E6D), error accents use this instead of an off theme red
+pub const DEEP_FG: &str = "\x1b[38;2;15;158;109m";
+/// Darker steps of the same green for a diagnostic's secondary lines
+pub const DARK_FG: &str = "\x1b[38;2;11;118;81m";
+pub const DARKER_FG: &str = "\x1b[38;2;8;89;61m";
 
 /// ANSI truecolor foreground escape for an RGB triple
 pub fn fg((r, g, b): (u8, u8, u8)) -> String {
@@ -172,6 +172,6 @@ mod tests {
     #[test]
     fn accent_gates_on_color() {
         assert_eq!(accent("x", false), "x");
-        assert!(accent("x", true).contains("38;2;135;253;255"));
+        assert!(accent("x", true).contains("38;2;16;230;148"));
     }
 }

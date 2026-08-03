@@ -38,7 +38,7 @@ pub fn fixture() -> tempfile::TempDir {
     );
     write(
         root,
-        "coldluau.toml",
+        "larvae.toml",
         r#"
             [aliases]
             pkg = "@game/ReplicatedStorage/Packages"
@@ -86,7 +86,7 @@ pub fn instance_fixture(indexing_style: &str) -> tempfile::TempDir {
 
     write(
         root,
-        "coldluau.toml",
+        "larvae.toml",
         &format!(
             "[aliases]\npkg = \"@game/ReplicatedStorage/Packages\"\n\n[requires]\ntarget = \"roblox-instance\"\nindexing_style = \"{indexing_style}\"\n"
         ),

@@ -27,7 +27,7 @@ use spec::*;
 pub struct Resolver<'a> {
     /// Absolute project root
     pub root: &'a Path,
-    /// `coldluau.toml` aliases, lowercased keys
+    /// `larvae.toml` aliases, lowercased keys
     pub toml_aliases: &'a HashMap<String, String>,
     pub luaurc: &'a LuaurcIndex,
     pub mounts: &'a MountTable,

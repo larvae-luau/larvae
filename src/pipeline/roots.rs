@@ -36,7 +36,7 @@ pub fn resolve(project_root: &Path, config: &Config) -> Result<Vec<Root>> {
 
         if !dir.is_dir() {
             anyhow::bail!(
-                "input directory {} does not exist (set [process].input in coldluau.toml)",
+                "input directory {} does not exist (set [process].input in larvae.toml)",
                 crate::ui::rel(&dir)
             );
         }

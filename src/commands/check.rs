@@ -1,4 +1,4 @@
-//! `coldluau check`, validate all requires without writing output
+//! `larvae check`, validate all requires without writing output
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;

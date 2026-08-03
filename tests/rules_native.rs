@@ -1,11 +1,11 @@
-//! Pipeline tests for coldluau's own rules, before and after on a real project
+//! Pipeline tests for larvae's own rules, before and after on a real project
 
 use std::fs;
 use std::path::Path;
 
-use coldluau::config::Config;
-use coldluau::diag::Severity;
-use coldluau::pipeline;
+use larvae::config::Config;
+use larvae::diag::Severity;
+use larvae::pipeline;
 
 fn write(root: &Path, rel: &str, content: &str) {
     let p = root.join(rel);
@@ -42,7 +42,7 @@ fn project(rules: &str) -> tempfile::TempDir {
     );
     write(
         root,
-        "coldluau.toml",
+        "larvae.toml",
         &format!("[aliases]\npkg = \"@game/ReplicatedStorage/shared/util\"\n\n[rules]\n{rules}\n"),
     );
     write(root, "src/shared/util/math.luau", "return {}\n");
@@ -51,7 +51,7 @@ fn project(rules: &str) -> tempfile::TempDir {
 }
 
 /// Run the pipeline in write mode and fail loudly on any error diagnostic
-fn build(root: &Path) -> Vec<coldluau::diag::Diag> {
+fn build(root: &Path) -> Vec<larvae::diag::Diag> {
     let config = Config::load_or_default(root).unwrap();
     let outcome = pipeline::run(root, &config, true).unwrap();
 

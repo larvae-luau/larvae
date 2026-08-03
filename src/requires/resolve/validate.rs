@@ -19,7 +19,7 @@ impl<'a> Resolver<'a> {
             diags.push(
                 Diag::error(ctx.path, format!("require(\"{spec}\") needs a filesystem-to-DataModel mapping, but none is configured"))
                     .at(src, offset)
-                    .with_help("add a Rojo project file (default.project.json) or [requires.mounts] to coldluau.toml"),
+                    .with_help("add a Rojo project file (default.project.json) or [requires.mounts] to larvae.toml"),
             );
 
             return None;

@@ -107,7 +107,7 @@ fn default_generator() -> String {
     "retain-lines".into()
 }
 fn default_cache_dir() -> PathBuf {
-    ".coldluau".into()
+    ".larvae".into()
 }
 pub(super) fn default_true() -> bool {
     true

@@ -311,11 +311,11 @@ mod tests {
             &p,
             Path::new("/proj/src"),
             Path::new("/proj/dist"),
-            Path::new("/proj/.coldluau"),
+            Path::new("/proj/.larvae"),
             &mut warnings,
         );
         let tree = &out["tree"];
-        // src/** remapped to dist/** and rerelativized against .coldluau/
+        // src/** remapped to dist/** and rerelativized against .larvae/
         assert_eq!(
             tree["ReplicatedStorage"]["shared"]["$path"],
             "../dist/shared"

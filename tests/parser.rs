@@ -3,7 +3,7 @@ Parser conformance, every snippet must parse, tile the token stream with no
 holes, and print back byte for byte, that trio is the M1a exit criterion
 */
 
-use coldluau::syntax::{lexer, parser, printer};
+use larvae::syntax::{lexer, parser, printer};
 
 /// Parse, check coverage, print, compare, all in one
 #[track_caller]

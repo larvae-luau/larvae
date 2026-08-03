@@ -1,4 +1,4 @@
-//! coldluau schema, adds the #:schema directive so editors get completion and docs
+//! larvae schema, adds the #:schema directive so editors get completion and docs
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -9,7 +9,7 @@ use crate::ui;
 
 /// Where the schema is hosted (this repo)
 pub const SCHEMA_URL: &str =
-    "https://raw.githubusercontent.com/coldluau/cli/master/coldluau.schema.json";
+    "https://raw.githubusercontent.com/larvae-luau/larvae/master/larvae.schema.json";
 
 /// The directive line, ready to prepend
 pub fn directive() -> String {
@@ -17,10 +17,10 @@ pub fn directive() -> String {
 }
 
 pub fn run(root: &Path) -> Result<ExitCode> {
-    let path = root.join("coldluau.toml");
+    let path = root.join("larvae.toml");
 
     if !path.exists() {
-        bail!("no coldluau.toml here - run `coldluau init` first");
+        bail!("no larvae.toml here - run `larvae init` first");
     }
 
     let content = std::fs::read_to_string(&path)?;
@@ -29,7 +29,7 @@ pub fn run(root: &Path) -> Result<ExitCode> {
     let first = content.lines().next().unwrap_or("");
 
     let new_content = if first == directive {
-        ui::print_success("coldluau.toml already references the schema");
+        ui::print_success("larvae.toml already references the schema");
 
         return Ok(ExitCode::SUCCESS);
     } else if first.starts_with("#:schema") {
@@ -60,18 +60,18 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
 
-        std::fs::write(root.join("coldluau.toml"), "[process]\ninput = \"src\"\n").unwrap();
+        std::fs::write(root.join("larvae.toml"), "[process]\ninput = \"src\"\n").unwrap();
 
         run(root).unwrap();
 
-        let content = std::fs::read_to_string(root.join("coldluau.toml")).unwrap();
+        let content = std::fs::read_to_string(root.join("larvae.toml")).unwrap();
         assert!(content.starts_with(&directive()));
         assert!(content.contains("[process]"));
 
         // Second run leaves the file unchanged
         run(root).unwrap();
 
-        let again = std::fs::read_to_string(root.join("coldluau.toml")).unwrap();
+        let again = std::fs::read_to_string(root.join("larvae.toml")).unwrap();
         assert_eq!(content, again);
     }
 
@@ -81,13 +81,13 @@ mod tests {
         let root = tmp.path();
 
         std::fs::write(
-            root.join("coldluau.toml"),
+            root.join("larvae.toml"),
             "#:schema https://old.example/x.json\n[process]\n",
         )
         .unwrap();
         run(root).unwrap();
 
-        let content = std::fs::read_to_string(root.join("coldluau.toml")).unwrap();
+        let content = std::fs::read_to_string(root.join("larvae.toml")).unwrap();
 
         assert!(content.starts_with(&directive()));
         assert!(!content.contains("old.example"));

@@ -1,5 +1,5 @@
 [package]
-name = "coldluau-fuzz"
+name = "larvae-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2024"
@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-coldluau = { path = ".." }
+larvae = { path = ".." }
 
 [[bin]]
 name = "parse"

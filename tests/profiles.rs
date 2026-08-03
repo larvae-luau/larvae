@@ -1,7 +1,7 @@
 //! Build profiles, merged over the config before anything is typed
 
-use coldluau::config::Config;
-use coldluau::pipeline;
+use larvae::config::Config;
+use larvae::pipeline;
 
 mod common;
 use common::*;
@@ -30,7 +30,7 @@ fn project() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
 
-    write(root, "coldluau.toml", CONFIG);
+    write(root, "larvae.toml", CONFIG);
     write(root, "src/main.luau", "-- a comment\nreturn DEBUG\n");
 
     dir
@@ -98,5 +98,5 @@ fn asking_for_a_profile_with_no_config_says_so() {
         .unwrap_err()
         .to_string();
 
-    assert!(err.contains("needs a coldluau.toml"), "{err}");
+    assert!(err.contains("needs a larvae.toml"), "{err}");
 }

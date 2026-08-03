@@ -2,7 +2,7 @@
 
 # build output and cache
 dist/
-.coldluau/
+.larvae/
 
 # lpm scaffolding, not used by the rust crate
 packages/
@@ -11,10 +11,10 @@ lpm.lock
 lpm.toml
 
 # local config used while testing on this repo
-coldluau.toml
+larvae.toml
 
 # working notes, kept out of the repo
-coldluau.example.toml
+larvae.example.toml
 
 *.[mM][dD]
 !LICENSE.md

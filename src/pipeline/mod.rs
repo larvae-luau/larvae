@@ -226,7 +226,7 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
 
         if let Err(e) = cache.save() {
             diags.push(Diag::warning(
-                Path::new(".coldluau"),
+                Path::new(".larvae"),
                 format!("could not write the build cache: {e}"),
             ));
         }

@@ -1,7 +1,7 @@
 //! [requires.overrides], a different output form per path
 
-use coldluau::config::Config;
-use coldluau::pipeline;
+use larvae::config::Config;
+use larvae::pipeline;
 
 mod common;
 use common::*;
@@ -27,7 +27,7 @@ fn mixed(overrides: &str) -> tempfile::TempDir {
     );
     write(
         root,
-        "coldluau.toml",
+        "larvae.toml",
         &format!("[requires]\ntarget = \"roblox-string\"\n\n{overrides}"),
     );
     write(root, "src/shared/util.luau", "return {}\n");

@@ -10,9 +10,9 @@ use crate::commands::{self, self_cmd::SelfCommand};
 use crate::{art, ui};
 #[derive(Parser)]
 #[command(
-    name = "coldluau",
+    name = "larvae",
     version,
-    about = "A fast Luau preprocessor: aliases to Roblox-native string requires, and more",
+    about = "One toolchain for all of Luau: transforms today, formatting and linting next",
     disable_help_flag = true
 )]
 struct Cli {
@@ -28,7 +28,7 @@ struct Cli {
 enum Command {
     /// Process the project, rewrite requires into the output directory
     Process {
-        /// Path to coldluau.toml (defaults to ./coldluau.toml when present)
+        /// Path to larvae.toml (defaults to ./larvae.toml when present)
         #[arg(long)]
         config: Option<PathBuf>,
         /// Merge [profile.<name>] over the config before building
@@ -41,7 +41,7 @@ enum Command {
 
     /// Validate requires and syntax without writing any output
     Check {
-        /// Path to coldluau.toml (defaults to ./coldluau.toml when present)
+        /// Path to larvae.toml (defaults to ./larvae.toml when present)
         #[arg(long)]
         config: Option<PathBuf>,
         /// Merge [profile.<name>] over the config before checking
@@ -49,13 +49,13 @@ enum Command {
         profile: Option<String>,
     },
 
-    /// Create a starter coldluau.toml for this project
+    /// Create a starter larvae.toml for this project
     Init,
 
-    /// Add the schema reference to coldluau.toml for editor intellisense
+    /// Add the schema reference to larvae.toml for editor intellisense
     Schema,
 
-    /// Manage the coldluau installation itself
+    /// Manage the larvae installation itself
     #[command(name = "self")]
     SelfManage {
         #[command(subcommand)]
@@ -115,7 +115,7 @@ fn run() -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    // Bare `coldluau` gets the fastfetch style logo + help layout too
+    // Bare `larvae` gets the fastfetch style logo + help layout too
     let Some(command) = cli.command else {
         print_fancy_help(ui::want_color())?;
 
@@ -139,7 +139,7 @@ fn run() -> Result<ExitCode> {
             Some(cmd) => commands::self_cmd::run(cmd),
 
             None => {
-                // Bare `coldluau self`, show the group's help
+                // Bare `larvae self`, show the group's help
                 let mut cmd = Cli::command().styles(ui::help_styles());
                 let sub = cmd.find_subcommand_mut("self").expect("self exists");
 
@@ -263,7 +263,7 @@ fn print_fancy_help(color: bool) -> Result<()> {
         }
     }
 
-    // A closed pipe (ex: `coldluau | head`) is not an error
+    // A closed pipe (ex: `larvae | head`) is not an error
     if let Err(e) = std::io::stdout().write_all(out.as_bytes())
         && e.kind() != std::io::ErrorKind::BrokenPipe
     {

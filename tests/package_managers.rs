@@ -2,20 +2,20 @@
 Onboarding a project from each package manager
 
 All four put dependencies outside `[process].input`, which is the case most
-likely to break quietly. What these assert is mostly that coldluau leaves
+likely to break quietly. What these assert is mostly that larvae leaves
 things alone, package files are never read, rewritten or copied, and the
 derived project keeps pointing rojo at the real directory
 */
 
-use coldluau::config::Config;
-use coldluau::pipeline;
+use larvae::config::Config;
+use larvae::pipeline;
 
 mod common;
 use common::*;
 
 /// Every `$path` the derived build project came out with
 fn build_paths(root: &std::path::Path) -> String {
-    read(root, ".coldluau/build.project.json")
+    read(root, ".larvae/build.project.json")
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn wally() {
     );
     write(
         root,
-        "coldluau.toml",
+        "larvae.toml",
         concat!(
             "[aliases]\n",
             "pkg = \"@game/ReplicatedStorage/Packages\"\n",
@@ -128,7 +128,7 @@ fn pesde() {
     );
     write(
         root,
-        "coldluau.toml",
+        "larvae.toml",
         "[aliases]\npkg = \"@game/ReplicatedStorage/roblox_packages\"\n",
     );
     write(root, "roblox_packages/signal.luau", "return {}\n");
@@ -167,7 +167,7 @@ fn npmluau() {
     );
     write(
         root,
-        "coldluau.toml",
+        "larvae.toml",
         "[process]\ninput = \"src\"\noutput = \"dist\"\n\n[requires]\ntarget = \"path\"\n",
     );
     write(root, "node_modules/@acme/signal/init.luau", "return {}\n");
@@ -241,7 +241,7 @@ fn npmluau_with_a_symlinked_package() {
     );
     write(
         root,
-        "coldluau.toml",
+        "larvae.toml",
         "[process]\ninput = \"src\"\noutput = \"dist\"\n\n[requires]\ntarget = \"path\"\n",
     );
     write(root, "src/main.luau", "return require(\"@signal\")\n");
@@ -286,7 +286,7 @@ fn lpm() {
     );
     write(
         root,
-        "coldluau.toml",
+        "larvae.toml",
         "[aliases]\npkg = \"@game/ReplicatedStorage/packages\"\n",
     );
     write(root, "packages/signal/init.luau", "return {}\n");
@@ -323,7 +323,7 @@ fn a_package_directory_nobody_mounted_is_reported() {
     );
     write(
         root,
-        "coldluau.toml",
+        "larvae.toml",
         "[aliases]\npkg = \"@game/ReplicatedStorage/Packages\"\n",
     );
     write(root, "Packages/Signal.luau", "return {}\n");

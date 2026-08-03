@@ -3,8 +3,8 @@
 use std::fs;
 use std::path::Path;
 
-use coldluau::config::Config;
-use coldluau::pipeline;
+use larvae::config::Config;
+use larvae::pipeline;
 
 fn write(root: &Path, rel: &str, content: &str) {
     let p = root.join(rel);
@@ -19,7 +19,7 @@ fn read(root: &Path, rel: &str) -> String {
 /// A minimal project with only the rules under test switched on
 fn project(rules: &str) -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
-    write(tmp.path(), "coldluau.toml", &format!("[rules]\n{rules}\n"));
+    write(tmp.path(), "larvae.toml", &format!("[rules]\n{rules}\n"));
 
     tmp
 }

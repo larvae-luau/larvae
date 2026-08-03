@@ -3,7 +3,7 @@
 
 use libfuzzer_sys::fuzz_target;
 
-use coldluau::syntax::{lexer, parser};
+use larvae::syntax::{lexer, parser};
 
 fuzz_target!(|data: &[u8]| {
     let Ok(src) = std::str::from_utf8(data) else {

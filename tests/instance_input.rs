@@ -1,7 +1,7 @@
 //! Reading require(script.Parent.Foo) style requires, the migration path
 
-use coldluau::config::Config;
-use coldluau::pipeline;
+use larvae::config::Config;
+use larvae::pipeline;
 
 mod common;
 use common::*;
@@ -31,7 +31,7 @@ fn legacy() -> tempfile::TempDir {
     );
     write(
         root,
-        "coldluau.toml",
+        "larvae.toml",
         "[requires]\ntarget = \"roblox-string\"\n",
     );
     write(root, "Packages/Signal.luau", "return {}\n");
@@ -217,7 +217,7 @@ fn instance_input_can_be_turned_off() {
 
     write(
         root,
-        "coldluau.toml",
+        "larvae.toml",
         "[requires]\ntarget = \"roblox-string\"\ninstance_input = false\n",
     );
     write(

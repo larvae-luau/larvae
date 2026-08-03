@@ -59,7 +59,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BIN="$PWD/target/release/coldluau"
+          BIN="$PWD/target/release/larvae"
           FIXTURE="$(mktemp -d)"
           cd "$FIXTURE"
           mkdir -p src/shared src/server Packages
@@ -76,7 +76,7 @@ jobs:
             }
           }
           EOF
-          cat > coldluau.toml <<'EOF'
+          cat > larvae.toml <<'EOF'
           [aliases]
           pkg = "@game/ReplicatedStorage/Packages"
           EOF
@@ -89,8 +89,8 @@ jobs:
 
           grep -F 'require("@game/ReplicatedStorage/Packages/signal")' dist/server/boot.luau
           grep -F 'require("@game/ReplicatedStorage/shared/util")' dist/server/boot.luau
-          grep -F '"../dist/shared"' .coldluau/build.project.json
-          grep -F '"../Packages"' .coldluau/build.project.json
+          grep -F '"../dist/shared"' .larvae/build.project.json
+          grep -F '"../Packages"' .larvae/build.project.json
 
           # Idempotence: processing our own output must be a no-op.
           cp dist/server/boot.luau src/server/boot.luau

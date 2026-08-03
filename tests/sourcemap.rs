@@ -1,7 +1,7 @@
 //! requires.sourcemap, rojo's own map as the authority
 
-use coldluau::config::Config;
-use coldluau::pipeline;
+use larvae::config::Config;
+use larvae::pipeline;
 
 mod common;
 use common::*;
@@ -36,7 +36,7 @@ fn project() -> tempfile::TempDir {
     );
     write(
         root,
-        "coldluau.toml",
+        "larvae.toml",
         "[requires]\ntarget = \"roblox-string\"\nsourcemap = \"sourcemap.json\"\n",
     );
     write(root, "src/util.luau", "return {}\n");

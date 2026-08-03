@@ -1,4 +1,4 @@
-//! `coldluau process`, rewrite requires into the output directory
+//! `larvae process`, rewrite requires into the output directory
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;

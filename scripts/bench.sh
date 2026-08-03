@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Benchmark coldluau against darklua on synthetic Rojo shaped projects
+# Benchmark larvae against darklua on synthetic Rojo shaped projects
 #
 # Three workloads, because one number would be misleading
 #
 #   parse only   darklua runs no rules with the retain_lines generator, which
-#                is the least work it can be asked to do. coldluau still
+#                is the least work it can be asked to do. larvae still
 #                resolves and rewrites every require in this row, so it is
 #                doing strictly more, the row is here as darklua's floor
 #
@@ -12,7 +12,7 @@
 #                sides. This is the honest head to head
 #
 #   darklua      darklua's own default config, which is its default rule
-#   default      stack plus the dense generator. coldluau has no dense
+#   default      stack plus the dense generator. larvae has no dense
 #                generator yet and no rename_variables, so there is no
 #                speedup printed for this row, it is here so nobody thinks
 #                the other rows are darklua at full stretch
@@ -24,14 +24,14 @@
 #   check     validation only, this one parses every file
 #
 # Usage  scripts/bench.sh [file counts...]   defaults to 3000 5000
-# Env    COLDLUAU=path DARKLUA=path RUNS=n
+# Env    LARVAE=path DARKLUA=path RUNS=n
 set -euo pipefail
 
 SIZES=("${@:-3000 5000}")
 [ $# -eq 0 ] && SIZES=(3000 5000)
 RUNS="${RUNS:-7}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-COLDLUAU="${COLDLUAU:-$ROOT/target/release/coldluau}"
+LARVAE="${LARVAE:-$ROOT/target/release/larvae}"
 DARKLUA="${DARKLUA:-darklua}"
 
 # rules both tools implement under the same name, this is the matched workload
@@ -48,13 +48,13 @@ MATCHED_RULES=(
     remove_unused_while
 )
 
-if [ ! -x "$COLDLUAU" ]; then
-    echo "building coldluau (release)..." >&2
+if [ ! -x "$LARVAE" ]; then
+    echo "building larvae (release)..." >&2
     (cd "$ROOT" && cargo build --release)
 fi
 HAVE_DARKLUA=1
 command -v "$DARKLUA" >/dev/null || {
-    echo "note: darklua not found, running coldluau only (set DARKLUA= to compare)" >&2
+    echo "note: darklua not found, running larvae only (set DARKLUA= to compare)" >&2
     HAVE_DARKLUA=0
 }
 
@@ -100,12 +100,12 @@ PY
   }
 }
 EOF
-    cat > coldluau.toml <<'EOF'
+    cat > larvae.toml <<'EOF'
 [aliases]
 pkg = "@game/ReplicatedStorage/Packages"
 EOF
     {
-        cat coldluau.toml
+        cat larvae.toml
         echo
         echo "[rules]"
         for r in "${MATCHED_RULES[@]}"; do echo "$r = true"; done
@@ -151,7 +151,7 @@ ratio() { # ratio <slow> <fast>
     echo "$((r / 10)).$((r % 10))x"
 }
 
-drop_cache() { rm -rf .coldluau dist dist-darklua; }
+drop_cache() { rm -rf .larvae dist dist-darklua; }
 keep_cache() { :; }
 touch_one() {
     # no pipe to head here, it would SIGPIPE find and pipefail would abort
@@ -167,13 +167,13 @@ HEAD_ROWS=()
 run_scenarios() { # run_scenarios <label>
     local label="$1"
 
-    bench drop_cache "$COLDLUAU" process
+    bench drop_cache "$LARVAE" process
     local cold=$MEDIAN
-    bench keep_cache "$COLDLUAU" process
+    bench keep_cache "$LARVAE" process
     local warm=$MEDIAN
-    bench touch_one "$COLDLUAU" process
+    bench touch_one "$LARVAE" process
     local one=$MEDIAN
-    bench keep_cache "$COLDLUAU" check
+    bench keep_cache "$LARVAE" check
     local check=$MEDIAN
     CACHE_ROWS+=("$label|${cold} ms|${warm} ms|${one} ms|${check} ms")
 
@@ -186,12 +186,12 @@ run_scenarios() { # run_scenarios <label>
     HEAD_ROWS+=("$label|parse only|${cold} ms|${MEDIAN} ms|$(ratio "$MEDIAN" "$cold")")
 
     # same ten rules on both sides
-    bench drop_cache "$COLDLUAU" process --config cold-rules.toml
+    bench drop_cache "$LARVAE" process --config cold-rules.toml
     local cold_rules=$MEDIAN
     bench drop_cache "$DARKLUA" process --config dark-rules.json src dist-darklua
     HEAD_ROWS+=("$label|same rules|${cold_rules} ms|${MEDIAN} ms|$(ratio "$MEDIAN" "$cold_rules")")
 
-    # darklua's own default, which coldluau cannot match yet
+    # darklua's own default, which larvae cannot match yet
     bench drop_cache "$DARKLUA" process --config dark-default.json src dist-darklua
     HEAD_ROWS+=("$label|darklua default|n/a|${MEDIAN} ms|-")
 }
@@ -229,9 +229,9 @@ run_scenarios "1 big"
 cd "$ROOT"
 echo
 echo "machine: $(nproc) cores, $RUNS runs per cell, median reported"
-[ "$HAVE_DARKLUA" = 1 ] && echo "versions: $("$COLDLUAU" --version), $("$DARKLUA" --version)"
+[ "$HAVE_DARKLUA" = 1 ] && echo "versions: $("$LARVAE" --version), $("$DARKLUA" --version)"
 echo
-echo "coldluau incremental build, darklua has no cache so these are ours alone"
+echo "larvae incremental build, darklua has no cache so these are ours alone"
 echo
 printf "| %-6s | %-8s | %-8s | %-8s | %-8s |\n" "Files" "cold" "warm" "one edit" "check"
 printf "|%s|%s|%s|%s|%s|\n" "-------:" "---------:" "---------:" "---------:" "---------:"
@@ -245,33 +245,33 @@ if [ "$HAVE_DARKLUA" = 1 ]; then
     echo "head to head, both cold, same input tree"
     echo
     printf "| %-6s | %-15s | %-9s | %-9s | %-7s |\n" \
-        "Files" "workload" "coldluau" "darklua" "speedup"
+        "Files" "workload" "larvae" "darklua" "speedup"
     printf "|%s|%s|%s|%s|%s|\n" "-------:" ":----------------" "----------:" "----------:" "--------:"
     for row in "${HEAD_ROWS[@]}"; do
         IFS='|' read -r f w c d s <<<"$row"
         printf "| %6s | %-15s | %9s | %9s | %7s |\n" "$f" "$w" "$c" "$d" "$s"
     done
     echo
-    echo "parse only    darklua runs no rules, coldluau still rewrites every require"
+    echo "parse only    darklua runs no rules, larvae still rewrites every require"
     echo "same rules    both run ${#MATCHED_RULES[@]} matching rules with retain_lines"
-    echo "darklua default   darklua's default stack plus its dense generator, coldluau"
+    echo "darklua default   darklua's default stack plus its dense generator, larvae"
     echo "                  has neither yet so no speedup is claimed on that row"
     echo
     echo "darklua can convert requires with a rojo sourcemap, that is not enabled here"
-    echo "because it needs a separate rojo run, so the require work is coldluau only"
+    echo "because it needs a separate rojo run, so the require work is larvae only"
 fi
 
-if [ -x "$COLDLUAU" ]; then
-    cl_size=$(stat -c%s "$COLDLUAU")
+if [ -x "$LARVAE" ]; then
+    cl_size=$(stat -c%s "$LARVAE")
     echo
     if [ "$HAVE_DARKLUA" = 1 ]; then
         dl_bin="$(command -v "$DARKLUA")"
         tmp_dl="$WORK/darklua-stripped"
         cp "$dl_bin" "$tmp_dl" && strip "$tmp_dl" 2>/dev/null || true
         dl_size=$(stat -c%s "$tmp_dl")
-        printf "binary size, both stripped: coldluau %s KB, darklua %s KB\n" \
+        printf "binary size, both stripped: larvae %s KB, darklua %s KB\n" \
             $((cl_size / 1024)) $((dl_size / 1024))
     else
-        printf "binary size: coldluau %s KB\n" $((cl_size / 1024))
+        printf "binary size: larvae %s KB\n" $((cl_size / 1024))
     fi
 fi

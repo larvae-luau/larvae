@@ -1,4 +1,4 @@
-//! `coldluau self <command>`, manage the coldluau installation itself
+//! `larvae self <command>`, manage the larvae installation itself
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -12,21 +12,21 @@ use crate::sys::paths;
 use crate::ui;
 
 /// GitHub repository releases are published to
-const REPO: &str = "coldluau/cli";
+const REPO: &str = "larvae-luau/larvae";
 
 #[derive(Subcommand)]
 pub enum SelfCommand {
-    /// Install coldluau to ~/.coldluau/bin
+    /// Install larvae to ~/.larvae/bin
     Install,
 
-    /// Update coldluau to the latest release
+    /// Update larvae to the latest release
     Update {
         /// Replace the binary even when another tool manages it
         #[arg(long)]
         force: bool,
     },
 
-    /// Remove coldluau from this machine
+    /// Remove larvae from this machine
     Uninstall,
 }
 
@@ -54,7 +54,7 @@ fn install() -> Result<ExitCode> {
 
     if paths::same_file(&me, &target) {
         ui::print_success(&format!(
-            "coldluau is already installed at {}",
+            "larvae is already installed at {}",
             target.display()
         ));
     } else {
@@ -62,7 +62,7 @@ fn install() -> Result<ExitCode> {
             .with_context(|| format!("failed to create {}", bin_dir.display()))?;
         std::fs::copy(&me, &target)
             .with_context(|| format!("failed to copy to {}", target.display()))?;
-        ui::print_success(&format!("Installed coldluau to {}", target.display()));
+        ui::print_success(&format!("Installed larvae to {}", target.display()));
     }
 
     add_to_path(&bin_dir);
@@ -80,15 +80,15 @@ fn update(force: bool) -> Result<ExitCode> {
     */
     if !force && !paths::is_self_installed(&me) {
         let hint = match paths::managing_tool(&me) {
-            Some("cargo") => "reinstall with `cargo install coldluau`".to_string(),
+            Some("cargo") => "reinstall with `cargo install larvae`".to_string(),
 
             Some(tool) => format!("{tool} manages this binary, bump the version in its manifest"),
 
-            None => "run `coldluau self install` first, or reinstall from the release".to_string(),
+            None => "run `larvae self install` first, or reinstall from the release".to_string(),
         };
 
         bail!(
-            "coldluau did not install {}, so it will not replace it\n  {hint}\n  pass --force to overwrite it anyway",
+            "larvae did not install {}, so it will not replace it\n  {hint}\n  pass --force to overwrite it anyway",
             crate::ui::rel(&me)
         );
     }
@@ -103,14 +103,14 @@ fn update(force: bool) -> Result<ExitCode> {
         .with_context(|| format!("release tag {:?} is not a version", release.tag_name))?;
 
     if latest <= current {
-        ui::print_success("coldluau is already up to date");
+        ui::print_success("larvae is already up to date");
 
         return Ok(ExitCode::SUCCESS);
     }
 
-    // Release assets are named coldluau-{os}-{arch}[.exe] from std::env::consts
+    // Release assets are named larvae-{os}-{arch}[.exe] from std::env::consts
     let asset_name = format!(
-        "coldluau-{}-{}{}",
+        "larvae-{}-{}{}",
         std::env::consts::OS,
         std::env::consts::ARCH,
         std::env::consts::EXE_SUFFIX
@@ -137,16 +137,16 @@ fn update(force: bool) -> Result<ExitCode> {
     self_replace::self_replace(&staged).context("failed to replace the running executable")?;
     let _ = std::fs::remove_file(&staged);
 
-    ui::print_success(&format!("Updated coldluau v{current} -> v{latest}"));
+    ui::print_success(&format!("Updated larvae v{current} -> v{latest}"));
 
     Ok(ExitCode::SUCCESS)
 }
 
 fn uninstall() -> Result<ExitCode> {
-    let dir = paths::coldluau_dir()?;
+    let dir = paths::larvae_dir()?;
 
     if !dir.exists() {
-        bail!("coldluau is not installed at {}", dir.display());
+        bail!("larvae is not installed at {}", dir.display());
     }
 
     if !ui::confirm(&format!("Remove {}?", dir.display()), false) {
@@ -155,7 +155,7 @@ fn uninstall() -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    // a binary inside ~/.coldluau deletes itself first so the dir can go
+    // a binary inside ~/.larvae deletes itself first so the dir can go
     let me = std::env::current_exe()?;
 
     if me

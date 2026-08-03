@@ -1,7 +1,7 @@
 /*!
 Luau syntax tree, nodes hold token index ranges rather than owned strings so
 printing a node is just replaying its tokens and the source between them,
-types are kept as spans on purpose, coldluau parses types but never
+types are kept as spans on purpose, larvae parses types but never
 interprets them until a rule needs to
 */
 

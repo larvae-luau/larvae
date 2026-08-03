@@ -144,7 +144,7 @@ fn watched_roots(root: &Path, config: &Config, config_path: Option<&Path>) -> Ve
     if let Some(p) = config_path {
         out.push(root.join(p));
     } else {
-        out.push(root.join("coldluau.toml"));
+        out.push(root.join("larvae.toml"));
     }
 
     out.push(

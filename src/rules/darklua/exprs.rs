@@ -11,7 +11,7 @@ remove_if_expression, `if c then a else b` becomes `c and a or b`
 
 The and/or trick only reproduces the if expression when the then value can
 never be false or nil, otherwise the or arm would take over and the wrong
-value comes out. darklua wraps those cases in a helper function, coldluau
+value comes out. darklua wraps those cases in a helper function, larvae
 would rather leave them readable, so anything unprovable is skipped
 */
 pub fn remove_if_expression(ctx: &RuleCtx, edits: &mut Vec<Edit>) {

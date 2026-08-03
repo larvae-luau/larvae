@@ -1,7 +1,7 @@
 //! One input root flattens, several keep their own directory
 
-use coldluau::config::Config;
-use coldluau::pipeline;
+use larvae::config::Config;
+use larvae::pipeline;
 
 mod common;
 use common::*;
@@ -13,7 +13,7 @@ fn a_single_root_still_flattens() {
 
     write(
         root,
-        "coldluau.toml",
+        "larvae.toml",
         "[process]\ninput = \"src\"\noutput = \"dist\"\n\n[requires]\ntarget = \"path\"\n",
     );
     write(root, "src/a/b.luau", "return 1\n");
@@ -33,7 +33,7 @@ fn several_roots_each_keep_their_directory() {
 
     write(
         root,
-        "coldluau.toml",
+        "larvae.toml",
         "[process]\ninput = [\"src\", \"vendor\"]\noutput = \"dist\"\n\n[requires]\ntarget = \"path\"\n",
     );
     // the same file name under both, which is exactly what flattening would lose
@@ -59,7 +59,7 @@ fn a_missing_root_says_which_one() {
 
     write(
         root,
-        "coldluau.toml",
+        "larvae.toml",
         "[process]\ninput = [\"src\", \"nope\"]\noutput = \"dist\"\n",
     );
     write(root, "src/a.luau", "return 1\n");
@@ -81,7 +81,7 @@ fn a_nested_root_owns_its_own_files() {
 
     write(
         root,
-        "coldluau.toml",
+        "larvae.toml",
         "[process]\ninput = [\"src\", \"src/vendor\"]\noutput = \"dist\"\n\n[requires]\ntarget = \"path\"\n",
     );
     write(root, "src/a.luau", "return 1\n");
@@ -104,7 +104,7 @@ fn deletions_still_mirror_with_several_roots() {
 
     write(
         root,
-        "coldluau.toml",
+        "larvae.toml",
         "[process]\ninput = [\"src\", \"vendor\"]\noutput = \"dist\"\n\n[requires]\ntarget = \"path\"\n",
     );
     write(root, "src/a.luau", "return 1\n");

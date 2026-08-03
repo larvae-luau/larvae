@@ -1,4 +1,4 @@
-//! coldluau.toml loading and validation, unknown keys hard error, planned keys error with their milestone
+//! larvae.toml loading and validation, unknown keys hard error, planned keys error with their milestone
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -86,18 +86,18 @@ impl Config {
         Ok(config)
     }
 
-    /// Load `coldluau.toml` from `dir` if present, zero config default otherwise
+    /// Load `larvae.toml` from `dir` if present, zero config default otherwise
     pub fn load_or_default(dir: &Path) -> Result<Self> {
         Self::load_or_default_profile(dir, None)
     }
 
     pub fn load_or_default_profile(dir: &Path, profile: Option<&str>) -> Result<Self> {
-        let path = dir.join("coldluau.toml");
+        let path = dir.join("larvae.toml");
 
         if path.exists() {
             Self::load_profile(&path, profile)
         } else if let Some(name) = profile {
-            bail!("--profile {name} needs a coldluau.toml, there is none here")
+            bail!("--profile {name} needs a larvae.toml, there is none here")
         } else {
             Ok(Self::default())
         }
@@ -124,7 +124,7 @@ impl Config {
                 ),
 
                 Some(RuleStatus::Elsewhere(where_)) => {
-                    bail!("\"{name}\" is not a coldluau rule, {where_}")
+                    bail!("\"{name}\" is not a larvae rule, {where_}")
                 }
 
                 Some(RuleStatus::Done) => {}
@@ -260,7 +260,7 @@ mod tests {
     }
 
     #[test]
-    fn coldluau_rules_load_in_both_forms() {
+    fn larvae_rules_load_in_both_forms() {
         let c: Config = toml::from_str(concat!(
             "[rules]\n",
             "remove_calls = { functions = [\"print\", \"debug.profilebegin\"], preserve_arguments_side_effects = false }\n",

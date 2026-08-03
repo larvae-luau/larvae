@@ -232,7 +232,7 @@ pub(super) fn process_file(
 
     let rewrites = edits.len();
 
-    // everything past the requires is a rule that ships inside coldluau
+    // everything past the requires is a rule that ships inside larvae
     edits.family(Family::Native, |edits| {
         if opts.const_requires {
             edits.run("const_requires", |e| {

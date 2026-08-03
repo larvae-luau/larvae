@@ -1,8 +1,8 @@
 //! End to end require rewriting, the flagship path
 
-use coldluau::config::Config;
-use coldluau::diag::Severity;
-use coldluau::pipeline;
+use larvae::config::Config;
+use larvae::diag::Severity;
+use larvae::pipeline;
 use std::fs;
 
 mod common;
@@ -204,7 +204,7 @@ fn missing_target_warns_then_errors_under_strict() {
 
     write(
         root,
-        "coldluau.toml",
+        "larvae.toml",
         r#"
             [aliases]
             pkg = "@game/ReplicatedStorage/Packages"
@@ -246,7 +246,7 @@ fn luaurc_aliases_work_zero_config() {
     write(root, "src/util/list.luau", "return {}\n");
     write(root, "src/main.luau", "return require(\"@util/list\")\n");
 
-    // No coldluau.toml at all
+    // No larvae.toml at all
     let config = Config::load_or_default(root).unwrap();
     let outcome = pipeline::run(root, &config, true).unwrap();
 
@@ -362,7 +362,7 @@ fn instance_style_accepts_kebab_alias() {
 
     assert_eq!(
         config.requires.indexing_style,
-        Some(coldluau::config::IndexingStyle::Property)
+        Some(larvae::config::IndexingStyle::Property)
     );
 }
 
@@ -373,7 +373,7 @@ fn indexing_style_requires_instance_target() {
 
     write(
         root,
-        "coldluau.toml",
+        "larvae.toml",
         "[requires]\nindexing_style = \"property\"\n",
     );
     assert!(Config::load_or_default(root).is_err());
@@ -386,7 +386,7 @@ fn path_target_for_lune() {
 
     write(root, ".luaurc", r#"{ "aliases": { "lib": "./lib" } }"#);
     write(root, "lib/json.luau", "return {}\n");
-    write(root, "coldluau.toml", "[requires]\ntarget = \"path\"\n");
+    write(root, "larvae.toml", "[requires]\ntarget = \"path\"\n");
     write(root, "src/main.luau", "return require(\"@lib/json\")\n");
 
     let config = Config::load_or_default(root).unwrap();

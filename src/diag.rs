@@ -64,7 +64,7 @@ impl Diag {
     ```text
     ✗ error: require("@nope/x"): unknown alias @nope
         at src/shared/bad.luau:1:8
-        help: define it under [aliases] in coldluau.toml or in a .luaurc
+        help: define it under [aliases] in larvae.toml or in a .luaurc
     ```
 
     Color stays on theme, dark blue head then darker steps below,

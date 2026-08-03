@@ -2,7 +2,7 @@
 Builtin rules
 
 Token level rules live in this file, everything that needs the tree goes
-through the engine, darklua parity rules in one submodule and coldluau's
+through the engine, darklua parity rules in one submodule and larvae's
 own in the other
 */
 
