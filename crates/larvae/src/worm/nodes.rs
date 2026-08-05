@@ -96,46 +96,47 @@ impl Kind {
         }
     }
 
+    /// Every kind, which `worm.d.luau` mirrors as a singleton union
+    pub const ALL: &'static [Kind] = &[
+        Kind::Block,
+        Kind::Local,
+        Kind::Assign,
+        Kind::Call,
+        Kind::Do,
+        Kind::While,
+        Kind::Repeat,
+        Kind::If,
+        Kind::NumericFor,
+        Kind::GenericFor,
+        Kind::Function,
+        Kind::LocalFunction,
+        Kind::Return,
+        Kind::Break,
+        Kind::Continue,
+        Kind::TypeAlias,
+        Kind::Empty,
+        Kind::Nil,
+        Kind::True,
+        Kind::False,
+        Kind::Vararg,
+        Kind::Number,
+        Kind::String,
+        Kind::InterpString,
+        Kind::Name,
+        Kind::FunctionExpr,
+        Kind::Table,
+        Kind::Binary,
+        Kind::Unary,
+        Kind::Index,
+        Kind::CallExpr,
+        Kind::Paren,
+        Kind::IfElse,
+        Kind::TypeAssert,
+    ];
+
     /// Parse a name a worm declared in `filter`, so a typo is caught at load
     pub fn from_name(name: &str) -> Option<Self> {
-        const ALL: &[Kind] = &[
-            Kind::Block,
-            Kind::Local,
-            Kind::Assign,
-            Kind::Call,
-            Kind::Do,
-            Kind::While,
-            Kind::Repeat,
-            Kind::If,
-            Kind::NumericFor,
-            Kind::GenericFor,
-            Kind::Function,
-            Kind::LocalFunction,
-            Kind::Return,
-            Kind::Break,
-            Kind::Continue,
-            Kind::TypeAlias,
-            Kind::Empty,
-            Kind::Nil,
-            Kind::True,
-            Kind::False,
-            Kind::Vararg,
-            Kind::Number,
-            Kind::String,
-            Kind::InterpString,
-            Kind::Name,
-            Kind::FunctionExpr,
-            Kind::Table,
-            Kind::Binary,
-            Kind::Unary,
-            Kind::Index,
-            Kind::CallExpr,
-            Kind::Paren,
-            Kind::IfElse,
-            Kind::TypeAssert,
-        ];
-
-        ALL.iter().copied().find(|k| k.name() == name)
+        Self::ALL.iter().copied().find(|k| k.name() == name)
     }
 }
 

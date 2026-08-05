@@ -43,6 +43,52 @@ export type Frontend = {
 }
 
 --[=[
+	Every node kind larvae's AST has, as singleton strings.
+
+	Comparing against one of these autocompletes and typos fail to typecheck,
+	rather than quietly never matching. These are also the names you put in
+	`filter` in worm.toml.
+]=]
+export type Kind =
+	-- structure
+	"Block"
+	-- statements
+	| "Local"
+	| "Assign"
+	| "Call"
+	| "Do"
+	| "While"
+	| "Repeat"
+	| "If"
+	| "NumericFor"
+	| "GenericFor"
+	| "Function"
+	| "LocalFunction"
+	| "Return"
+	| "Break"
+	| "Continue"
+	| "TypeAlias"
+	| "Empty"
+	-- expressions
+	| "Nil"
+	| "True"
+	| "False"
+	| "Vararg"
+	| "Number"
+	| "String"
+	| "InterpString"
+	| "Name"
+	| "FunctionExpr"
+	| "Table"
+	| "Binary"
+	| "Unary"
+	| "Index"
+	| "CallExpr"
+	| "Paren"
+	| "IfElse"
+	| "TypeAssert"
+
+--[=[
 	A handle to one node of larvae's AST.
 
 	It is a pair of integers, not a pointer into our tree, and it is only valid
@@ -52,7 +98,7 @@ export type Frontend = {
 	Spans are byte offsets into the original source, half open.
 ]=]
 export type Node = {
-	kind: (self: Node) -> string,
+	kind: (self: Node) -> Kind,
 	text: (self: Node) -> string,
 	span: (self: Node) -> (number, number),
 	children: (self: Node) -> { Node },
@@ -94,26 +140,61 @@ export type Rule = {
 export type Init = (config: { [string]: any }, rules: { [string]: any }) -> ()
 
 --[=[
-	What a worm module returns.
+	What a worm module returns. Three roles, and a worm may hold any combination.
+
+	**A front-end** claims a file extension and turns it into Luau before larvae
+	reads it. Text in, text out. Use it for a syntax larvae cannot parse.
+
+	```luau
+	local worm: Worm = {
+		frontend = {
+			compile = function(source, config)
+				return (source:gsub("<>", "{}"))
+			end,
+		},
+	}
+	```
+
+	**A rule** takes a slot in run_order and walks the AST, queueing edits. Use
+	it for a transform over ordinary Luau. It only sees the node kinds you named
+	in `filter`, so anything else stays on larvae's fast path.
 
 	```luau
 	local worm: Worm = {
 		rules = {
 			strip_debug = {
 				visit = function(node, ctx)
-					if node:kind() == "CallExpr" then
+					if node:kind() == "CallExpr" and node:text():find("^dprint") then
 						ctx:remove(node)
 					end
 				end,
 			},
 		},
 	}
+	```
+
+	**Both**, when a worm transpiles a syntax and also ships a rule over the
+	result. One worm rather than two, so there is one version to pin and one
+	`[config.<name>]` to keep straight.
+
+	```luau
+	local worm: Worm = {
+		init = function(config, rules)
+			-- settings arrive once, before any file
+		end,
+
+		frontend = { compile = compileMarkup },
+
+		rules = {
+			inline_constants = { visit = inlineConstants },
+		},
+	}
 
 	return worm
 	```
 
-	A worm needs at least one role. Both are optional here because either may
-	be absent, but returning neither is refused at load.
+	At least one role is required. Returning neither is refused at load rather
+	than loaded and never called.
 ]=]
 export type Worm = {
 	init: Init?,

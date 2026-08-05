@@ -204,6 +204,41 @@ mod tests {
         assert!(TYPES.contains("export type Compile"));
     }
 
+    /*
+    The Kind union is written by hand so it reads well, which means it can drift
+    from the enum. Every name has to exist on both sides, in both directions.
+    */
+    #[test]
+    fn the_kind_union_matches_the_ast() {
+        use crate::worm::nodes::Kind;
+
+        let union: Vec<&str> = TYPES
+            .lines()
+            .skip_while(|l| !l.starts_with("export type Kind ="))
+            .take_while(|l| !l.starts_with("export type Node"))
+            .filter_map(|l| l.split_once('"'))
+            .filter_map(|(_, rest)| rest.split_once('"'))
+            .map(|(name, _)| name)
+            .collect();
+
+        assert!(!union.is_empty(), "found no kinds in the union");
+
+        for name in &union {
+            assert!(
+                Kind::from_name(name).is_some(),
+                "worm.d.luau names {name}, the AST does not"
+            );
+        }
+
+        for kind in Kind::ALL {
+            assert!(
+                union.contains(&kind.name()),
+                "the AST has {}, worm.d.luau does not",
+                kind.name()
+            );
+        }
+    }
+
     /// The definitions have to be Luau a language server can actually load
     #[test]
     fn the_definitions_parse_as_luau() {
