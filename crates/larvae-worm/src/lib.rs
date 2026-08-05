@@ -24,6 +24,8 @@ A worm exports `memory`, plus:
 | `larvae_alloc` | `(len: u32) -> ptr` |
 | `larvae_dealloc` | `(ptr, len: u32)` |
 | `larvae_transform` | `(src_ptr, src_len, cfg_ptr, cfg_len) -> *header` |
+| `larvae_init` | `(cfg_ptr, cfg_len, rules_ptr, rules_len)` |
+| `larvae_visit` | `(rule, epoch, node_id)` |
 
 `larvae_transform` returns a pointer to a three word header,
 `[out_ptr, out_len, ok]`. `ok` is 1 when the bytes are output and 0 when they
@@ -38,6 +40,9 @@ payload out.
 pub const ABI_VERSION: u32 = 1;
 
 pub mod abi;
+pub mod node;
+
+pub use node::Node;
 
 /**
 Define a front-end worm: source text in, transformed source out.
@@ -83,6 +88,49 @@ macro_rules! frontend {
             // SAFETY: both spans were allocated by larvae_alloc and written by
             // the host, which knows their lengths
             unsafe { $crate::abi::dispatch(src_ptr, src_len, cfg_ptr, cfg_len, $handler) }
+        }
+    };
+}
+
+/**
+Define the rule half of a worm.
+
+Each rule is a name and a handler. larvae only calls a rule on nodes matching
+the `filter` you declared in `worm.toml`, so undeclared kinds never cross.
+
+```ignore
+larvae_worm::rules! {
+    "strip_debug" => |node: larvae_worm::Node| {
+        if node.kind() == "CallExpr" && node.text().starts_with("dprint") {
+            node.remove();
+        }
+    },
+}
+```
+
+Combine with [`frontend!`](crate::frontend) when a worm holds both roles.
+*/
+#[macro_export]
+macro_rules! rules {
+    ($($name:literal => $handler:expr),+ $(,)?) => {
+        /// Rule ids are indexes into the order declared here
+        #[unsafe(no_mangle)]
+        pub extern "C" fn larvae_visit(rule: u32, epoch: u64, id: u32) {
+            let node = $crate::Node::from_raw(epoch, id);
+            let mut which = 0u32;
+
+            $(
+                if rule == which {
+                    let _ = $name;
+                    let handler = $handler;
+                    handler(node);
+                    return;
+                }
+
+                which += 1;
+            )+
+
+            let _ = which;
         }
     };
 }
