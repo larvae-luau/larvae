@@ -24,8 +24,8 @@
     "rules": {
       "$ref": "#/$defs/rules"
     },
-    "extensions": {
-      "$ref": "#/$defs/extensions"
+    "worms": {
+      "$ref": "#/$defs/worms"
     },
     "bundle": {
       "$ref": "#/$defs/bundle"
@@ -590,29 +590,38 @@
         }
       }
     },
-    "extensions": {
-      "description": "User-defined transformers written in Luau, sharing the fused traversal with builtin rules. (M3)",
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "path"
-        ],
-        "properties": {
-          "path": {
+    "worms": {
+      "description": "Worms, extensions loaded from a GitHub release. A worm is Luau source or a wasm32 module in a zip carrying a worm.toml. The key names the worm and its settings live under [config.<key>]. (M3)",
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          {
             "type": "string",
-            "description": "Luau module returning { name, filter, visit }."
+            "description": "owner/repo@version, ex: \"luau-xml/worm@0.1.0\"."
           },
-          "options": {
+          {
             "type": "object",
-            "description": "Passed to the transformer verbatim."
-          },
-          "before": {
-            "type": "string",
-            "description": "Run before this builtin rule instead of after all rules."
+            "additionalProperties": false,
+            "required": [
+              "repo",
+              "version"
+            ],
+            "properties": {
+              "repo": {
+                "type": "string",
+                "description": "owner/repo on GitHub."
+              },
+              "version": {
+                "type": "string",
+                "description": "Release tag to pin, without a leading v."
+              },
+              "asset": {
+                "type": "string",
+                "description": "Release asset to fetch. Defaults to <key>-worm.zip, then worm.zip."
+              }
+            }
           }
-        }
+        ]
       }
     },
     "bundle": {

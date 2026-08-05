@@ -44,7 +44,7 @@ pub struct Config {
 
     // parsed but unimplemented, so the error can name the milestone
     #[serde(default)]
-    extensions: Option<toml::Value>,
+    worms: Option<toml::Value>,
 
     #[serde(default)]
     bundle: Option<toml::Value>,
@@ -105,7 +105,7 @@ impl Config {
 
     fn validate(&self) -> Result<()> {
         let unimplemented: &[(&str, &Option<toml::Value>, &str)] = &[
-            ("[[extensions]]", &self.extensions, "M3"),
+            ("[worms]", &self.worms, "M3"),
             ("[bundle]", &self.bundle, "M3"),
             ("[minify]", &self.minify, "M4"),
             ("[check]", &self.check, "M3"),
