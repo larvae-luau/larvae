@@ -15,6 +15,9 @@ pub const TYPES: &str = include_str!("../worm/worm.d.luau");
 /// Where `types` writes when nothing is asked for
 const TYPES_FILE: &str = "worm.d.luau";
 
+/// luau-lsp's list of definition files, which is what gives a worm its types
+const DEFINITIONS: &str = "luau-lsp.types.definitionFiles";
+
 #[derive(Subcommand)]
 pub enum WormCommand {
     /// Run a worm from a directory over one file, no project or install needed
@@ -184,13 +187,53 @@ fn types(out: Option<&Path>, stdout: bool) -> Result<ExitCode> {
     std::fs::write(&path, TYPES).with_context(|| format!("cannot write {}", ui::rel(&path)))?;
 
     ui::print_success(&format!("wrote {}", ui::rel(&path)));
-    eprintln!("Point luau-lsp at it:");
-    eprintln!(
-        "  luau-lsp analyze --definitions={} your-worm.luau",
-        ui::rel(&path)
-    );
+
+    wire_luau_lsp(&path)?;
 
     Ok(ExitCode::SUCCESS)
+}
+
+/*
+Add the definitions file to the project's luau-lsp settings.
+
+Project settings this time, not the user's. A definitions file lives beside the
+worm it describes, so the setting belongs to the repo and travels with it,
+unlike the TOML schema which is one URL good for every project at once.
+*/
+fn wire_luau_lsp(types: &Path) -> Result<()> {
+    let settings = PathBuf::from(".vscode/settings.json");
+    let entry = ui::rel(types);
+    let listed = entry.clone();
+
+    let changed = crate::commands::code::edit_settings(&settings, move |table| {
+        let files = table
+            .entry(DEFINITIONS)
+            .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+
+        let Some(files) = files.as_array_mut() else {
+            anyhow::bail!("{DEFINITIONS} is not an array, leaving it alone");
+        };
+
+        if files.iter().any(|f| f.as_str() == Some(listed.as_str())) {
+            return Ok(false);
+        }
+
+        files.push(listed.into());
+
+        Ok(true)
+    })?;
+
+    if changed {
+        ui::print_success(&format!("added it to {}", ui::rel(&settings)));
+        eprintln!("Reload the window and your worm typechecks as you write it.");
+    } else {
+        ui::print_success(&format!("{} already lists it", ui::rel(&settings)));
+    }
+
+    eprintln!("Outside an editor:");
+    eprintln!("  luau-lsp analyze --definitions={entry} your-worm.luau");
+
+    Ok(())
 }
 
 #[cfg(test)]

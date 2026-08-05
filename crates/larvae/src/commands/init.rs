@@ -24,11 +24,14 @@ pub fn run(root: &Path) -> Result<ExitCode> {
         "# No default.project.json found, the roblox-string target needs one\n# or a [requires.mounts] table.\n"
     };
 
+    /*
+    No schema line here. `larvae self code` decides how a project gets editor
+    support, and prefers wiring Even Better TOML in .vscode/settings.json to
+    putting a URL at the top of somebody's config.
+    */
     let mut template = format!(
-        "{schema}\n\
-         # larvae configuration, run `larvae schema` for editor completion.\n\
-         {project_note}",
-        schema = crate::commands::schema::directive()
+        "# larvae configuration, run `larvae self code` for editor completion.\n\
+         {project_note}"
     );
 
     if !found.aliases.is_empty() {

@@ -22,5 +22,5 @@ Notable changes land here. Format follows
 - Incremental builds keyed on a resolution epoch, plus `process --watch`
 - Rules, `const_requires`, `remove_comments`, `append_text_comment` and
   `add_luau_directive`, with every darklua rule name accepted
-- `larvae init`, `larvae schema`, and `larvae self install`, `update`
+- `larvae init`, `larvae self code`, and `larvae self install`, `update`
   and `uninstall`

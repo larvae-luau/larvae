@@ -1,1 +1,734 @@
-../../larvae.schema.json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/larvae-luau/larvae/master/crates/larvae/larvae.schema.json",
+  "title": "larvae.toml",
+  "description": "Configuration for larvae, one toolchain for all of Luau: transforms today, formatting and linting next.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "aliases": {
+      "$ref": "#/$defs/aliases"
+    },
+    "process": {
+      "$ref": "#/$defs/process"
+    },
+    "requires": {
+      "$ref": "#/$defs/requires"
+    },
+    "rojo": {
+      "$ref": "#/$defs/rojo"
+    },
+    "defines": {
+      "$ref": "#/$defs/defines"
+    },
+    "rules": {
+      "$ref": "#/$defs/rules"
+    },
+    "worms": {
+      "$ref": "#/$defs/worms"
+    },
+    "bundle": {
+      "$ref": "#/$defs/bundle"
+    },
+    "minify": {
+      "$ref": "#/$defs/minify"
+    },
+    "check": {
+      "$ref": "#/$defs/check"
+    },
+    "profile": {
+      "description": "Per-environment overlays selected with --profile <name>. Tables deep-merge per key; arrays and scalars are replaced whole.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "aliases": {
+            "$ref": "#/$defs/aliases"
+          },
+          "process": {
+            "$ref": "#/$defs/process"
+          },
+          "requires": {
+            "$ref": "#/$defs/requires"
+          },
+          "defines": {
+            "$ref": "#/$defs/defines"
+          },
+          "rules": {
+            "$ref": "#/$defs/rules"
+          },
+          "minify": {
+            "$ref": "#/$defs/minify"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "aliases": {
+      "description": "Require aliases. Optional: .luaurc aliases work with zero config; entries here merge over them per key. Values are @game/... DataModel paths or filesystem paths. \"@self\" and \"@game\" are reserved.",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9._-]+$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "description": "A DataModel path (\"@game/ReplicatedStorage/packages\") or a filesystem path (\"./Packages/signal\")."
+      }
+    },
+    "process": {
+      "description": "What to read, where to write, how to print.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ],
+          "default": "src",
+          "description": "Source directory, or a list of them. One root flattens into the output, several keep their own directory so two roots cannot collide."
+        },
+        "output": {
+          "type": "string",
+          "default": "dist",
+          "description": "Mirror of `input` with transforms applied."
+        },
+        "include": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/*.luau",
+            "**/*.lua"
+          ],
+          "description": "Globs relative to `input`."
+        },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Globs to skip entirely."
+        },
+        "generator": {
+          "enum": [
+            "retain-lines",
+            "dense",
+            "readable"
+          ],
+          "default": "retain-lines",
+          "description": "Output printer. retain-lines preserves formatting, comments, and line numbers. dense and readable land in M4."
+        },
+        "quotes": {
+          "enum": [
+            "preserve",
+            "double",
+            "single"
+          ],
+          "default": "preserve",
+          "description": "Quote style for require strings in the output. preserve keeps whatever the source used, double/single requote every require string and generated instance expression."
+        },
+        "cache": {
+          "type": "boolean",
+          "default": true,
+          "description": "Incremental builds via content hashing."
+        },
+        "cache_dir": {
+          "type": "string",
+          "default": ".larvae",
+          "description": "Cache directory; add to .gitignore."
+        }
+      }
+    },
+    "requires": {
+      "description": "The require-rewriting transform. Input semantics are always Luau-RFC \"luau\" mode.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "enum": [
+            "roblox-string",
+            "path",
+            "roblox-instance"
+          ],
+          "default": "roblox-string",
+          "description": "roblox-string: native @game/./@self string requires. path: relative filesystem paths (Lune). roblox-instance: Instance expressions like script.Parent:FindFirstChild(\"x\") (see indexing_style)."
+        },
+        "sourcemap": {
+          "type": "string",
+          "description": "Path to a rojo sourcemap.json. Rojo's own file to instance map, which settles the cases a project file cannot describe on its own. It wins over auto mounts and is part of the cache key, so a stale one cannot produce stale requires."
+        },
+        "mounts": {
+          "type": "object",
+          "description": "Fallback filesystem->DataModel mapping; rarely needed with a Rojo project file. Keys are directories relative to the project root.",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^@game(/.*)?$"
+          }
+        },
+        "strict": {
+          "type": "boolean",
+          "default": false,
+          "description": "Upgrade warn-level classes (missing target file, case mismatch) to errors. Unknown aliases and inexpressible/realm-violating requires are ALWAYS errors."
+        },
+        "instance_input": {
+          "type": "boolean",
+          "default": true,
+          "description": "Read require(script.Parent.Foo) style requires as input and rewrite them to the configured target. Turn it off to leave instance requires exactly as written."
+        },
+        "overrides": {
+          "type": "object",
+          "description": "A different require target for the paths a glob matches, relative to [process].input. First match wins. The value is a target name, or a table with target and indexing_style.",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "roblox-string",
+                  "roblox-instance",
+                  "path"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "target": {
+                    "type": "string",
+                    "enum": [
+                      "roblox-string",
+                      "roblox-instance",
+                      "path"
+                    ]
+                  },
+                  "indexing_style": {
+                    "type": "string",
+                    "enum": [
+                      "property",
+                      "find_first_child",
+                      "wait_for_child"
+                    ]
+                  }
+                },
+                "required": [
+                  "target"
+                ]
+              }
+            ]
+          }
+        },
+        "indexing_style": {
+          "enum": [
+            "find_first_child",
+            "wait_for_child",
+            "property",
+            "find-first-child",
+            "wait-for-child",
+            "property-instance"
+          ],
+          "default": "find_first_child",
+          "description": "roblox-instance target only: how emitted Instance chains index children. find_first_child -> :FindFirstChild(\"x\"), wait_for_child -> :WaitForChild(\"x\"), property -> .x (the dot format). Kebab-case spellings are accepted too."
+        }
+      }
+    },
+    "rojo": {
+      "description": "Rojo project integration: auto-derived mounts and the derived build project in .larvae/.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project": {
+          "type": "string",
+          "default": "default.project.json",
+          "description": "Source-of-truth Rojo project file."
+        },
+        "build_project": {
+          "type": "string",
+          "description": "Override the derived build project location (default: <cache_dir>/build.project.json)."
+        }
+      }
+    },
+    "defines": {
+      "description": "Compile-time constants, injected as globals and constant-folded. Override per profile for dev/release builds.",
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "boolean",
+          "string",
+          "number"
+        ]
+      }
+    },
+    "rule": {
+      "description": "false = off (default), true = on, or a table with rule options and per-rule file filters (apply_to/skip globs).",
+      "type": [
+        "boolean",
+        "object"
+      ]
+    },
+    "rules": {
+      "description": "Builtin transforms, all off by default. Every darklua rule name is accepted so configs port over 1:1. Rules that are not implemented yet error at load time naming their milestone. darklua's convert_require lives in [requires], inject_global_value in [defines], remove_spaces in the dense generator.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "const_requires": {
+          "type": "boolean",
+          "default": false,
+          "description": "larvae only. Turn `local X = require(...)` into `const X = require(...)`. Skips multi bindings and annotated locals. Implemented."
+        },
+        "remove_comments": {
+          "description": "Remove comments. `true`, or a table with `except` regexes for comments to keep (defaults to [\"^--!\"] so Luau directives survive; set [] to match darklua). Implemented.",
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "except": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "default": [
+                    "^--!"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "append_text_comment": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Insert a comment at the start or end of every file. Implemented.",
+          "properties": {
+            "text": {
+              "type": "string",
+              "description": "Literal comment text, mutually exclusive with file"
+            },
+            "file": {
+              "type": "string",
+              "description": "Read the comment text from this file"
+            },
+            "location": {
+              "enum": [
+                "start",
+                "end"
+              ],
+              "default": "start"
+            }
+          }
+        },
+        "add_luau_directive": {
+          "type": "string",
+          "description": "larvae only. Write a Luau directive at the top of every file, ex: \"strict\" emits --!strict. An existing directive of the same family is left alone. Implemented.",
+          "examples": [
+            "strict",
+            "nonstrict",
+            "native",
+            "optimize 2"
+          ]
+        },
+        "remove_calls": {
+          "description": "larvae only. Remove statement position calls to the named functions, ex: print or debug.profilebegin. Names may be dotted paths; method calls and computed callees are never matched, and a call whose value is used is left alone. Implemented.",
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "functions"
+              ],
+              "properties": {
+                "functions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "preserve_arguments_side_effects": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Keep calls whose arguments call something, since that inner call may be the point of the line"
+                }
+              }
+            }
+          ]
+        },
+        "use_get_service": {
+          "type": "boolean",
+          "default": false,
+          "description": "larvae only. Rewrite `game.Players` into `game:GetService(\"Players\")` for the known services, which keeps working when a service is renamed or not created yet. A local named game defeats it. Implemented."
+        },
+        "dedupe_requires": {
+          "type": "boolean",
+          "default": false,
+          "description": "larvae only. Top level `local X = require(...)` statements that resolve to the same module collapse, the later ones become aliases of the first. Skips const, annotated and multi binding locals. Implemented."
+        },
+        "inject_module_path": {
+          "type": "string",
+          "description": "larvae only. Name of a constant defined at the top of every file that references it, holding that file's DataModel path, ex: \"@game/ReplicatedStorage/shared/util\". Warns when no mount covers the file. Implemented.",
+          "examples": [
+            "MODULE_PATH"
+          ]
+        },
+        "freeze_module": {
+          "type": "boolean",
+          "default": false,
+          "description": "larvae only. Wrap a module's returned table in `table.freeze`, only when nothing can write to it, so field writes, rebinds and metatable patterns turn the rule off for that file. Implemented."
+        },
+        "compute_expression": {
+          "type": "boolean",
+          "default": false,
+          "description": "Fold constant expressions to their value. Only folds when the result prints back exactly, so fractions, values past exact double range and strings holding escapes are left alone. Implemented."
+        },
+        "convert_function_to_assignment": {
+          "type": "boolean",
+          "default": false,
+          "description": "Rewrite `function foo()` into `foo = function()`, and `function o:m()` into `o.m = function(self)`. Attributed functions are left alone. Implemented."
+        },
+        "convert_index_to_field": {
+          "type": "boolean",
+          "default": false,
+          "description": "Rewrite `t[\"field\"]` into `t.field`, and the same for table constructor keys, when the literal spells a valid name that is not a reserved word. Implemented."
+        },
+        "convert_local_function_to_assign": {
+          "type": "boolean",
+          "default": false,
+          "description": "Rewrite `local function f()` into `local f = function()`, only when the body never mentions f, since the local form is in scope inside itself. Implemented."
+        },
+        "convert_luau_number": {
+          "type": "boolean",
+          "default": false,
+          "description": "Rewrite binary literals like 0b1010 as hex and strip digit separators, both being Luau only syntax. Implemented."
+        },
+        "convert_square_root_call": {
+          "type": "boolean",
+          "default": false,
+          "description": "Rewrite `math.sqrt(x)` into `(x ^ 0.5)`. The result is always parenthesised so it survives being the base of another power. Implemented."
+        },
+        "filter_after_early_return": {
+          "type": "boolean",
+          "default": false,
+          "description": "Delete the statements after a `do ... return ... end` block, which can never run. Stops if a type alias is among them, since an exported one is visible outside the block. Implemented."
+        },
+        "group_local_assignment": {
+          "type": "boolean",
+          "default": false,
+          "description": "Merge a run of adjacent local declarations into one. Conservative, it stops at a call, a dependency between them, an annotation, a comment or anything but whitespace in between. Implemented."
+        },
+        "make_assignment_local": {
+          "type": "boolean",
+          "default": false,
+          "description": "Turn a `const` declaration back into a `local` one, the inverse of const_requires, for output that has to stay plain Lua. Implemented."
+        },
+        "remove_assertions": {
+          "description": "Remove `assert(...)` statements. Implemented.",
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "preserve_arguments_side_effects": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Keep calls whose arguments call something, since that inner call may be the point of the line"
+                }
+              }
+            }
+          ]
+        },
+        "remove_attribute": {
+          "description": "Strip function attributes, ex: @native. `true` removes every one, or a table with `match` regexes tested against the attribute name without its @. Implemented.",
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "match": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "default": [],
+                  "description": "Regexes tested against the attribute name, empty means every attribute"
+                }
+              }
+            }
+          ]
+        },
+        "remove_compound_assignment": {
+          "type": "boolean",
+          "default": false,
+          "description": "Expand `x += 1` into `x = x + 1` for every compound operator. Targets that would have to run code twice, ex: a computed key holding a call, are left alone. Implemented."
+        },
+        "remove_continue": {
+          "type": "boolean",
+          "default": false,
+          "description": "Rewrite a loop containing `continue` into the `repeat ... until true` form with `continue` spelled `break`. Loops that also break at the same level, and repeat loops whose condition can read body locals, are left alone. Implemented."
+        },
+        "remove_debug_profiling": {
+          "description": "Remove `debug.profilebegin` and `debug.profileend` statements. Implemented.",
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "preserve_arguments_side_effects": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Keep calls whose arguments call something, since that inner call may be the point of the line"
+                }
+              }
+            }
+          ]
+        },
+        "remove_empty_do": {
+          "type": "boolean",
+          "default": false,
+          "description": "Drop `do end` blocks that contain nothing. A lone semicolon counts as content. Nested empties shed one layer per run. Implemented."
+        },
+        "remove_floor_division": {
+          "type": "boolean",
+          "default": false,
+          "description": "Rewrite `a // b` into `math.floor(a / b)`, and `a //= b` into `a = math.floor(a / b)`. Implemented."
+        },
+        "remove_function_call_parens": {
+          "type": "boolean",
+          "default": false,
+          "description": "Rewrite `f(\"x\")` into `f\"x\"` and `f({})` into `f{}` when a call takes exactly one string or table argument. Implemented."
+        },
+        "remove_if_expression": {
+          "type": "boolean",
+          "default": false,
+          "description": "Rewrite `if c then a else b` into `c and a or b`. Only applied when the then value can never be false or nil, otherwise the and/or form would not be equivalent and the expression is left alone. Implemented."
+        },
+        "remove_interpolated_string": {
+          "description": "Rewrite backtick strings into string.format calls. `true`, or a table with `strategy`, \"string\" wraps each value in tostring and formats with %s, \"tostring\" uses Luau's %*. Multi line and nested backtick strings are left alone. Implemented.",
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "strategy": {
+                  "enum": [
+                    "string",
+                    "tostring"
+                  ],
+                  "default": "string"
+                }
+              }
+            }
+          ]
+        },
+        "remove_method_call": {
+          "type": "boolean",
+          "default": false,
+          "description": "Rewrite `obj:m(x)` into `obj.m(obj, x)`. Only for a plain identifier receiver, anything else would be evaluated twice. Implemented."
+        },
+        "remove_method_definition": {
+          "type": "boolean",
+          "default": false,
+          "description": "Rewrite `function C:m()` into `function C.m(self)`, making the implicit self parameter explicit. Implemented."
+        },
+        "remove_nil_declaration": {
+          "type": "boolean",
+          "default": false,
+          "description": "Rewrite `local x = nil` into `local x` and drop trailing nil values from multi bindings. Skips const, which must keep a value. Implemented."
+        },
+        "remove_types": {
+          "type": "boolean",
+          "default": false,
+          "description": "Strip every type annotation, bindings, parameters, return types, generic lists, type aliases and the tail of a `::` assertion. Implemented."
+        },
+        "remove_unused_if_branch": {
+          "type": "boolean",
+          "default": false,
+          "description": "Prune if branches whose condition is a known constant. A branch that always runs is unwrapped, or becomes a `do` block when it declares locals so their scope is preserved. Implemented."
+        },
+        "remove_unused_variable": {
+          "$ref": "#/$defs/rule",
+          "description": "Remove unused locals and local functions."
+        },
+        "remove_unused_while": {
+          "type": "boolean",
+          "default": false,
+          "description": "Delete a while loop whose condition is a constant false. Implemented."
+        },
+        "rename_variables": {
+          "$ref": "#/$defs/rule",
+          "description": "Rename locals and params to short names."
+        }
+      }
+    },
+    "worms": {
+      "description": "Worms, extensions loaded from a GitHub release. A worm is Luau source or a wasm32 module in a zip carrying a worm.toml. The key names the worm and its settings live under [config.<key>]. (M3)",
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "owner/repo@version, ex: \"luau-xml/worm@0.1.0\"."
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "repo",
+              "version"
+            ],
+            "properties": {
+              "repo": {
+                "type": "string",
+                "description": "owner/repo on GitHub."
+              },
+              "version": {
+                "type": "string",
+                "description": "Release tag to pin, without a leading v."
+              },
+              "asset": {
+                "type": "string",
+                "description": "Release asset to fetch. Defaults to <key>-worm.zip, then worm.zip."
+              }
+            }
+          }
+        ]
+      }
+    },
+    "bundle": {
+      "description": "Single-file bundling with deterministic module-init ordering. Present = enabled. (M3)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entry"
+      ],
+      "properties": {
+        "entry": {
+          "type": "string",
+          "description": "Entry-point module."
+        },
+        "output": {
+          "type": "string"
+        },
+        "excludes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Requires left as-is (runtime-provided), e.g. \"@lune/**\"."
+        },
+        "modules_identifier": {
+          "type": "string",
+          "default": "__LARVAE_MODULES"
+        },
+        "tree_shake": {
+          "type": "boolean",
+          "default": true,
+          "description": "Drop modules unreachable from the entry point."
+        },
+        "loaders": {
+          "type": "object",
+          "description": "Data files required as modules are converted to Lua tables (glob -> loader).",
+          "additionalProperties": {
+            "enum": [
+              "json",
+              "toml",
+              "yaml",
+              "text",
+              "skip"
+            ]
+          }
+        }
+      }
+    },
+    "minify": {
+      "description": "Options for generator = \"dense\". (M4)",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "column_span": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 120,
+          "description": "Max line width; 0 = unlimited."
+        },
+        "rename_variables": {
+          "type": "boolean",
+          "default": true,
+          "description": "Frequency-based short identifiers."
+        },
+        "trace_map": {
+          "type": "string",
+          "description": "Emit a mapping file for stack-trace deobfuscation."
+        }
+      }
+    },
+    "check": {
+      "description": "CI-gate diagnostics for `larvae check`. (M3)",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "disallow_cycles": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require cycles fail the check."
+        },
+        "disallow_unused_modules": {
+          "type": "boolean",
+          "default": false,
+          "description": "Files unreachable from any entry point."
+        },
+        "entry_points": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "realm_analysis": {
+          "type": "boolean",
+          "default": true,
+          "description": "Error when client-reachable code requires server-only containers."
+        },
+        "early_require_diagnostics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Flag string requires reachable from early client entry points (no wait semantics)."
+        },
+        "native_expressible": {
+          "type": "boolean",
+          "default": true,
+          "description": "Flag emitted requires that can't be native string form."
+        }
+      }
+    }
+  }
+}

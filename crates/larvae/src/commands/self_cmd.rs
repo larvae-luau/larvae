@@ -28,15 +28,20 @@ pub enum SelfCommand {
 
     /// Remove larvae from this machine
     Uninstall,
+
+    /// Set up editor completion for larvae.toml
+    Code,
 }
 
-pub fn run(cmd: SelfCommand) -> Result<ExitCode> {
+pub fn run(root: &Path, cmd: SelfCommand) -> Result<ExitCode> {
     match cmd {
         SelfCommand::Install => install(),
 
         SelfCommand::Update { force } => update(force),
 
         SelfCommand::Uninstall => uninstall(),
+
+        SelfCommand::Code => crate::commands::code::run(root),
     }
 }
 

@@ -111,7 +111,7 @@ does not cascade require failures into a live Studio session.
 | `larvae process --watch` | the same, on every save |
 | `larvae check` | validate requires and syntax, write nothing, exit non zero on errors |
 | `larvae init` | scaffold a config |
-| `larvae schema` | add the schema line for editor completion |
+| `larvae self code` | set up editor completion for larvae.toml |
 | `larvae self install` | manage the install, with `update` and `uninstall` |
 
 `check` is the CI gate. It reports unresolvable requires, realm violations,
@@ -120,8 +120,9 @@ on purpose.
 
 ## Configuration
 
-Every key is optional. Run `larvae schema` for completion and hover docs in
-any editor with Even Better TOML or Taplo.
+Every key is optional. Run `larvae self code` for completion and hover docs.
+It wires up Even Better TOML if you have it, and falls back to a schema line
+in your config if you do not.
 
 ```toml
 [aliases]

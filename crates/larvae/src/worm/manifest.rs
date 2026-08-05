@@ -98,7 +98,7 @@ pub struct RuleDecl {
     /// Value used when the user does not set one, and what "off" looks like
     #[serde(default)]
     pub default: Option<toml::Value>,
-    /// Shown in editor hover, via `larvae schema`
+    /// Shown in editor hover, via the JSON schema
     #[serde(default)]
     pub description: Option<String>,
     /// Node kinds that cross the boundary, everything else stays on the fast path
