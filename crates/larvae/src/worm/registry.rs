@@ -14,7 +14,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::config::worms::{Source, Worms as WormsConfig};
 
-use super::manifest::RuleDecl;
+use super::manifest::{RuleDecl, Stage};
 use super::{RequireOwner, Worm};
 
 /// A worm plus what the project configured it with
@@ -24,6 +24,8 @@ pub struct Loaded {
     pub config: toml::Value,
     /// Rules that are on, by name, with the value each resolved to
     pub rules: BTreeMap<String, toml::Value>,
+    /// What the user asked for in `[worms.<name>] run_order`
+    run_order: Option<Stage>,
 }
 
 impl Loaded {
@@ -36,11 +38,15 @@ impl Loaded {
     Where this worm's rules sit in the sequence. Highest wins: the user's word
     in [config.<name>], then what the worm declared, then after larvae.
     */
-    pub fn run_order(&self) -> Option<i64> {
-        self.config
-            .get("run_order")
-            .and_then(toml::Value::as_integer)
+    pub fn stage(&self) -> Stage {
+        self.run_order
             .or(self.worm.manifest.run_order)
+            .unwrap_or(Stage::Named(super::manifest::Side::After))
+    }
+
+    /// The slot this worm's rules run in, ours being Stage::NATIVE
+    pub fn slot(&self) -> i64 {
+        self.stage().slot()
     }
 }
 
@@ -56,12 +62,11 @@ impl Registry {
         root: &Path,
         config: &WormsConfig,
         per_worm: &BTreeMap<String, toml::Value>,
-        rules: &toml::Value,
     ) -> Result<Self> {
         let mut worms = Vec::new();
 
-        for (name, source) in config.iter() {
-            let dir = match source {
+        for (name, entry) in config.iter() {
+            let dir = match &entry.source {
                 Source::Local { path } => root.join(path),
 
                 Source::Release { repo, version, .. } => {
@@ -85,12 +90,13 @@ impl Registry {
                 );
             }
 
-            let enabled = resolve_rules(name, &worm, rules)?;
+            let enabled = resolve_rules(name, &worm, &entry.rules)?;
 
             worms.push(Loaded {
                 worm,
                 config: per_worm.get(name).cloned().unwrap_or_else(empty_table),
                 rules: enabled,
+                run_order: entry.run_order,
             });
         }
 
@@ -174,13 +180,22 @@ an error, because otherwise a typo in [rules] is a setting that does nothing.
 fn resolve_rules(
     name: &str,
     worm: &Worm,
-    rules: &toml::Value,
+    rules: &BTreeMap<String, toml::Value>,
 ) -> Result<BTreeMap<String, toml::Value>> {
-    let table = rules.as_table();
     let mut out = BTreeMap::new();
 
+    /*
+    A rule the user switched on that this worm does not declare would be a
+    setting that silently does nothing, so it is named rather than ignored.
+    */
+    for key in rules.keys() {
+        if !worm.manifest.rules.contains_key(key) {
+            bail!("worm `{name}` has no rule `{key}`");
+        }
+    }
+
     for (rule, decl) in &worm.manifest.rules {
-        let user = table.and_then(|t| t.get(rule));
+        let user = rules.get(rule);
         let resolved = decl.resolve(user);
 
         if RuleDecl::is_off(resolved) {
@@ -192,8 +207,6 @@ fn resolve_rules(
             resolved.cloned().unwrap_or(toml::Value::Boolean(true)),
         );
     }
-
-    let _ = name;
 
     Ok(out)
 }
@@ -219,10 +232,6 @@ mod tests {
         WormsConfig::parse(&toml::from_str::<toml::Value>(src).unwrap()).unwrap()
     }
 
-    fn no_rules() -> toml::Value {
-        toml::Value::Table(toml::map::Map::new())
-    }
-
     #[test]
     fn a_local_worm_loads_through_the_registry() {
         let root = tempfile::tempdir().unwrap();
@@ -237,7 +246,6 @@ mod tests {
             root.path(),
             &config("echo = { path = \"w\" }"),
             &BTreeMap::new(),
-            &no_rules(),
         )
         .unwrap();
 
@@ -258,7 +266,6 @@ mod tests {
             root.path(),
             &config("expected = { path = \"w\" }"),
             &BTreeMap::new(),
-            &no_rules(),
         )
         .err()
         .unwrap();
@@ -285,7 +292,6 @@ mod tests {
             root.path(),
             &config("one = { path = \"a\" }\ntwo = { path = \"b\" }"),
             &BTreeMap::new(),
-            &no_rules(),
         )
         .err()
         .unwrap();
@@ -301,7 +307,6 @@ mod tests {
             root.path(),
             &config("luaux = \"luau-xml/worm@0.1.0\""),
             &BTreeMap::new(),
-            &no_rules(),
         )
         .err()
         .unwrap();
@@ -326,7 +331,6 @@ mod tests {
             root.path(),
             &config("r = { path = \"w\" }"),
             &BTreeMap::new(),
-            &no_rules(),
         )
         .unwrap();
 
@@ -343,12 +347,10 @@ mod tests {
             "return { rules = { loud = { visit = function() end } } }",
         );
 
-        let rules = toml::from_str::<toml::Value>("loud = true").unwrap();
         let r = Registry::load(
             root.path(),
-            &config("r = { path = \"w\" }"),
+            &config("r = { path = \"w\", rules = { loud = true } }"),
             &BTreeMap::new(),
-            &rules,
         )
         .unwrap();
 
@@ -369,20 +371,14 @@ mod tests {
             "return { rules = { loud = { visit = function() end } } }",
         );
 
-        let per_worm = BTreeMap::from([(
-            "r".to_owned(),
-            toml::from_str::<toml::Value>("run_order = 1").unwrap(),
-        )]);
-
         let r = Registry::load(
             root.path(),
-            &config("r = { path = \"w\" }"),
-            &per_worm,
-            &no_rules(),
+            &config("r = { path = \"w\", run_order = 1 }"),
+            &BTreeMap::new(),
         )
         .unwrap();
 
-        assert_eq!(r.iter().next().unwrap().run_order(), Some(1));
+        assert_eq!(r.iter().next().unwrap().slot(), 1);
     }
 
     #[test]
@@ -399,11 +395,10 @@ mod tests {
             root.path(),
             &config("r = { path = \"w\" }"),
             &BTreeMap::new(),
-            &no_rules(),
         )
         .unwrap();
 
-        assert_eq!(r.iter().next().unwrap().run_order(), Some(5));
+        assert_eq!(r.iter().next().unwrap().slot(), 5);
     }
 
     #[test]
@@ -420,7 +415,6 @@ mod tests {
             root.path(),
             &config("echo = { path = \"w\" }"),
             &BTreeMap::new(),
-            &no_rules(),
         )
         .unwrap();
 

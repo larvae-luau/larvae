@@ -232,40 +232,70 @@ fn two_worms_claiming_one_extension_is_refused_at_load() {
     assert!(format!("{err:#}").contains("both claim .mk"), "{err:#}");
 }
 
-/// A worm's rules live in [rules] beside ours, so the name check has to wait
+/// A worm's rules are namespaced under it, so one cannot shadow a builtin
 #[test]
-fn a_worm_rule_name_is_accepted_and_a_typo_is_not() {
+fn worm_rules_live_under_the_worm_and_are_checked_against_it() {
     let tmp = fixture();
     let root = tmp.path();
 
     write(
         root,
         "worms/r/worm.toml",
-        "name = \"r\"\napi = 1\nform = \"luau\"\nentry = \"init.luau\"\nrun_order = 1\n\n[rules.tidy]\ndefault = false\n",
+        "name = \"r\"\napi = 1\nform = \"luau\"\nentry = \"init.luau\"\nrun_order = \"before\"\n\n[rules.tidy]\ndefault = false\n",
     );
     write(
         root,
         "worms/r/init.luau",
         "return { rules = { tidy = { visit = function() end } } }",
     );
+
     write(
         root,
         "larvae.toml",
-        "[worms]\nr = { path = \"worms/r\" }\n\n[rules]\ntidy = true\n",
+        "[worms]\nr = { path = \"worms/r\", rules = { tidy = true } }\n",
     );
 
     let config = Config::load_or_default(root).unwrap();
-
     assert!(pipeline::run(root, &config, true).is_ok());
 
+    // a rule the worm does not declare is named rather than ignored
     write(
         root,
         "larvae.toml",
-        "[worms]\nr = { path = \"worms/r\" }\n\n[rules]\ntidyy = true\n",
+        "[worms]\nr = { path = \"worms/r\", rules = { tidyy = true } }\n",
     );
 
     let config = Config::load_or_default(root).unwrap();
     let err = pipeline::run(root, &config, true).err().unwrap();
 
     assert!(format!("{err:#}").contains("tidyy"), "{err:#}");
+}
+
+/// A name that is ours stays ours, even if a worm declares the same one
+#[test]
+fn a_worm_rule_cannot_shadow_a_builtin() {
+    let tmp = fixture();
+    let root = tmp.path();
+
+    write(
+        root,
+        "worms/r/worm.toml",
+        "name = \"r\"\napi = 1\nform = \"luau\"\nentry = \"init.luau\"\n\n[rules.const_requires]\ndefault = false\n",
+    );
+    write(
+        root,
+        "worms/r/init.luau",
+        "return { rules = { const_requires = { visit = function() end } } }",
+    );
+    write(
+        root,
+        "larvae.toml",
+        "[rules]\nconst_requires = true\n\n[worms]\nr = { path = \"worms/r\", rules = { const_requires = true } }\n",
+    );
+
+    // both are legal and mean different things, which is the point of the split
+    let config = Config::load_or_default(root).unwrap();
+
+    assert!(config.rules.const_requires);
+    assert!(pipeline::run(root, &config, true).is_ok());
 }

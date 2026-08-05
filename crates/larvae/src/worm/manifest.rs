@@ -17,6 +17,61 @@ pub enum Form {
     Wasm,
 }
 
+/*
+Where a worm's rules sit relative to larvae's own.
+
+An author should not have to know what number our native stage is, so they say
+which side of it they want and we work out the rest. A user writing an explicit
+number still wins over both.
+*/
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+pub enum Stage {
+    /// `run_order = 2`, an explicit slot
+    At(i64),
+    /// `run_order = "before"` or `"after"`, relative to our native rules
+    Named(Side),
+}
+
+/// Which side of larvae's native rules a worm asked for
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Side {
+    /// Runs first, so larvae's rules see this worm's output
+    Before,
+    /// Runs after our native rules, which is what you get by saying nothing
+    #[default]
+    After,
+}
+
+impl std::fmt::Display for Stage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::At(n) => write!(f, "slot {n}"),
+
+            Self::Named(Side::Before) => write!(f, "before larvae's rules"),
+
+            Self::Named(Side::After) => write!(f, "after larvae's rules"),
+        }
+    }
+}
+
+impl Stage {
+    /// Our native rules occupy this slot, so before and after are either side
+    pub const NATIVE: i64 = 0;
+
+    /// The slot this resolves to
+    pub fn slot(self) -> i64 {
+        match self {
+            Self::At(n) => n,
+
+            Self::Named(Side::Before) => Self::NATIVE - 1,
+
+            Self::Named(Side::After) => Self::NATIVE + 1,
+        }
+    }
+}
+
 /// Who owns the requires in a worm's output
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -75,9 +130,9 @@ pub struct Manifest {
     pub form: Form,
     /// Artifact filename inside the zip
     pub entry: String,
-    /// Where the worm's rule half sits in the sequence, overridable by the user
+    /// Which side of our native rules this worm wants, overridable by the user
     #[serde(default)]
-    pub run_order: Option<i64>,
+    pub run_order: Option<Stage>,
     /// Who owns requires in this worm's output
     #[serde(default)]
     pub requires: RequireOwner,
@@ -226,7 +281,32 @@ filter = ["Call"]
         assert_eq!(rule.filter, ["Call"]);
         assert_eq!(rule.description.as_deref(), Some("Expand class strings"));
         assert!(m.has_rules());
-        assert_eq!(m.run_order, Some(2));
+        assert_eq!(m.run_order, Some(Stage::At(2)));
+    }
+
+    /// The author's default, when the user says nothing
+    #[test]
+    fn a_worm_declares_which_side_of_our_rules_it_wants() {
+        let before = Manifest::parse(
+            r#"
+name  = "w"
+api   = 1
+form  = "luau"
+entry = "init.luau"
+run_order = "before"
+
+[rules.r]
+default = true
+"#,
+        )
+        .unwrap();
+
+        assert!(before.run_order.unwrap().slot() < Stage::NATIVE);
+
+        let after = Manifest::parse(&FRONTEND.replace("form  =", "run_order = \"after\"\nform  ="));
+
+        // still an error on a worm with no rules, whichever side it named
+        assert!(after.is_err());
     }
 
     #[test]

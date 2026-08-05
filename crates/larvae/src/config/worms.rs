@@ -12,6 +12,22 @@ use std::path::PathBuf;
 use anyhow::{Result, bail};
 use serde::Deserialize;
 
+use crate::worm::manifest::Stage;
+
+/// One worm, as the project asked for it
+#[derive(Debug, Clone, PartialEq)]
+pub struct Entry {
+    pub source: Source,
+    /// Where this worm's rules sit, the user's word being final
+    pub run_order: Option<Stage>,
+    /*
+    Rules the user switched on, by name. They live here rather than in [rules]
+    so a worm cannot shadow a builtin: a worm declaring const_requires would
+    otherwise be eaten by our typed config and never see it.
+    */
+    pub rules: BTreeMap<String, toml::Value>,
+}
+
 /// Where one worm comes from
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
@@ -50,7 +66,7 @@ impl Source {
 /// The shapes `[worms]` accepts, before validation
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
-enum Entry {
+enum Raw {
     /// `luaux = "luau-xml/worm@0.1.0"`
     Pin(String),
     Table(Table),
@@ -67,16 +83,20 @@ struct Table {
     asset: Option<String>,
     #[serde(default)]
     path: Option<PathBuf>,
+    #[serde(default)]
+    run_order: Option<Stage>,
+    #[serde(default)]
+    rules: BTreeMap<String, toml::Value>,
 }
 
 /// Every worm a project asked for, by name
 #[derive(Debug, Default)]
-pub struct Worms(pub BTreeMap<String, Source>);
+pub struct Worms(pub BTreeMap<String, Entry>);
 
 impl Worms {
     /// Read the `[worms]` table, rejecting anything ambiguous
     pub fn parse(value: &toml::Value) -> Result<Self> {
-        let entries: BTreeMap<String, Entry> = value
+        let entries: BTreeMap<String, Raw> = value
             .clone()
             .try_into()
             .map_err(|e| anyhow::anyhow!("[worms]: {e}"))?;
@@ -94,29 +114,35 @@ impl Worms {
         self.0.is_empty()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &Source)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &Entry)> {
         self.0.iter()
     }
 }
 
-fn source_of(name: &str, entry: Entry) -> Result<Source> {
-    match entry {
-        Entry::Pin(pin) => parse_pin(name, &pin),
+fn source_of(name: &str, raw: Raw) -> Result<Entry> {
+    let (run_order, rules) = match &raw {
+        Raw::Table(t) => (t.run_order, t.rules.clone()),
 
-        Entry::Table(t) => match (t.path, t.repo, t.version) {
+        Raw::Pin(_) => (None, BTreeMap::new()),
+    };
+
+    let source = match raw {
+        Raw::Pin(pin) => parse_pin(name, &pin)?,
+
+        Raw::Table(t) => match (t.path, t.repo, t.version) {
             (Some(path), None, None) => {
                 if t.asset.is_some() {
                     bail!("worm `{name}`: asset means nothing with path, it is not a release");
                 }
 
-                Ok(Source::Local { path })
+                Source::Local { path }
             }
 
-            (None, Some(repo), Some(version)) => Ok(Source::Release {
+            (None, Some(repo), Some(version)) => Source::Release {
                 repo,
                 version,
                 asset: t.asset,
-            }),
+            },
 
             (Some(_), _, _) => bail!("worm `{name}`: use path or repo, not both"),
 
@@ -124,7 +150,13 @@ fn source_of(name: &str, entry: Entry) -> Result<Source> {
 
             (None, None, _) => bail!("worm `{name}`: needs either repo and version, or path"),
         },
-    }
+    };
+
+    Ok(Entry {
+        source,
+        run_order,
+        rules,
+    })
 }
 
 /// `owner/repo@version`, which is the form almost every worm uses
@@ -161,7 +193,7 @@ mod tests {
         let w = worms(r#"luaux = "luau-xml/worm@0.1.0""#).unwrap();
 
         assert_eq!(
-            w.0["luaux"],
+            w.0["luaux"].source,
             Source::Release {
                 repo: "luau-xml/worm".into(),
                 version: "0.1.0".into(),
@@ -174,7 +206,9 @@ mod tests {
     fn a_leading_v_on_the_tag_is_accepted() {
         let w = worms(r#"luaux = "luau-xml/worm@v0.1.0""#).unwrap();
 
-        assert!(matches!(&w.0["luaux"], Source::Release { version, .. } if version == "0.1.0"));
+        assert!(
+            matches!(&w.0["luaux"].source, Source::Release { version, .. } if version == "0.1.0")
+        );
     }
 
     #[test]
@@ -182,7 +216,7 @@ mod tests {
         let w = worms(r#"luaux = "luau-xml/worm@0.1.0""#).unwrap();
 
         assert_eq!(
-            w.0["luaux"].asset_names("luaux"),
+            w.0["luaux"].source.asset_names("luaux"),
             ["luaux-worm.zip", "worm.zip"]
         );
     }
@@ -199,7 +233,7 @@ asset = "custom.zip"
         )
         .unwrap();
 
-        assert_eq!(w.0["luaux"].asset_names("luaux"), ["custom.zip"]);
+        assert_eq!(w.0["luaux"].source.asset_names("luaux"), ["custom.zip"]);
     }
 
     /// The whole point of the local form
@@ -214,7 +248,7 @@ path = "build/myworm"
         .unwrap();
 
         assert_eq!(
-            w.0["mine"],
+            w.0["mine"].source,
             Source::Local {
                 path: "build/myworm".into()
             }
@@ -277,6 +311,50 @@ asset = "y.zip"
         .unwrap();
 
         assert!(err.to_string().contains("not a release"), "{err}");
+    }
+
+    /// An author says which side of our rules they want, not a number
+    #[test]
+    fn a_worm_can_ask_for_before_or_after_by_name() {
+        let w = worms(
+            r#"
+[a]
+path = "x"
+run_order = "before"
+
+[b]
+path = "y"
+run_order = "after"
+
+[c]
+path = "z"
+run_order = 7
+"#,
+        )
+        .unwrap();
+
+        assert!(w.0["a"].run_order.unwrap().slot() < Stage::NATIVE);
+        assert!(w.0["b"].run_order.unwrap().slot() > Stage::NATIVE);
+        assert_eq!(w.0["c"].run_order.unwrap().slot(), 7);
+    }
+
+    #[test]
+    fn rules_live_under_the_worm_so_one_cannot_shadow_a_builtin() {
+        let w = worms(
+            r#"
+[mine]
+path = "x"
+rules = { tidy = true, const_requires = false }
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(w.0["mine"].rules["tidy"], toml::Value::Boolean(true));
+        // a name that is also ours, kept apart rather than colliding
+        assert_eq!(
+            w.0["mine"].rules["const_requires"],
+            toml::Value::Boolean(false)
+        );
     }
 
     #[test]

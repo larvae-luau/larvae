@@ -94,18 +94,11 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
         Some(value) => {
             let named = crate::config::worms::Worms::parse(value)?;
 
-            crate::worm::registry::Registry::load(
-                &root,
-                &named,
-                &config.config,
-                &rules_table(&config.rules.rest),
-            )?
+            crate::worm::registry::Registry::load(&root, &named, &config.config)?
         }
 
         None => crate::worm::registry::Registry::default(),
     };
-
-    config.validate_rules(&worms.declared_rules().collect::<Vec<_>>())?;
 
     let claimed = worms.claimed_extensions();
 
@@ -353,15 +346,4 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
         diags,
         build_project,
     })
-}
-
-/// The rules we do not own, as a table a worm's declarations resolve against
-fn rules_table(rest: &std::collections::HashMap<String, toml::Value>) -> toml::Value {
-    let mut table = toml::map::Map::new();
-
-    for (name, value) in rest {
-        table.insert(name.clone(), value.clone());
-    }
-
-    toml::Value::Table(table)
 }
