@@ -4,12 +4,12 @@
 //! the `larvae_worm::frontend!` macro a real worm would. Rebuild instructions
 //! are at the top of that crate's manifest.
 
-use larvae::worm::Worm;
+use larvae::worm::WasmWorm;
 
 const FIXTURE: &[u8] = include_bytes!("fixtures/echo_worm.wasm");
 
-fn load() -> Worm {
-    Worm::load(FIXTURE).expect("the fixture worm loads")
+fn load() -> WasmWorm {
+    WasmWorm::load(FIXTURE).expect("the fixture worm loads")
 }
 
 #[test]
@@ -93,5 +93,5 @@ fn a_trap_does_not_poison_the_rest_of_the_build() {
 
 #[test]
 fn junk_is_not_a_worm() {
-    assert!(Worm::load(b"not a wasm module at all").is_err());
+    assert!(WasmWorm::load(b"not a wasm module at all").is_err());
 }

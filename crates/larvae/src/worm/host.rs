@@ -49,8 +49,8 @@ impl Outcome {
     }
 }
 
-/// A loaded worm, ready to be called once per file
-pub struct Worm {
+/// A loaded wasm worm, ready to be called once per file
+pub struct WasmWorm {
     store: wasmi::Store<()>,
     memory: wasmi::Memory,
     alloc: wasmi::TypedFunc<u32, u32>,
@@ -58,7 +58,7 @@ pub struct Worm {
     transform: wasmi::TypedFunc<(u32, u32, u32, u32), u32>,
 }
 
-impl Worm {
+impl WasmWorm {
     /// Compile and instantiate a worm module
     pub fn load(wasm: &[u8]) -> Result<Self> {
         let engine = wasmi::Engine::default();
