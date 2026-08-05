@@ -8,6 +8,7 @@ config layer knows which form it is talking to.
 */
 
 pub mod ctx;
+pub mod fetch;
 pub mod host;
 pub mod luau;
 pub mod manifest;

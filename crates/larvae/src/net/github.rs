@@ -15,9 +15,30 @@ pub struct Asset {
     pub browser_download_url: String,
 }
 
+/// One release by its tag, with or without a leading v
+pub fn release_by_tag(repo: &str, version: &str) -> Result<Release> {
+    let tag = version.trim_start_matches('v');
+
+    // a project may tag either way, so try the bare form then the v form
+    get(&format!(
+        "https://api.github.com/repos/{repo}/releases/tags/{tag}"
+    ))
+    .or_else(|_| {
+        get(&format!(
+            "https://api.github.com/repos/{repo}/releases/tags/v{tag}"
+        ))
+    })
+}
+
 /// Latest non prerelease of owner/repo, honors GITHUB_TOKEN
 pub fn latest_release(repo: &str) -> Result<Release> {
-    let url = format!("https://api.github.com/repos/{repo}/releases/latest");
+    get(&format!(
+        "https://api.github.com/repos/{repo}/releases/latest"
+    ))
+}
+
+fn get(url: &str) -> Result<Release> {
+    let url = url.to_owned();
     let token = std::env::var("GITHUB_TOKEN").ok();
 
     let auth = token.map(|t| format!("Bearer {t}"));

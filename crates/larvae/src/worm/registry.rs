@@ -60,6 +60,7 @@ impl Registry {
     /// Load every worm the config named, relative to the project root
     pub fn load(
         root: &Path,
+        cache: &Path,
         config: &WormsConfig,
         per_worm: &BTreeMap<String, toml::Value>,
     ) -> Result<Self> {
@@ -69,11 +70,12 @@ impl Registry {
             let dir = match &entry.source {
                 Source::Local { path } => root.join(path),
 
-                Source::Release { repo, version, .. } => {
-                    bail!(
-                        "worm `{name}` comes from {repo}@{version}, and fetching a release is not implemented yet. Use a path while that lands."
-                    )
-                }
+                /*
+                Fetched once and kept in the cache, so a later build does no
+                network. The pin decides the version and the recorded hash
+                decides whether the bytes are still the ones we installed.
+                */
+                source @ Source::Release { .. } => super::fetch::ensure(cache, name, source)?,
             };
 
             let worm = Worm::load(&dir).with_context(|| format!("loading worm `{name}`"))?;
@@ -244,6 +246,7 @@ mod tests {
 
         let r = Registry::load(
             root.path(),
+            &root.path().join(".larvae"),
             &config("echo = { path = \"w\" }"),
             &BTreeMap::new(),
         )
@@ -264,6 +267,7 @@ mod tests {
 
         let err = Registry::load(
             root.path(),
+            &root.path().join(".larvae"),
             &config("expected = { path = \"w\" }"),
             &BTreeMap::new(),
         )
@@ -290,6 +294,7 @@ mod tests {
 
         let err = Registry::load(
             root.path(),
+            &root.path().join(".larvae"),
             &config("one = { path = \"a\" }\ntwo = { path = \"b\" }"),
             &BTreeMap::new(),
         )
@@ -299,22 +304,33 @@ mod tests {
         assert!(format!("{err:#}").contains("both claim .luaux"), "{err:#}");
     }
 
+    /*
+    A pin resolves through the cache, so an already unpacked worm needs no
+    network at all. Fetching itself is covered offline in fetch.rs.
+    */
     #[test]
-    fn a_release_pin_says_it_is_not_implemented_rather_than_failing_oddly() {
+    fn a_pinned_worm_is_taken_from_the_cache_when_it_is_there() {
         let root = tempfile::tempdir().unwrap();
+        let cache = root.path().join(".larvae");
+        let installed = super::super::fetch::install_dir(&cache, "echo", "0.1.0");
 
-        let err = Registry::load(
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::write(
+            installed.join("worm.toml"),
+            "name = \"echo\"\napi = 1\nform = \"luau\"\nentry = \"init.luau\"\n\n[frontend]\nclaims = [\".echo\"]\n",
+        )
+        .unwrap();
+        std::fs::write(installed.join("init.luau"), ECHO).unwrap();
+
+        let r = Registry::load(
             root.path(),
-            &config("luaux = \"luau-xml/worm@0.1.0\""),
+            &cache,
+            &config("echo = \"someone/echo@0.1.0\""),
             &BTreeMap::new(),
         )
-        .err()
         .unwrap();
 
-        assert!(
-            format!("{err:#}").contains("not implemented yet"),
-            "{err:#}"
-        );
+        assert_eq!(r.iter().count(), 1);
     }
 
     #[test]
@@ -329,6 +345,7 @@ mod tests {
 
         let r = Registry::load(
             root.path(),
+            &root.path().join(".larvae"),
             &config("r = { path = \"w\" }"),
             &BTreeMap::new(),
         )
@@ -349,6 +366,7 @@ mod tests {
 
         let r = Registry::load(
             root.path(),
+            &root.path().join(".larvae"),
             &config("r = { path = \"w\", rules = { loud = true } }"),
             &BTreeMap::new(),
         )
@@ -373,6 +391,7 @@ mod tests {
 
         let r = Registry::load(
             root.path(),
+            &root.path().join(".larvae"),
             &config("r = { path = \"w\", run_order = 1 }"),
             &BTreeMap::new(),
         )
@@ -393,6 +412,7 @@ mod tests {
 
         let r = Registry::load(
             root.path(),
+            &root.path().join(".larvae"),
             &config("r = { path = \"w\" }"),
             &BTreeMap::new(),
         )
@@ -413,6 +433,7 @@ mod tests {
 
         let mut r = Registry::load(
             root.path(),
+            &root.path().join(".larvae"),
             &config("echo = { path = \"w\" }"),
             &BTreeMap::new(),
         )

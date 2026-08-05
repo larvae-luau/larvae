@@ -94,7 +94,12 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
         Some(value) => {
             let named = crate::config::worms::Worms::parse(value)?;
 
-            crate::worm::registry::Registry::load(&root, &named, &config.config)?
+            crate::worm::registry::Registry::load(
+                &root,
+                &root.join(&config.process.cache_dir),
+                &named,
+                &config.config,
+            )?
         }
 
         None => crate::worm::registry::Registry::default(),
