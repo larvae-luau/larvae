@@ -1,0 +1,217 @@
+//! `larvae worm <command>`, for developing a worm before anyone can install it
+
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+
+use anyhow::{Context, Result};
+use clap::Subcommand;
+
+use crate::ui;
+use crate::worm::Worm;
+
+/// Luau type definitions for the worm API, written by `larvae worm types`
+pub const TYPES: &str = include_str!("../worm/worm.d.luau");
+
+/// Where `types` writes when nothing is asked for
+const TYPES_FILE: &str = "worm.d.luau";
+
+#[derive(Subcommand)]
+pub enum WormCommand {
+    /// Run a worm from a directory over one file, no project or install needed
+    Run {
+        /// Directory holding worm.toml and its artifact
+        worm: PathBuf,
+        /// File to pass through the worm
+        file: PathBuf,
+        /// TOML handed to the worm as its [config.<name>] table
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Write the result here instead of to stdout
+        #[arg(long, short)]
+        out: Option<PathBuf>,
+    },
+
+    /// Report what a worm declares, without running it
+    Info {
+        /// Directory holding worm.toml and its artifact
+        worm: PathBuf,
+    },
+
+    /// Write the Luau type definitions for worm authors
+    Types {
+        /// Where to write, defaults to ./worm.d.luau
+        #[arg(long, short)]
+        out: Option<PathBuf>,
+        /// Print to stdout instead of writing a file
+        #[arg(long)]
+        stdout: bool,
+    },
+}
+
+pub fn run(cmd: WormCommand) -> Result<ExitCode> {
+    match cmd {
+        WormCommand::Run {
+            worm,
+            file,
+            config,
+            out,
+        } => run_worm(&worm, &file, config.as_deref(), out.as_deref()),
+
+        WormCommand::Info { worm } => info(&worm),
+
+        WormCommand::Types { out, stdout } => types(out.as_deref(), stdout),
+    }
+}
+
+fn run_worm(
+    dir: &Path,
+    file: &Path,
+    config: Option<&Path>,
+    out: Option<&Path>,
+) -> Result<ExitCode> {
+    let source =
+        std::fs::read_to_string(file).with_context(|| format!("cannot read {}", ui::rel(file)))?;
+
+    let config = match config {
+        Some(path) => std::fs::read_to_string(path)
+            .with_context(|| format!("cannot read {}", ui::rel(path)))?,
+
+        None => String::new(),
+    };
+
+    let mut worm = Worm::load(dir)?;
+    let outcome = worm.transform(&source, &config)?;
+
+    if !outcome.ok {
+        ui::print_error(&format!("worm `{}`: {}", worm.name(), outcome.text));
+
+        return Ok(ExitCode::FAILURE);
+    }
+
+    /*
+    Line preservation is the property most easily broken by accident and the
+    hardest to notice, so say it every run rather than making an author think
+    to check.
+    */
+    let (before, after) = (source.lines().count(), outcome.text.lines().count());
+
+    if before == after {
+        eprintln!("{} lines in, {} lines out", before, after);
+    } else {
+        ui::print_error(&format!(
+            "line count changed, {before} in and {after} out, which breaks retain lines downstream"
+        ));
+    }
+
+    match out {
+        Some(path) => {
+            std::fs::write(path, &outcome.text)
+                .with_context(|| format!("cannot write {}", ui::rel(path)))?;
+
+            ui::print_success(&format!("wrote {}", ui::rel(path)));
+        }
+
+        None => print!("{}", outcome.text),
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+fn info(dir: &Path) -> Result<ExitCode> {
+    let worm = Worm::load(dir)?;
+    let m = &worm.manifest;
+    let color = ui::want_color_stderr();
+
+    eprintln!("{} {}", ui::accent(&m.name, color), m.entry);
+    eprintln!("  form       {:?}", m.form);
+    eprintln!("  api        {}", m.api);
+    eprintln!("  requires   {:?}", m.requires);
+
+    match &m.frontend {
+        Some(frontend) => eprintln!("  claims     {}", frontend.claims.join(", ")),
+
+        None => eprintln!("  claims     nothing, this worm has no frontend"),
+    }
+
+    if m.rules.is_empty() {
+        eprintln!("  rules      none, so it takes no run_order slot");
+    } else {
+        eprintln!(
+            "  run_order  {}",
+            match m.run_order {
+                Some(order) => order.to_string(),
+                None => "unset, runs after larvae".to_owned(),
+            }
+        );
+
+        for (name, rule) in &m.rules {
+            eprintln!("  rule       {name} (default {})", scalar(&rule.default));
+        }
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Render a rule default for display. We build toml without the serializer,
+/// so there is no Display to lean on and scalars are all a default can be.
+fn scalar(value: &Option<toml::Value>) -> String {
+    match value {
+        None => "unset".to_owned(),
+
+        Some(toml::Value::Boolean(b)) => b.to_string(),
+
+        Some(toml::Value::Integer(n)) => n.to_string(),
+
+        Some(toml::Value::Float(f)) => f.to_string(),
+
+        Some(toml::Value::String(s)) => format!("{s:?}"),
+
+        Some(other) => other.type_str().to_owned(),
+    }
+}
+
+fn types(out: Option<&Path>, stdout: bool) -> Result<ExitCode> {
+    if stdout {
+        print!("{TYPES}");
+
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let path = out
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| TYPES_FILE.into());
+
+    std::fs::write(&path, TYPES).with_context(|| format!("cannot write {}", ui::rel(&path)))?;
+
+    ui::print_success(&format!("wrote {}", ui::rel(&path)));
+    eprintln!("Point luau-lsp at it:");
+    eprintln!(
+        "  luau-lsp analyze --definitions={} your-worm.luau",
+        ui::rel(&path)
+    );
+
+    Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_definitions_declare_what_a_worm_returns() {
+        assert!(TYPES.contains("export type Worm"));
+        assert!(TYPES.contains("export type Frontend"));
+        assert!(TYPES.contains("export type Compile"));
+    }
+
+    /// The definitions have to be Luau a language server can actually load
+    #[test]
+    fn the_definitions_parse_as_luau() {
+        let lua = mlua::Lua::new();
+
+        lua.load(TYPES)
+            .set_name("worm.d.luau")
+            .into_function()
+            .expect("worm.d.luau is valid Luau");
+    }
+}

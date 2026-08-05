@@ -55,6 +55,12 @@ enum Command {
     /// Add the schema reference to larvae.toml for editor intellisense
     Schema,
 
+    /// Develop a worm, before it is published or installed
+    Worm {
+        #[command(subcommand)]
+        command: commands::worm::WormCommand,
+    },
+
     /// Manage the larvae installation itself
     #[command(name = "self")]
     SelfManage {
@@ -134,6 +140,8 @@ fn run() -> Result<ExitCode> {
         Command::Init => commands::init::run(&root),
 
         Command::Schema => commands::schema::run(&root),
+
+        Command::Worm { command } => commands::worm::run(command),
 
         Command::SelfManage { command } => match command {
             Some(cmd) => commands::self_cmd::run(cmd),
