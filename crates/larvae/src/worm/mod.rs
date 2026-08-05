@@ -13,6 +13,7 @@ pub mod host;
 pub mod luau;
 pub mod manifest;
 pub mod nodes;
+pub mod pool;
 pub mod registry;
 
 use std::path::Path;
@@ -43,6 +44,23 @@ pub struct Worm {
 }
 
 impl Worm {
+    /// Build a worm from a manifest and its artifact bytes, which is what a
+    /// worker does when it needs its own instance
+    pub fn from_parts(manifest: Manifest, artifact: &[u8]) -> Result<Self> {
+        let backend = match manifest.form {
+            Form::Luau => {
+                let source = std::str::from_utf8(artifact)
+                    .with_context(|| format!("worm `{}` is not UTF-8", manifest.name))?;
+
+                Backend::Luau(Box::new(LuauWorm::load(source, &manifest.name)?))
+            }
+
+            Form::Wasm => Backend::Wasm(Box::new(WasmWorm::load(artifact)?)),
+        };
+
+        Ok(Self { manifest, backend })
+    }
+
     /// Load a worm from an unpacked directory holding `worm.toml` and its artifact
     pub fn load(dir: &Path) -> Result<Self> {
         let path = dir.join(MANIFEST);
@@ -53,24 +71,54 @@ impl Worm {
             Manifest::parse(&text).with_context(|| format!("in {}", crate::ui::rel(&path)))?;
 
         let entry = dir.join(&manifest.entry);
+        let artifact = std::fs::read(&entry)
+            .with_context(|| format!("cannot read {}", crate::ui::rel(&entry)))?;
 
-        let backend = match manifest.form {
-            Form::Luau => {
-                let source = std::fs::read_to_string(&entry)
-                    .with_context(|| format!("cannot read {}", crate::ui::rel(&entry)))?;
+        Self::from_parts(manifest, &artifact)
+    }
 
-                Backend::Luau(Box::new(LuauWorm::load(&source, &manifest.name)?))
-            }
+    /// Read a worm's manifest and artifact without instantiating either
+    pub fn read_parts(dir: &Path) -> Result<(Manifest, Vec<u8>)> {
+        let path = dir.join(MANIFEST);
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("cannot read {}", crate::ui::rel(&path)))?;
 
-            Form::Wasm => {
-                let bytes = std::fs::read(&entry)
-                    .with_context(|| format!("cannot read {}", crate::ui::rel(&entry)))?;
+        let manifest =
+            Manifest::parse(&text).with_context(|| format!("in {}", crate::ui::rel(&path)))?;
 
-                Backend::Wasm(Box::new(WasmWorm::load(&bytes)?))
-            }
-        };
+        let entry = dir.join(&manifest.entry);
+        let artifact = std::fs::read(&entry)
+            .with_context(|| format!("cannot read {}", crate::ui::rel(&entry)))?;
 
-        Ok(Self { manifest, backend })
+        Ok((manifest, artifact))
+    }
+
+    /// Hand settings over once, before any file is seen
+    pub fn init(
+        &mut self,
+        config: &toml::Value,
+        rules: &std::collections::BTreeMap<String, toml::Value>,
+    ) -> Result<()> {
+        match &mut self.backend {
+            Backend::Luau(worm) => worm.init(config, rules),
+
+            Backend::Wasm(worm) => worm.init(&toml_text(config), &toml_text_map(rules)),
+        }
+    }
+
+    /// Run one of the worm's rules over the nodes its filter matched
+    pub fn run_rule(
+        &mut self,
+        rule: &str,
+        index: u32,
+        file: std::sync::Arc<ctx::FileCtx>,
+        matched: &[u32],
+    ) -> Result<Vec<crate::rules::edits::Edit>> {
+        match &mut self.backend {
+            Backend::Luau(worm) => worm.run_rule(rule, file, matched),
+
+            Backend::Wasm(worm) => worm.run_rule(index, file, matched),
+        }
     }
 
     /// The worm's name, which is also its key under `[worms]` and `[config]`
@@ -102,6 +150,44 @@ impl Worm {
             Backend::Wasm(worm) => worm.transform(source, config),
         }
         .with_context(|| format!("worm `{}`", self.manifest.name))
+    }
+}
+
+/*
+Settings cross to a wasm worm as TOML text, since that is what its ABI takes.
+A Luau worm gets real tables instead, which is why this only appears on one
+side. We build toml without its serializer, so scalars are written by hand.
+*/
+pub fn toml_text(value: &toml::Value) -> String {
+    match value.as_table() {
+        Some(table) => table
+            .iter()
+            .map(|(k, v)| format!("{k} = {}\n", scalar(v)))
+            .collect(),
+
+        None => String::new(),
+    }
+}
+
+/// The same, for the resolved rule map
+pub fn toml_text_map(rules: &std::collections::BTreeMap<String, toml::Value>) -> String {
+    rules
+        .iter()
+        .map(|(k, v)| format!("{k} = {}\n", scalar(v)))
+        .collect()
+}
+
+fn scalar(value: &toml::Value) -> String {
+    match value {
+        toml::Value::String(s) => format!("{s:?}"),
+
+        toml::Value::Integer(n) => n.to_string(),
+
+        toml::Value::Float(f) => f.to_string(),
+
+        toml::Value::Boolean(b) => b.to_string(),
+
+        other => format!("{:?}", other.type_str()),
     }
 }
 

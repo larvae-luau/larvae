@@ -124,6 +124,8 @@ pub(super) fn process_file(
     opts: &FileOpts,
     rules_cfg: &crate::config::RulesConfig,
     write: bool,
+    // worms with rules switched on, empty when the project has none
+    worms: &crate::worm::pool::Pool,
     diags: &mut Vec<Diag>,
 ) -> Option<FileOutcome> {
     let lexed = match lexer::lex(src) {
@@ -251,6 +253,15 @@ pub(super) fn process_file(
             edits.push("append_text_comment", rep);
         }
 
+        /*
+        Worm rules, on this worker's own instances. A file whose tokens hold
+        none of the kinds any rule asked for never builds a tree, which is what
+        keeps `filter` a cost control rather than advice.
+        */
+        if !worms.is_empty() {
+            run_worm_rules(worms, src, &lexed, path, edits, diags);
+        }
+
         if crate::rules::wants_ast(rules_cfg, &opts.defines) {
             let dm = ctx.dm.as_ref().map(|d| d.game_path());
             crate::rules::apply_ast_rules(
@@ -300,4 +311,76 @@ pub(super) fn process_file(
         dynamic: scanned.dynamic.len(),
         applied: edits.applied(),
     })
+}
+
+/*
+Flatten the file once, bucket its nodes by kind, and hand each worm the ones
+its rules asked for. Parsing happens here and only here, so a project whose
+worms declare narrow filters keeps the fast path on files that match nothing.
+*/
+fn run_worm_rules(
+    worms: &crate::worm::pool::Pool,
+    src: &str,
+    lexed: &crate::syntax::lexer::Lexed,
+    path: &Path,
+    edits: &mut Edits,
+    diags: &mut Vec<Diag>,
+) {
+    use std::sync::Arc;
+
+    use crate::worm::ctx::FileCtx;
+    use crate::worm::nodes::NodeTable;
+    use crate::worm::pool::Matched;
+
+    let with_rules = worms.with_rules();
+
+    if with_rules.is_empty() {
+        return;
+    }
+
+    let Ok(chunk) = crate::syntax::parser::parse(src, &lexed.toks) else {
+        // a syntax error is already reported by check, and a rule cannot help here
+        return;
+    };
+
+    let toks = &lexed.toks;
+    let bytes = |span: crate::syntax::ast::TokSpan| -> (u32, u32) {
+        if span.is_empty() {
+            let at = toks
+                .get(span.start as usize)
+                .map(|t| t.start)
+                .unwrap_or(src.len() as u32);
+
+            return (at, at);
+        }
+
+        (
+            toks[span.start as usize].start,
+            toks[span.end as usize - 1].end,
+        )
+    };
+
+    let table = NodeTable::build(&chunk, &bytes);
+    let matched = Matched::of(&table, &worms.filters());
+
+    if matched.is_empty() {
+        return;
+    }
+
+    let file = Arc::new(FileCtx::new(table, src.to_owned(), crate::ui::rel(path)));
+
+    for (index, spec) in with_rules {
+        match worms.run(index, Arc::clone(&file), &matched) {
+            Ok(worm_edits) => {
+                for edit in worm_edits {
+                    edits.push("worm", edit);
+                }
+            }
+
+            Err(e) => diags.push(Diag::error(
+                path,
+                format!("worm `{}`: {e:#}", spec.manifest.name),
+            )),
+        }
+    }
 }

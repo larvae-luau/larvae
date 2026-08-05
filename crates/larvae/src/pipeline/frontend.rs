@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 use crate::diag::Diag;
 use crate::worm::registry::Registry;
+use crate::worm::toml_text;
 
 /// A claimed file, after its worm has had it
 pub struct Compiled {
@@ -118,43 +119,6 @@ pub fn luau_dest(rel: &Path) -> PathBuf {
     rel.with_extension("luau")
 }
 
-/// Re-serialize a worm's settings, since we hand them over as text
-fn toml_text(value: &toml::Value) -> String {
-    let Some(table) = value.as_table() else {
-        return String::new();
-    };
-
-    let mut out = String::new();
-
-    for (key, value) in table {
-        out.push_str(key);
-        out.push_str(" = ");
-        out.push_str(&scalar(value));
-        out.push('\n');
-    }
-
-    out
-}
-
-/*
-We build toml without its serializer, so scalars are written by hand. A worm
-wanting richer settings can keep its own config file, which is the arrangement
-luaux already asked for.
-*/
-fn scalar(value: &toml::Value) -> String {
-    match value {
-        toml::Value::String(s) => format!("{s:?}"),
-
-        toml::Value::Integer(n) => n.to_string(),
-
-        toml::Value::Float(f) => f.to_string(),
-
-        toml::Value::Boolean(b) => b.to_string(),
-
-        other => format!("{:?}", other.type_str()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,10 +136,5 @@ mod tests {
 
         assert!(text.contains("factory = \"vide\""), "{text}");
         assert!(text.contains("strict = true"), "{text}");
-    }
-
-    #[test]
-    fn no_settings_is_an_empty_string_rather_than_a_shape() {
-        assert_eq!(toml_text(&toml::Value::Boolean(true)), "");
     }
 }

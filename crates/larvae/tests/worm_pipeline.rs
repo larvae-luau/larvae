@@ -299,3 +299,209 @@ fn a_worm_rule_cannot_shadow_a_builtin() {
     assert!(config.rules.const_requires);
     assert!(pipeline::run(root, &config, true).is_ok());
 }
+
+/// A worm that removes dprint calls, the shape a real tidy up rule has
+fn tidy_worm(root: &Path) {
+    write(
+        root,
+        "worms/tidy/worm.toml",
+        r#"
+name  = "tidy"
+api   = 1
+form  = "luau"
+entry = "init.luau"
+run_order = "after"
+
+[rules.strip_debug]
+default = false
+filter = ["Call"]
+"#,
+    );
+    write(
+        root,
+        "worms/tidy/init.luau",
+        r#"
+return {
+    rules = {
+        strip_debug = {
+            visit = function(node, ctx)
+                if node:text():find("^dprint") then
+                    ctx:remove(node)
+                end
+            end,
+        },
+    },
+}
+"#,
+    );
+}
+
+#[test]
+fn a_worm_rule_runs_through_process() {
+    let tmp = fixture();
+    let root = tmp.path();
+
+    tidy_worm(root);
+    write(
+        root,
+        "larvae.toml",
+        "[aliases]\npkg = \"@game/ReplicatedStorage/Packages\"\n\n[worms]\ntidy = { path = \"worms/tidy\", rules = { strip_debug = true } }\n",
+    );
+    write(
+        root,
+        "src/shared/noisy.luau",
+        "local x = 1\ndprint(\"noisy\")\nprint(\"keep\")\nreturn x\n",
+    );
+
+    let outcome = build(root);
+    assert!(!outcome.has_errors(), "{}", errors(&outcome));
+
+    let out = read(root, "dist/shared/noisy.luau");
+
+    assert!(!out.contains("dprint"), "rule did not run: {out}");
+    assert!(out.contains("print(\"keep\")"), "rule over reached: {out}");
+}
+
+/// An off rule must cost nothing, not merely little
+#[test]
+fn a_rule_the_user_left_off_never_runs() {
+    let tmp = fixture();
+    let root = tmp.path();
+
+    tidy_worm(root);
+    // no rules table, so strip_debug keeps its default of false
+    write(
+        root,
+        "larvae.toml",
+        "[aliases]\npkg = \"@game/ReplicatedStorage/Packages\"\n\n[worms]\ntidy = { path = \"worms/tidy\" }\n",
+    );
+    write(
+        root,
+        "src/shared/noisy.luau",
+        "dprint(\"kept\")\nreturn 1\n",
+    );
+
+    build(root);
+
+    assert!(read(root, "dist/shared/noisy.luau").contains("dprint"));
+}
+
+#[test]
+fn a_worm_rule_preserves_line_count() {
+    let tmp = fixture();
+    let root = tmp.path();
+
+    tidy_worm(root);
+    write(
+        root,
+        "larvae.toml",
+        "[aliases]\npkg = \"@game/ReplicatedStorage/Packages\"\n\n[worms]\ntidy = { path = \"worms/tidy\", rules = { strip_debug = true } }\n",
+    );
+
+    let src = "local a = 1\ndprint(\"one\")\nlocal b = 2\ndprint(\"two\")\nreturn a + b\n";
+    write(root, "src/shared/lines.luau", src);
+
+    build(root);
+
+    assert_eq!(
+        read(root, "dist/shared/lines.luau").lines().count(),
+        src.lines().count()
+    );
+}
+
+/// Every worker builds its own instance, so this exercises more than one
+#[test]
+fn many_files_across_workers_all_get_the_rule() {
+    let tmp = fixture();
+    let root = tmp.path();
+
+    tidy_worm(root);
+    write(
+        root,
+        "larvae.toml",
+        "[aliases]\npkg = \"@game/ReplicatedStorage/Packages\"\n\n[worms]\ntidy = { path = \"worms/tidy\", rules = { strip_debug = true } }\n",
+    );
+
+    for i in 0..200 {
+        write(
+            root,
+            &format!("src/shared/f{i}.luau"),
+            &format!("local v = {i}\ndprint(\"x\")\nreturn v\n"),
+        );
+    }
+
+    let outcome = build(root);
+    assert!(!outcome.has_errors(), "{}", errors(&outcome));
+
+    for i in 0..200 {
+        let out = read(root, &format!("dist/shared/f{i}.luau"));
+
+        assert!(!out.contains("dprint"), "file {i} missed the rule: {out}");
+    }
+}
+
+/// One worm, both roles, and the rules must see the front-end's output
+#[test]
+fn a_worm_can_hold_a_frontend_and_a_rule_at_once() {
+    let tmp = fixture();
+    let root = tmp.path();
+
+    write(
+        root,
+        "worms/both/worm.toml",
+        r#"
+name  = "both"
+api   = 1
+form  = "luau"
+entry = "init.luau"
+
+[frontend]
+claims = [".mk"]
+
+[rules.strip_debug]
+default = true
+filter = ["Call"]
+"#,
+    );
+    write(
+        root,
+        "worms/both/init.luau",
+        r#"
+return {
+    frontend = {
+        compile = function(source)
+            return (source:gsub("<(%w+)%s*/>", "make(\"%1\")"))
+        end,
+    },
+    rules = {
+        strip_debug = {
+            visit = function(node, ctx)
+                if node:text():find("^dprint") then
+                    ctx:remove(node)
+                end
+            end,
+        },
+    },
+}
+"#,
+    );
+    write(
+        root,
+        "larvae.toml",
+        "[aliases]\npkg = \"@game/ReplicatedStorage/Packages\"\n\n[worms]\nboth = { path = \"worms/both\" }\n",
+    );
+    write(
+        root,
+        "src/shared/App.mk",
+        "local ui = <Frame/>\ndprint(\"noisy\")\nreturn ui\n",
+    );
+
+    let outcome = build(root);
+    assert!(!outcome.has_errors(), "{}", errors(&outcome));
+
+    let out = read(root, "dist/shared/App.luau");
+
+    // the front-end ran, and the rule then saw its output rather than markup
+    assert!(out.contains("make(\"Frame\")"), "{out}");
+    assert!(!out.contains("dprint"), "{out}");
+}

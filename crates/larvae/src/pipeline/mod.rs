@@ -152,6 +152,13 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
         frontend::run(&mut worms, &to_process, &dest, &mut diags)
     };
 
+    /*
+    Instances for the parallel loop. mlua::Lua is !Send, so a worm cannot be
+    moved into a worker at all, let alone shared. The pool holds artifacts and
+    settings, which are Sync, and each worker builds its own on first use.
+    */
+    let pool = crate::worm::pool::Pool::new(worms.specs());
+
     // --- Parallel per file processing ---------------------------------------
     let shared_diags = Mutex::new(diags);
     let stats = Mutex::new(Stats::default());
@@ -229,6 +236,7 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
             &opts,
             &config.rules,
             write,
+            &pool,
             &mut local_diags,
         );
         let mut s = stats.lock().unwrap();

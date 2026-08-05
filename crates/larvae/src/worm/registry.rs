@@ -20,6 +20,8 @@ use super::{RequireOwner, Worm};
 /// A worm plus what the project configured it with
 pub struct Loaded {
     pub worm: Worm,
+    /// Kept so a worker can build its own instance without touching the disk
+    pub artifact: Vec<u8>,
     /// `[config.<name>]`, untouched, handed over at init
     pub config: toml::Value,
     /// Rules that are on, by name, with the value each resolved to
@@ -78,7 +80,11 @@ impl Registry {
                 source @ Source::Release { .. } => super::fetch::ensure(cache, name, source)?,
             };
 
-            let worm = Worm::load(&dir).with_context(|| format!("loading worm `{name}`"))?;
+            let (manifest, artifact) =
+                Worm::read_parts(&dir).with_context(|| format!("loading worm `{name}`"))?;
+
+            let worm = Worm::from_parts(manifest, &artifact)
+                .with_context(|| format!("loading worm `{name}`"))?;
 
             /*
             One identity. The key namespaces the worm's rules and is what
@@ -96,6 +102,7 @@ impl Registry {
 
             worms.push(Loaded {
                 worm,
+                artifact,
                 config: per_worm.get(name).cloned().unwrap_or_else(empty_table),
                 rules: enabled,
                 run_order: entry.run_order,
@@ -137,6 +144,24 @@ impl Registry {
             .filter_map(|l| l.worm.manifest.frontend.as_ref())
             .flat_map(|f| &f.claims)
             .filter_map(|c| c.strip_prefix('.').map(str::to_owned))
+            .collect()
+    }
+
+    /*
+    Hand the artifacts and settings to a pool, which is what the parallel loop
+    uses. The registry keeps its own instances for the serial front-end pass.
+    */
+    pub fn specs(&self) -> Vec<std::sync::Arc<super::pool::Spec>> {
+        self.worms
+            .iter()
+            .map(|l| {
+                std::sync::Arc::new(super::pool::Spec {
+                    manifest: l.worm.manifest.clone(),
+                    artifact: l.artifact.clone(),
+                    config: l.config.clone(),
+                    rules: l.rules.clone(),
+                })
+            })
             .collect()
     }
 
