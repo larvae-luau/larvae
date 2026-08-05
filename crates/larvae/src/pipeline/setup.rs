@@ -88,6 +88,12 @@ pub fn luaurc_index(root: &Path, skip: &[PathBuf], diags: &mut Vec<Diag>) -> Lua
 pub fn discover(
     roots: &[super::roots::Root],
     config: &Config,
+    /*
+    Extensions a front-end worm claimed. Without these a .luaux file would be
+    copied through untouched, which looks like it worked right up until Studio
+    tries to run markup.
+    */
+    claimed: &[String],
 ) -> Result<(Vec<PathBuf>, Vec<PathBuf>)> {
     let include = globset(&config.process.include)?;
     let exclude = globset(&config.process.exclude)?;
@@ -111,7 +117,12 @@ pub fn discover(
                 continue;
             }
 
-            if include.is_match(rel) {
+            let is_claimed = rel
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|ext| claimed.iter().any(|c| c == ext));
+
+            if include.is_match(rel) || is_claimed {
                 to_process.push(entry.path().to_owned());
             } else if entry.file_name() != ".luaurc" {
                 to_copy.push(entry.path().to_owned());

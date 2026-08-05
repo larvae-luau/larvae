@@ -122,7 +122,29 @@ impl Config {
             }
         }
 
+        /*
+        A worm's rules live in [rules] beside the builtins, and worms load after
+        config does, so the unknown name check waits until they have. With no
+        worms configured there is nothing to wait for.
+        */
+        if self.worms.is_none() {
+            self.validate_rules(&[])?;
+        }
+
+        self.validate_rule_options()
+    }
+
+    /*
+    Reject a rule name neither we nor any loaded worm owns. Called once worms
+    are known, because a rule the user switched on that nothing implements is a
+    setting that silently does nothing, which is the failure we refuse.
+    */
+    pub fn validate_rules(&self, worm_rules: &[&str]) -> Result<()> {
         for name in self.rules.rest.keys() {
+            if worm_rules.contains(&name.as_str()) {
+                continue;
+            }
+
             match rule_status(name) {
                 Some(RuleStatus::Planned(m)) => bail!(
                     "rule \"{name}\" is not implemented yet, it lands in {m}, remove it for now"
@@ -138,6 +160,11 @@ impl Config {
             }
         }
 
+        Ok(())
+    }
+
+    /// Option level checks for the builtin rules, independent of worms
+    fn validate_rule_options(&self) -> Result<()> {
         if let Some(a) = &self.rules.append_text_comment {
             if a.text.is_some() == a.file.is_some() {
                 bail!("append_text_comment needs exactly one of `text` or `file`");

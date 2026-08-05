@@ -118,6 +118,20 @@ impl Registry {
         self.worms.iter_mut().find(|l| l.worm.claims(path))
     }
 
+    /*
+    Extensions any front-end claimed, without the dot. Discovery needs these or
+    a claimed file is copied through untouched, which looks like it worked until
+    Studio tries to run markup.
+    */
+    pub fn claimed_extensions(&self) -> Vec<String> {
+        self.worms
+            .iter()
+            .filter_map(|l| l.worm.manifest.frontend.as_ref())
+            .flat_map(|f| &f.claims)
+            .filter_map(|c| c.strip_prefix('.').map(str::to_owned))
+            .collect()
+    }
+
     /// Rule names every worm declared, so config validation can accept them
     pub fn declared_rules(&self) -> impl Iterator<Item = &str> {
         self.worms

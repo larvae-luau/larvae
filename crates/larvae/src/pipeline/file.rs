@@ -111,6 +111,12 @@ pub(super) struct FileOutcome {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn process_file(
     path: &Path,
+    /*
+    Passed in rather than read here, because a front-end may already have
+    replaced it. Reading the file again would hand a lexer the markup a worm
+    was there to remove.
+    */
+    src: &str,
     // where this file lands, relative to the output directory
     dest_rel: &Path,
     output: &Path,
@@ -120,36 +126,23 @@ pub(super) fn process_file(
     write: bool,
     diags: &mut Vec<Diag>,
 ) -> Option<FileOutcome> {
-    let src = match std::fs::read_to_string(path) {
-        Ok(s) => s,
-
-        Err(e) => {
-            diags.push(Diag::error(
-                path,
-                format!("cannot read file (UTF-8 required): {e}"),
-            ));
-
-            return None;
-        }
-    };
-
-    let lexed = match lexer::lex(&src) {
+    let lexed = match lexer::lex(src) {
         Ok(t) => t,
 
         Err(e) => {
-            diags.push(Diag::error(path, format!("lex error: {}", e.message)).at(&src, e.offset));
+            diags.push(Diag::error(path, format!("lex error: {}", e.message)).at(src, e.offset));
 
             return None;
         }
     };
 
     if opts.validate_syntax
-        && let Err(e) = crate::syntax::parser::parse(&src, &lexed.toks)
+        && let Err(e) = crate::syntax::parser::parse(src, &lexed.toks)
     {
-        diags.push(Diag::error(path, format!("syntax error, {}", e.message)).at(&src, e.offset));
+        diags.push(Diag::error(path, format!("syntax error, {}", e.message)).at(src, e.offset));
     }
 
-    let scanned = scan::scan(&src, &lexed.toks);
+    let scanned = scan::scan(src, &lexed.toks);
 
     /*
     A mixed project can want a different output form per directory, ex:
@@ -175,7 +168,7 @@ pub(super) fn process_file(
     for site in &scanned.sites {
         let spec = &src[site.inner_start as usize..site.inner_end as usize];
 
-        match resolver.resolve(&ctx, spec, &src, site.at as usize, diags) {
+        match resolver.resolve(&ctx, spec, src, site.at as usize, diags) {
             Rewrite::Keep => {
                 site_forms.push((*site, spec.to_string()));
                 // untouched requires still get the configured quote style
@@ -224,7 +217,7 @@ pub(super) fn process_file(
     */
     if opts.instance_input {
         for site in &scanned.instances {
-            if let Some(expr) = resolver.resolve_instance(&ctx, site, &src, diags) {
+            if let Some(expr) = resolver.resolve_instance(&ctx, site, src, diags) {
                 edits.push(REQUIRES, (site.start, site.end, expr));
             }
         }
@@ -236,24 +229,24 @@ pub(super) fn process_file(
     edits.family(Family::Native, |edits| {
         if opts.const_requires {
             edits.run("const_requires", |e| {
-                crate::rules::const_requires(&src, &lexed.toks, &scanned.sites, e)
+                crate::rules::const_requires(src, &lexed.toks, &scanned.sites, e)
             });
         }
 
         if let Some(except) = &opts.remove_comments {
             edits.run("remove_comments", |e| {
-                crate::rules::remove_comments(&src, &lexed.comments, except, e)
+                crate::rules::remove_comments(src, &lexed.comments, except, e)
             });
         }
 
         if let Some(directive) = &opts.directive
-            && let Some(rep) = crate::rules::add_luau_directive(&src, directive)
+            && let Some(rep) = crate::rules::add_luau_directive(src, directive)
         {
             edits.push("add_luau_directive", rep);
         }
 
         if let Some((text, at_start)) = &opts.append_comment
-            && let Some(rep) = crate::rules::append_text_comment(&src, text, *at_start)
+            && let Some(rep) = crate::rules::append_text_comment(src, text, *at_start)
         {
             edits.push("append_text_comment", rep);
         }
@@ -263,7 +256,7 @@ pub(super) fn process_file(
             crate::rules::apply_ast_rules(
                 rules_cfg,
                 &opts.defines,
-                &src,
+                src,
                 &lexed,
                 &site_forms,
                 dm.as_deref(),
@@ -279,7 +272,7 @@ pub(super) fn process_file(
 
     if write {
         let dest = output.join(dest_rel);
-        let out_src = crate::rules::splice(&src, &edits, &mut clashes);
+        let out_src = crate::rules::splice(src, &edits, &mut clashes);
 
         if let Err(e) = write_atomic(&dest, out_src.as_bytes()) {
             diags.push(Diag::error(path, format!("write failed: {e:#}")));
@@ -298,7 +291,7 @@ pub(super) fn process_file(
                     c.kept, c.dropped, c.kept
                 ),
             )
-            .at(&src, c.at as usize),
+            .at(src, c.at as usize),
         );
     }
 

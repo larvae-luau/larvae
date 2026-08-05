@@ -1,6 +1,7 @@
 //! The pipeline, discover, then parallel lex/scan/resolve/splice, then atomic writes
 
 mod file;
+mod frontend;
 mod output;
 pub mod roots;
 mod setup;
@@ -84,10 +85,34 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
         None => None,
     };
 
+    /*
+    Worms load before anything is discovered, because a front-end decides which
+    files are even transformable. Loading also validates the whole set: names
+    against their keys, and no two worms claiming one extension.
+    */
+    let mut worms = match config.worms.as_ref() {
+        Some(value) => {
+            let named = crate::config::worms::Worms::parse(value)?;
+
+            crate::worm::registry::Registry::load(
+                &root,
+                &named,
+                &config.config,
+                &rules_table(&config.rules.rest),
+            )?
+        }
+
+        None => crate::worm::registry::Registry::default(),
+    };
+
+    config.validate_rules(&worms.declared_rules().collect::<Vec<_>>())?;
+
+    let claimed = worms.claimed_extensions();
+
     let skip = setup::skip_dirs(&root, config);
     let mounts = setup::mount_table(&root, config, project.as_ref(), &mut diags);
     let luaurc = setup::luaurc_index(&root, &skip, &mut diags);
-    let (to_process, to_copy) = setup::discover(&roots, config)?;
+    let (to_process, to_copy) = setup::discover(&roots, config, &claimed)?;
 
     let epoch = setup::epoch(
         &root,
@@ -117,6 +142,18 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
 
     let opts = FileOpts::from_config(&root, config, write)?;
 
+    /*
+    The front-end pre-pass, before anything parses. A claimed file's bytes are
+    replaced here and renamed to .luau, so every stage below receives ordinary
+    Luau and none of them learn a worm existed.
+    */
+    let compiled = {
+        let roots_ref = &roots;
+        let dest = |path: &Path| roots::dest_of(roots_ref, path);
+
+        frontend::run(&mut worms, &to_process, &dest, &mut diags)
+    };
+
     // --- Parallel per file processing ---------------------------------------
     let shared_diags = Mutex::new(diags);
     let stats = Mutex::new(Stats::default());
@@ -124,12 +161,33 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
     let fresh_hashes: Mutex<Vec<(String, u64)>> = Mutex::new(Vec::new());
 
     to_process.par_iter().for_each(|path| {
-        let Some(rel) = roots::dest_of(&roots, path) else {
+        let Some(mut rel) = roots::dest_of(&roots, path) else {
             return;
         };
+
+        /*
+        A file a front-end claimed already went through it. Take that output and
+        its new name rather than reading the markup back off disk, which nothing
+        below here could parse anyway.
+        */
+        let front = compiled.get(path.as_path());
+
+        if let Some(front) = front {
+            rel = front.dest.clone();
+        } else if claimed
+            .iter()
+            .any(|ext| path.extension().and_then(|e| e.to_str()) == Some(ext.as_str()))
+        {
+            // claimed, but its worm reported a problem, so it is out of the build
+            return;
+        }
+
         let rel_key = rel.to_string_lossy().into_owned();
 
-        let source = match std::fs::read(path) {
+        let source = match front
+            .map(|f| Ok(f.source.clone().into_bytes()))
+            .unwrap_or_else(|| std::fs::read(path))
+        {
             Ok(b) => b,
 
             Err(e) => {
@@ -143,6 +201,18 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
 
         let source_hash = hash_bytes(&source);
 
+        let text = match String::from_utf8(source) {
+            Ok(t) => t,
+
+            Err(e) => {
+                shared_diags
+                    .lock()
+                    .unwrap()
+                    .push(Diag::error(path, format!("file is not UTF-8: {e}")));
+                return;
+            }
+        };
+
         if cache.is_fresh(&rel_key, source_hash, &output.join(&rel)) {
             let mut s = stats.lock().unwrap();
             s.files_processed += 1;
@@ -154,6 +224,7 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
         let mut local_diags = Vec::new();
         let rewritten = process_file(
             path,
+            &text,
             &rel,
             &output,
             &resolver,
@@ -232,10 +303,18 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
         }
 
         // --- Mirror deletions, stale output is worse than slow output --------
+        /*
+        A claimed file lands under its renamed dest, so the set has to agree or
+        pruning deletes what the build just wrote as though it were stale.
+        */
         let produced: HashSet<PathBuf> = to_process
             .iter()
             .chain(to_copy.iter())
-            .filter_map(|p| roots::dest_of(&roots, p).map(|r| output.join(r)))
+            .filter_map(|p| match compiled.get(p.as_path()) {
+                Some(front) => Some(output.join(&front.dest)),
+
+                None => roots::dest_of(&roots, p).map(|r| output.join(r)),
+            })
             .collect();
         stats.files_pruned = prune_output(&output, &input, &root, &produced, &mut diags);
     }
@@ -274,4 +353,15 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
         diags,
         build_project,
     })
+}
+
+/// The rules we do not own, as a table a worm's declarations resolve against
+fn rules_table(rest: &std::collections::HashMap<String, toml::Value>) -> toml::Value {
+    let mut table = toml::map::Map::new();
+
+    for (name, value) in rest {
+        table.insert(name.clone(), value.clone());
+    }
+
+    toml::Value::Table(table)
 }

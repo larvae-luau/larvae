@@ -132,7 +132,8 @@ pub struct RulesConfig {
     pub freeze_module: bool,
 
     #[serde(flatten)]
-    pub(super) rest: HashMap<String, toml::Value>,
+    /// Names we do not own, which is where a worm rule lands
+    pub rest: HashMap<String, toml::Value>,
 }
 
 /*
