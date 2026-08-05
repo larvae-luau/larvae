@@ -7,6 +7,7 @@ everything above this module is written once and neither the pipeline nor the
 config layer knows which form it is talking to.
 */
 
+pub mod ctx;
 pub mod host;
 pub mod luau;
 pub mod manifest;

@@ -43,28 +43,82 @@ export type Frontend = {
 }
 
 --[=[
+	A handle to one node of larvae's AST.
+
+	It is a pair of integers, not a pointer into our tree, and it is only valid
+	during the file it was handed to you for. Keep one across files and the next
+	call errors rather than silently reading the wrong file.
+
+	Spans are byte offsets into the original source, half open.
+]=]
+export type Node = {
+	kind: (self: Node) -> string,
+	text: (self: Node) -> string,
+	span: (self: Node) -> (number, number),
+	children: (self: Node) -> { Node },
+	parent: (self: Node) -> Node?,
+}
+
+--[=[
+	What a rule may do to the file it is walking.
+
+	Edits are deferred and measured against the original bytes, so you never see
+	another rule's output and one splice happens at the end. `remove` leaves the
+	node's newlines behind, because line N of dist must stay line N of src.
+
+	`value` is what this rule was configured with, your worm.toml default unless
+	the user overrode it in [rules].
+]=]
+export type Context = {
+	path: string,
+	value: any,
+	replace: (self: Context, node: Node, text: string) -> (),
+	remove: (self: Context, node: Node) -> (),
+}
+
+--[=[
+	One rule. It runs only on nodes matching the `filter` you declared in
+	worm.toml, so undeclared kinds never cross the boundary at all.
+]=]
+export type Rule = {
+	visit: (node: Node, ctx: Context) -> (),
+}
+
+--[=[
+	Called once, before any file is seen, with your settings.
+
+	`config` is `[config.<your name>]` from larvae.toml as a table, already
+	parsed. `rules` holds only the rules that are switched on, keyed by name,
+	with the value each resolved to. A rule that is off is simply absent.
+]=]
+export type Init = (config: { [string]: any }, rules: { [string]: any }) -> ()
+
+--[=[
 	What a worm module returns.
 
 	```luau
 	local worm: Worm = {
-		frontend = {
-			compile = function(source, config)
-				return source:gsub("<>", "{}")
-			end,
+		rules = {
+			strip_debug = {
+				visit = function(node, ctx)
+					if node:kind() == "CallExpr" then
+						ctx:remove(node)
+					end
+				end,
+			},
 		},
 	}
 
 	return worm
 	```
 
-	`frontend` is required because it is the only role that exists today, which
-	also means a misspelled key is caught rather than read as "no frontend".
-	The `rules` role, which takes a slot in run_order and pushes edits against
-	larvae's AST, is not implemented yet. When it lands it appears here and
-	both become optional.
+	A worm needs at least one role. Both are optional here because either may
+	be absent, but returning neither is refused at load.
 ]=]
 export type Worm = {
-	frontend: Frontend,
+	init: Init?,
+	frontend: Frontend?,
+	rules: { [string]: Rule }?,
 }
 
 return {}
