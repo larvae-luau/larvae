@@ -12,6 +12,7 @@ pub mod host;
 pub mod luau;
 pub mod manifest;
 pub mod nodes;
+pub mod registry;
 
 use std::path::Path;
 
