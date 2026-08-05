@@ -15,8 +15,11 @@ pub const TYPES: &str = include_str!("../worm/worm.d.luau");
 /// Where `types` writes when nothing is asked for
 const TYPES_FILE: &str = "worm.d.luau";
 
-/// luau-lsp's list of definition files, which is what gives a worm its types
+/// luau-lsp's definition files, a map of package name to path
 const DEFINITIONS: &str = "luau-lsp.types.definitionFiles";
+
+/// The package name our types load under, so a second tool's entry sits beside it
+const PACKAGE: &str = "larvae-worm";
 
 #[derive(Subcommand)]
 pub enum WormCommand {
@@ -206,19 +209,24 @@ fn wire_luau_lsp(types: &Path) -> Result<()> {
     let listed = entry.clone();
 
     let changed = crate::commands::code::edit_settings(&settings, move |table| {
+        /*
+        A map of package name to path, not a list. The neighbouring
+        documentationFiles is an array, which is an easy thing to assume this
+        one is too.
+        */
         let files = table
             .entry(DEFINITIONS)
-            .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
 
-        let Some(files) = files.as_array_mut() else {
-            anyhow::bail!("{DEFINITIONS} is not an array, leaving it alone");
+        let Some(files) = files.as_object_mut() else {
+            anyhow::bail!("{DEFINITIONS} is not an object, leaving it alone");
         };
 
-        if files.iter().any(|f| f.as_str() == Some(listed.as_str())) {
+        if files.get(PACKAGE).and_then(|v| v.as_str()) == Some(listed.as_str()) {
             return Ok(false);
         }
 
-        files.push(listed.into());
+        files.insert(PACKAGE.to_owned(), listed.into());
 
         Ok(true)
     })?;
@@ -280,6 +288,32 @@ mod tests {
                 kind.name()
             );
         }
+    }
+
+    /*
+    luau-lsp declares definitionFiles as an object of package name to path,
+    while documentationFiles beside it is an array. Getting that backwards
+    produces settings the extension silently ignores, so pin the shape.
+    */
+    #[test]
+    fn the_luau_lsp_entry_is_a_map_and_not_a_list() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = std::env::current_dir().unwrap();
+
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let result = wire_luau_lsp(Path::new("worm.d.luau"));
+        std::env::set_current_dir(cwd).unwrap();
+
+        result.unwrap();
+
+        let text = std::fs::read_to_string(tmp.path().join(".vscode/settings.json")).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+        assert!(
+            json[DEFINITIONS].is_object(),
+            "definitionFiles must be a map, got {text}"
+        );
+        assert_eq!(json[DEFINITIONS][PACKAGE], "worm.d.luau");
     }
 
     /// The definitions have to be Luau a language server can actually load

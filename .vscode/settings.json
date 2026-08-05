@@ -1,0 +1,5 @@
+{
+  "luau-lsp.types.definitionFiles": {
+    "worm": "worm.d.luau"
+  }
+}
