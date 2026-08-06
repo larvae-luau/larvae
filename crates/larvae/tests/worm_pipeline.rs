@@ -505,3 +505,190 @@ return {
     assert!(out.contains("make(\"Frame\")"), "{out}");
     assert!(!out.contains("dprint"), "{out}");
 }
+
+/// A worm that rewrites string literals, so we can see what it was handed
+fn spy_worm(root: &Path, run_order: &str) {
+    write(
+        root,
+        "worms/spy/worm.toml",
+        &format!(
+            r#"
+name  = "spy"
+api   = 1
+form  = "luau"
+entry = "init.luau"
+{run_order}
+
+[rules.tag]
+default = true
+filter = ["String"]
+"#
+        ),
+    );
+    write(
+        root,
+        "worms/spy/init.luau",
+        r#"
+return { rules = { tag = { visit = function(node, ctx)
+    ctx:replace(node, "\"SAW:" .. node:text():gsub('"', '') .. "\"")
+end } } }
+"#,
+    );
+    write(
+        root,
+        "larvae.toml",
+        "[aliases]\npkg = \"@game/ReplicatedStorage/Packages\"\n\n[worms]\nspy = { path = \"worms/spy\" }\n",
+    );
+    write(
+        root,
+        "src/shared/m.luau",
+        "local S = require(\"@pkg/signal\")\nreturn S\n",
+    );
+}
+
+/// The default: a worm's rules read what larvae's rules produced
+#[test]
+fn a_worm_runs_after_larvae_by_default() {
+    let tmp = fixture();
+    let root = tmp.path();
+
+    spy_worm(root, "");
+    build(root);
+
+    assert!(
+        read(root, "dist/shared/m.luau").contains("SAW:@game/ReplicatedStorage/Packages/signal"),
+        "{}",
+        read(root, "dist/shared/m.luau")
+    );
+}
+
+/// And "before" genuinely reads the file as written, not our output
+#[test]
+fn a_worm_asking_to_go_first_sees_the_original() {
+    let tmp = fixture();
+    let root = tmp.path();
+
+    spy_worm(root, "run_order = \"before\"");
+    build(root);
+
+    assert!(
+        read(root, "dist/shared/m.luau").contains("SAW:@pkg/signal"),
+        "{}",
+        read(root, "dist/shared/m.luau")
+    );
+}
+
+#[test]
+fn a_user_run_order_beats_what_the_worm_declared() {
+    let tmp = fixture();
+    let root = tmp.path();
+
+    spy_worm(root, "run_order = \"before\"");
+    // the worm said before, the user says after, and the user wins
+    write(
+        root,
+        "larvae.toml",
+        "[aliases]\npkg = \"@game/ReplicatedStorage/Packages\"\n\n[worms]\nspy = { path = \"worms/spy\", run_order = \"after\" }\n",
+    );
+
+    build(root);
+
+    assert!(
+        read(root, "dist/shared/m.luau").contains("SAW:@game/"),
+        "{}",
+        read(root, "dist/shared/m.luau")
+    );
+}
+
+/// A worm resolving its own requires means we do not look at them at all
+#[test]
+fn requires_worm_leaves_them_alone() {
+    let tmp = fixture();
+    let root = tmp.path();
+
+    write(
+        root,
+        "worms/fe/worm.toml",
+        "name = \"fe\"\napi = 1\nform = \"luau\"\nentry = \"init.luau\"\nrequires = \"worm\"\n\n[frontend]\nclaims = [\".mk\"]\n",
+    );
+    write(
+        root,
+        "worms/fe/init.luau",
+        "return { frontend = { compile = function(s) return s end } }",
+    );
+    write(
+        root,
+        "larvae.toml",
+        "[aliases]\npkg = \"@game/ReplicatedStorage/Packages\"\n\n[worms]\nfe = { path = \"worms/fe\" }\n",
+    );
+    write(
+        root,
+        "src/shared/own.mk",
+        "local S = require(\"@nope/unknown\")\nreturn S\n",
+    );
+
+    let outcome = build(root);
+
+    assert!(!outcome.has_errors(), "{}", errors(&outcome));
+    assert!(read(root, "dist/shared/own.luau").contains("@nope/unknown"));
+}
+
+/// The default is that we own them, so an unknown alias is still an error
+#[test]
+fn requires_larvae_still_validates() {
+    let tmp = fixture();
+    let root = tmp.path();
+
+    write(
+        root,
+        "worms/fe/worm.toml",
+        "name = \"fe\"\napi = 1\nform = \"luau\"\nentry = \"init.luau\"\n\n[frontend]\nclaims = [\".mk\"]\n",
+    );
+    write(
+        root,
+        "worms/fe/init.luau",
+        "return { frontend = { compile = function(s) return s end } }",
+    );
+    write(
+        root,
+        "larvae.toml",
+        "[aliases]\npkg = \"@game/ReplicatedStorage/Packages\"\n\n[worms]\nfe = { path = \"worms/fe\" }\n",
+    );
+    write(
+        root,
+        "src/shared/own.mk",
+        "return require(\"@nope/unknown\")\n",
+    );
+
+    assert!(errors(&build(root)).contains("unknown alias @nope"));
+}
+
+/// A worm changing the line count is worth saying, not worth dropping the file
+#[test]
+fn a_line_count_change_warns_but_keeps_the_output() {
+    let tmp = fixture();
+    let root = tmp.path();
+
+    write(
+        root,
+        "worms/grow/worm.toml",
+        "name = \"grow\"\napi = 1\nform = \"luau\"\nentry = \"init.luau\"\n\n[frontend]\nclaims = [\".mk\"]\n",
+    );
+    write(
+        root,
+        "worms/grow/init.luau",
+        "return { frontend = { compile = function(s) return s .. \"-- extra\\n\" end } }",
+    );
+    write(
+        root,
+        "larvae.toml",
+        "[aliases]\npkg = \"@game/ReplicatedStorage/Packages\"\n\n[worms]\ngrow = { path = \"worms/grow\" }\n",
+    );
+    write(root, "src/shared/g.mk", "return 1\n");
+
+    let outcome = build(root);
+
+    assert!(!outcome.has_errors(), "{}", errors(&outcome));
+    assert!(errors(&outcome).contains("changed the line count"));
+    assert!(read(root, "dist/shared/g.luau").contains("extra"));
+}

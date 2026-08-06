@@ -195,6 +195,16 @@ fn scalar(value: &toml::Value) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn settings_cross_to_a_wasm_worm_as_toml_text() {
+        let value = toml::from_str::<toml::Value>("factory = \"vide\"\nstrict = true\n").unwrap();
+        let text = toml_text(&value);
+
+        assert!(text.contains("factory = \"vide\""), "{text}");
+        assert!(text.contains("strict = true"), "{text}");
+        assert_eq!(toml_text(&toml::Value::Boolean(true)), "");
+    }
+
     fn write(dir: &Path, name: &str, body: &str) {
         std::fs::write(dir.join(name), body).unwrap();
     }

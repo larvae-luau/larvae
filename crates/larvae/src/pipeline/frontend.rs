@@ -12,106 +12,64 @@ syntax, not the whole tree, and keeping worms off the parallel loop means no
 worm instance is ever shared between threads.
 */
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::diag::Diag;
-use crate::worm::registry::Registry;
-use crate::worm::toml_text;
-
-/// A claimed file, after its worm has had it
-pub struct Compiled {
-    /// The Luau the rest of the pipeline sees instead of the file on disk
-    pub source: String,
-    /// `App.luaux` becomes `App.luau`, before anything derives a name from it
-    pub dest: PathBuf,
-}
-
-/// Everything the front-ends produced, by input path
-pub type Outputs = HashMap<PathBuf, Compiled>;
 
 /*
-Hand every claimed file to the worm that claimed it. A worm that reports a
-problem takes its file out of the build with a diagnostic, rather than letting
-markup reach a lexer that cannot read it and reporting a lex error nobody can
-act on.
+Hand one claimed file to the worm that claimed it.
+
+Called from inside the per-file work rather than as a pre-pass, so a file the
+cache already covers never reaches a worm at all. That matters more than it
+sounds: without it every save in watch mode recompiles every markup file.
 */
-pub fn run(
-    registry: &mut Registry,
-    files: &[PathBuf],
-    dest_of: &impl Fn(&Path) -> Option<PathBuf>,
+pub fn compile(
+    pool: &crate::worm::pool::Pool,
+    index: usize,
+    path: &Path,
+    src: &str,
     diags: &mut Vec<Diag>,
-) -> Outputs {
-    let mut out = HashMap::new();
+) -> Option<String> {
+    let name = &pool.spec(index).manifest.name;
 
-    if registry.is_empty() {
-        return out;
-    }
+    let outcome = match pool.compile(index, src) {
+        Ok(outcome) => outcome,
 
-    for path in files {
-        let Some(rel) = dest_of(path) else {
-            continue;
-        };
+        Err(e) => {
+            diags.push(Diag::error(path, format!("{e:#}")));
 
-        let Some(loaded) = registry.frontend_for(path) else {
-            continue;
-        };
-
-        let name = loaded.worm.name().to_owned();
-
-        let src = match std::fs::read_to_string(path) {
-            Ok(s) => s,
-
-            Err(e) => {
-                diags.push(Diag::error(
-                    path,
-                    format!("cannot read file (UTF-8 required): {e}"),
-                ));
-
-                continue;
-            }
-        };
-
-        let config = toml_text(&loaded.config);
-
-        match loaded.worm.transform(&src, &config) {
-            Ok(outcome) if outcome.ok => {
-                /*
-                Line preservation composes only if every stage keeps it. A worm
-                that changes the count would silently move every diagnostic
-                below it, so say so once here rather than let it be discovered
-                in a stack trace.
-                */
-                let (before, after) = (src.lines().count(), outcome.text.lines().count());
-
-                if before != after {
-                    diags.push(Diag::warning(
-                        path,
-                        format!(
-                            "worm `{name}` changed the line count, {before} in and {after} out, so line numbers below this file will not match"
-                        ),
-                    ));
-                }
-
-                out.insert(
-                    path.clone(),
-                    Compiled {
-                        source: outcome.text,
-                        dest: luau_dest(&rel),
-                    },
-                );
-            }
-
-            Ok(outcome) => diags.push(Diag::error(
-                path,
-                format!("worm `{name}`: {}", outcome.text),
-            )),
-
-            Err(e) => diags.push(Diag::error(path, format!("{e:#}"))),
+            return None;
         }
+    };
+
+    // the worm reported a problem, so this file is out of the build
+    if !outcome.ok {
+        diags.push(Diag::error(
+            path,
+            format!("worm `{name}`: {}", outcome.text),
+        ));
+
+        return None;
     }
 
-    out
+    /*
+    Line preservation composes only if every stage keeps it, so a worm changing
+    the count is worth saying. It is a warning rather than a refusal: the output
+    is still valid Luau, only the line numbers below it stop matching, and that
+    is the author's call to make.
+    */
+    let (before, after) = (src.lines().count(), outcome.text.lines().count());
+
+    if before != after {
+        diags.push(Diag::warning(
+            path,
+            format!(
+                "worm `{name}` changed the line count, {before} in and {after} out, so line numbers below this file will not match"
+            ),
+        ));
+    }
+
+    Some(outcome.text)
 }
 
 /// `App.luaux` becomes `App.luau`, so the DataModel instance is named `App`
@@ -127,14 +85,5 @@ mod tests {
     fn a_claimed_file_is_renamed_before_anything_reads_it() {
         assert_eq!(luau_dest(Path::new("a/App.luaux")), Path::new("a/App.luau"));
         assert_eq!(luau_dest(Path::new("App.rune")), Path::new("App.luau"));
-    }
-
-    #[test]
-    fn settings_are_handed_over_as_toml_text() {
-        let value = toml::from_str::<toml::Value>("factory = \"vide\"\nstrict = true\n").unwrap();
-        let text = toml_text(&value);
-
-        assert!(text.contains("factory = \"vide\""), "{text}");
-        assert!(text.contains("strict = true"), "{text}");
     }
 }

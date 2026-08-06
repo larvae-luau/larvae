@@ -57,17 +57,14 @@ impl std::fmt::Display for Stage {
 }
 
 impl Stage {
-    /// Our native rules occupy this slot, so before and after are either side
-    pub const NATIVE: i64 = 0;
-
-    /// The slot this resolves to
-    pub fn slot(self) -> i64 {
+    /// The slot this resolves to, given where our own rules sit
+    pub fn slot(self, native: i64) -> i64 {
         match self {
             Self::At(n) => n,
 
-            Self::Named(Side::Before) => Self::NATIVE - 1,
+            Self::Named(Side::Before) => native - 1,
 
-            Self::Named(Side::After) => Self::NATIVE + 1,
+            Self::Named(Side::After) => native + 1,
         }
     }
 }
@@ -301,7 +298,7 @@ default = true
         )
         .unwrap();
 
-        assert!(before.run_order.unwrap().slot() < Stage::NATIVE);
+        assert!(before.run_order.unwrap().slot(1) < 1);
 
         let after = Manifest::parse(&FRONTEND.replace("form  =", "run_order = \"after\"\nform  ="));
 

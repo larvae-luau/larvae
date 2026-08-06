@@ -42,6 +42,12 @@ pub struct Spec {
     pub config: toml::Value,
     /// Rules that are on, by name, with the value each resolved to
     pub rules: BTreeMap<String, toml::Value>,
+    /// What the user asked for, which beats what the worm declared
+    pub run_order: Option<super::manifest::Stage>,
+    /// Who owns the requires in this worm's output
+    pub requires: super::RequireOwner,
+    /// Extensions this worm's front-end claims, empty when it has none
+    pub claims: Vec<String>,
 }
 
 impl Spec {
@@ -82,6 +88,8 @@ impl Spec {
 pub struct Pool {
     build: u64,
     specs: Vec<Arc<Spec>>,
+    /// Where larvae's own rules sit, so before and after mean something
+    native: i64,
 }
 
 thread_local! {
@@ -95,29 +103,54 @@ struct Local {
 }
 
 impl Pool {
-    pub fn new(specs: Vec<Arc<Spec>>) -> Self {
+    pub fn new(specs: Vec<Arc<Spec>>, native: i64) -> Self {
         Self {
             build: NEXT_BUILD.fetch_add(1, Ordering::Relaxed),
             specs,
+            native,
         }
+    }
+
+    /// The slot larvae's own rules run in
+    pub fn native(&self) -> i64 {
+        self.native
+    }
+
+    /// The slot one worm's rules run in, user first, then the worm, then after us
+    pub fn slot_of(&self, spec: &Spec) -> i64 {
+        spec.run_order
+            .or(spec.manifest.run_order)
+            .map(|s| s.slot(self.native))
+            .unwrap_or(self.native + 1)
+    }
+
+    /// Every distinct slot that has work in it, in the order they run
+    pub fn slots(&self) -> Vec<i64> {
+        let mut out: Vec<i64> = self
+            .specs
+            .iter()
+            .filter(|s| !s.rules.is_empty())
+            .map(|s| self.slot_of(s))
+            .collect();
+
+        out.push(self.native);
+        out.sort_unstable();
+        out.dedup();
+
+        out
+    }
+
+    /// Worms with rules in one slot
+    pub fn in_slot(&self, slot: i64) -> Vec<(usize, &Arc<Spec>)> {
+        self.specs
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| !s.rules.is_empty() && self.slot_of(s) == slot)
+            .collect()
     }
 
     pub fn is_empty(&self) -> bool {
         self.specs.is_empty()
-    }
-
-    /// Every worm with at least one rule switched on, in run order
-    pub fn with_rules(&self) -> Vec<(usize, &Arc<Spec>)> {
-        let mut out: Vec<_> = self
-            .specs
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| !s.rules.is_empty())
-            .collect();
-
-        out.sort_by_key(|(i, _)| (order_of(&self.specs[*i]), *i));
-
-        out
     }
 
     /// Node kinds any enabled rule wants, so a file with none skips everything
@@ -131,12 +164,88 @@ impl Pool {
     }
 
     /*
+    Whether we own the requires in whatever this file becomes.
+
+    A worm saying `requires = "worm"` resolves its own, so we do not scan,
+    resolve or rewrite them. That costs realm validation for those files, which
+    is why it is a thing a worm has to say rather than a thing we guess.
+    */
+    pub fn owns_requires(&self, front: Option<usize>) -> bool {
+        match front {
+            Some(index) => self.specs[index].requires == super::RequireOwner::Larvae,
+
+            None => true,
+        }
+    }
+
+    /// The worm whose front-end claims this path, if any
+    pub fn frontend_for(&self, path: &std::path::Path) -> Option<usize> {
+        let ext = path.extension().and_then(|e| e.to_str())?;
+
+        self.specs.iter().position(|s| {
+            s.claims
+                .iter()
+                .any(|c| c.strip_prefix('.').is_some_and(|c| c == ext))
+        })
+    }
+
+    /// Every extension any front-end claims, without the dot
+    pub fn claimed(&self) -> Vec<String> {
+        self.specs
+            .iter()
+            .flat_map(|s| &s.claims)
+            .filter_map(|c| c.strip_prefix('.').map(str::to_owned))
+            .collect()
+    }
+
+    pub fn spec(&self, index: usize) -> &Arc<Spec> {
+        &self.specs[index]
+    }
+
+    /// Run a front-end over one file, on this thread's instance
+    pub fn compile(&self, index: usize, source: &str) -> Result<super::Outcome> {
+        self.with_worm(index, |worm, spec| {
+            worm.transform(source, &toml_text(&spec.config))
+        })
+    }
+
+    /*
     Run one worm's rules over a file, on this thread's instance.
 
     The instance is built on first use and kept, so a worker that never meets a
     worm file pays nothing and one that does pays once rather than per file.
     */
     pub fn run(&self, index: usize, file: Arc<FileCtx>, matched: &Matched) -> Result<Vec<Edit>> {
+        self.with_worm(index, |worm, spec| {
+            let mut edits = Vec::new();
+
+            for (i, name) in spec.enabled().iter().enumerate() {
+                let Some(ids) = matched.for_rule(spec, name) else {
+                    continue;
+                };
+
+                if ids.is_empty() {
+                    continue;
+                }
+
+                edits.extend(worm.run_rule(name, i as u32, Arc::clone(&file), &ids)?);
+            }
+
+            Ok(edits)
+        })
+    }
+
+    /*
+    Borrow this worker's instance of one worm, building it on first use.
+
+    A worker that never meets a file needing this worm pays nothing, and one
+    that does pays the module load once rather than per file.
+    */
+    fn with_worm<R>(
+        &self,
+        index: usize,
+        f: impl FnOnce(&mut Worm, &Spec) -> Result<R>,
+    ) -> Result<R> {
         let spec = Arc::clone(&self.specs[index]);
         let build = self.build;
 
@@ -162,22 +271,7 @@ impl Pool {
                 local.worms[index] = Some(worm);
             }
 
-            let worm = local.worms[index].as_mut().expect("just built");
-            let mut edits = Vec::new();
-
-            for (i, name) in spec.enabled().iter().enumerate() {
-                let Some(ids) = matched.for_rule(&spec, name) else {
-                    continue;
-                };
-
-                if ids.is_empty() {
-                    continue;
-                }
-
-                edits.extend(worm.run_rule(name, i as u32, Arc::clone(&file), &ids)?);
-            }
-
-            Ok(edits)
+            f(local.worms[index].as_mut().expect("just built"), &spec)
         })
     }
 }
@@ -192,13 +286,6 @@ fn init(worm: &mut Worm, spec: &Spec) -> Result<()> {
             worm.init(&spec.config, &spec.rules)
         }
     }
-}
-
-fn order_of(spec: &Spec) -> i64 {
-    spec.manifest
-        .run_order
-        .map(|s| s.slot())
-        .unwrap_or(super::manifest::Stage::NATIVE + 1)
 }
 
 /// Nodes matching each rule's filter, worked out once per file

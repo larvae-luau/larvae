@@ -333,9 +333,9 @@ run_order = 7
         )
         .unwrap();
 
-        assert!(w.0["a"].run_order.unwrap().slot() < Stage::NATIVE);
-        assert!(w.0["b"].run_order.unwrap().slot() > Stage::NATIVE);
-        assert_eq!(w.0["c"].run_order.unwrap().slot(), 7);
+        assert!(w.0["a"].run_order.unwrap().slot(1) < 1);
+        assert!(w.0["b"].run_order.unwrap().slot(1) > 1);
+        assert_eq!(w.0["c"].run_order.unwrap().slot(1), 7);
     }
 
     #[test]

@@ -90,7 +90,7 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
     files are even transformable. Loading also validates the whole set: names
     against their keys, and no two worms claiming one extension.
     */
-    let mut worms = match config.worms.as_ref() {
+    let worms = match config.worms.as_ref() {
         Some(value) => {
             let named = crate::config::worms::Worms::parse(value)?;
 
@@ -141,23 +141,14 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
     let opts = FileOpts::from_config(&root, config, write)?;
 
     /*
-    The front-end pre-pass, before anything parses. A claimed file's bytes are
-    replaced here and renamed to .luau, so every stage below receives ordinary
-    Luau and none of them learn a worm existed.
-    */
-    let compiled = {
-        let roots_ref = &roots;
-        let dest = |path: &Path| roots::dest_of(roots_ref, path);
-
-        frontend::run(&mut worms, &to_process, &dest, &mut diags)
-    };
-
-    /*
     Instances for the parallel loop. mlua::Lua is !Send, so a worm cannot be
     moved into a worker at all, let alone shared. The pool holds artifacts and
     settings, which are Sync, and each worker builds its own on first use.
     */
-    let pool = crate::worm::pool::Pool::new(worms.specs());
+    let pool = crate::worm::pool::Pool::new(worms.specs(), config.process.run_order);
+
+    // the registry validated everything, the pool is what the loop uses
+    drop(worms);
 
     // --- Parallel per file processing ---------------------------------------
     let shared_diags = Mutex::new(diags);
@@ -171,28 +162,19 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
         };
 
         /*
-        A file a front-end claimed already went through it. Take that output and
-        its new name rather than reading the markup back off disk, which nothing
-        below here could parse anyway.
+        A claimed file is renamed without asking its worm, because the rename
+        follows from the extension alone. That lets the cache be consulted
+        before the front-end runs, so a warm build calls no worm at all.
         */
-        let front = compiled.get(path.as_path());
+        let front = pool.frontend_for(path);
 
-        if let Some(front) = front {
-            rel = front.dest.clone();
-        } else if claimed
-            .iter()
-            .any(|ext| path.extension().and_then(|e| e.to_str()) == Some(ext.as_str()))
-        {
-            // claimed, but its worm reported a problem, so it is out of the build
-            return;
+        if front.is_some() {
+            rel = frontend::luau_dest(&rel);
         }
 
         let rel_key = rel.to_string_lossy().into_owned();
 
-        let source = match front
-            .map(|f| Ok(f.source.clone().into_bytes()))
-            .unwrap_or_else(|| std::fs::read(path))
-        {
+        let source = match std::fs::read(path) {
             Ok(b) => b,
 
             Err(e) => {
@@ -206,7 +188,7 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
 
         let source_hash = hash_bytes(&source);
 
-        let text = match String::from_utf8(source) {
+        let mut text = match String::from_utf8(source) {
             Ok(t) => t,
 
             Err(e) => {
@@ -226,6 +208,26 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
             return;
         }
 
+        /*
+        The front-end, now that we know this file is not already built. Its
+        output replaces the buffer, so every stage below reads ordinary Luau and
+        none of them learn a worm was involved.
+        */
+        if let Some(index) = front {
+            let mut local = Vec::new();
+            let compiled = frontend::compile(&pool, index, path, &text, &mut local);
+
+            if !local.is_empty() {
+                shared_diags.lock().unwrap().extend(local);
+            }
+
+            match compiled {
+                Some(compiled) => text = compiled,
+
+                None => return,
+            }
+        }
+
         let mut local_diags = Vec::new();
         let rewritten = process_file(
             path,
@@ -237,6 +239,7 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
             &config.rules,
             write,
             &pool,
+            pool.owns_requires(front),
             &mut local_diags,
         );
         let mut s = stats.lock().unwrap();
@@ -293,8 +296,19 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
             cache.record(rel, hash);
         }
 
+        /*
+        Keyed by where the file lands, so a claimed one has to be renamed here
+        too. Without it every cached entry for a worm's output is evicted and
+        the next build recompiles everything.
+        */
         for path in &to_process {
             if let Some(rel) = roots::dest_of(&roots, path) {
+                let rel = match pool.frontend_for(path) {
+                    Some(_) => frontend::luau_dest(&rel),
+
+                    None => rel,
+                };
+
                 keep.insert(rel.to_string_lossy().into_owned());
             }
         }
@@ -316,10 +330,14 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
         let produced: HashSet<PathBuf> = to_process
             .iter()
             .chain(to_copy.iter())
-            .filter_map(|p| match compiled.get(p.as_path()) {
-                Some(front) => Some(output.join(&front.dest)),
+            .filter_map(|p| {
+                let rel = roots::dest_of(&roots, p)?;
 
-                None => roots::dest_of(&roots, p).map(|r| output.join(r)),
+                Some(match pool.frontend_for(p) {
+                    Some(_) => output.join(frontend::luau_dest(&rel)),
+
+                    None => output.join(rel),
+                })
             })
             .collect();
         stats.files_pruned = prune_output(&output, &input, &root, &produced, &mut diags);

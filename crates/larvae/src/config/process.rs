@@ -50,6 +50,14 @@ pub struct ProcessConfig {
     #[serde(default)]
     pub quotes: QuoteStyle,
 
+    /*
+    Where our own rules sit in the sequence. A worm runs after this unless it
+    says otherwise, so an author writing "before" gets a smaller number and
+    "after" a larger one without ever needing to know what this is.
+    */
+    #[serde(default = "default_run_order")]
+    pub run_order: i64,
+
     #[serde(default = "default_true")]
     pub cache: bool,
 
@@ -88,6 +96,7 @@ impl Default for ProcessConfig {
             exclude: Vec::new(),
             generator: default_generator(),
             quotes: QuoteStyle::default(),
+            run_order: default_run_order(),
             cache: true,
             cache_dir: default_cache_dir(),
         }
@@ -109,6 +118,10 @@ fn default_generator() -> String {
 fn default_cache_dir() -> PathBuf {
     ".larvae".into()
 }
+pub(super) fn default_run_order() -> i64 {
+    1
+}
+
 pub(super) fn default_true() -> bool {
     true
 }

@@ -15,6 +15,7 @@ use anyhow::{Context, Result, bail};
 use crate::config::worms::{Source, Worms as WormsConfig};
 
 use super::manifest::{RuleDecl, Stage};
+
 use super::{RequireOwner, Worm};
 
 /// A worm plus what the project configured it with
@@ -27,7 +28,7 @@ pub struct Loaded {
     /// Rules that are on, by name, with the value each resolved to
     pub rules: BTreeMap<String, toml::Value>,
     /// What the user asked for in `[worms.<name>] run_order`
-    run_order: Option<Stage>,
+    pub run_order: Option<Stage>,
 }
 
 impl Loaded {
@@ -40,16 +41,6 @@ impl Loaded {
     Where this worm's rules sit in the sequence. Highest wins: the user's word
     in [config.<name>], then what the worm declared, then after larvae.
     */
-    pub fn stage(&self) -> Stage {
-        self.run_order
-            .or(self.worm.manifest.run_order)
-            .unwrap_or(Stage::Named(super::manifest::Side::After))
-    }
-
-    /// The slot this worm's rules run in, ours being Stage::NATIVE
-    pub fn slot(&self) -> i64 {
-        self.stage().slot()
-    }
 }
 
 /// Every worm a build will use
@@ -160,6 +151,15 @@ impl Registry {
                     artifact: l.artifact.clone(),
                     config: l.config.clone(),
                     rules: l.rules.clone(),
+                    run_order: l.run_order,
+                    requires: l.worm.manifest.requires,
+                    claims: l
+                        .worm
+                        .manifest
+                        .frontend
+                        .as_ref()
+                        .map(|f| f.claims.clone())
+                        .unwrap_or_default(),
                 })
             })
             .collect()
@@ -422,7 +422,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(r.iter().next().unwrap().slot(), 1);
+        assert_eq!(r.iter().next().unwrap().run_order, Some(Stage::At(1)));
     }
 
     #[test]
@@ -443,7 +443,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(r.iter().next().unwrap().slot(), 5);
+        assert_eq!(
+            r.iter().next().unwrap().worm.manifest.run_order,
+            Some(Stage::At(5))
+        );
     }
 
     #[test]
