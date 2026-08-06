@@ -44,6 +44,11 @@ fn rejects(src: &str) {
 }
 
 const CORPUS: &[&str] = &[
+    // --- explicit type instantiation, so the sweeps mutate and truncate it ---
+    "local a = charm.atom<<number>>()\n",
+    "local a = charm.atom<<(number, string)>>()\n",
+    "local a = obj:method<<...number>>()\n",
+    "local a = f<<Map<string, number>>>()\n",
     // --- basics ---
     "",
     "\n\n",
@@ -194,6 +199,58 @@ end
 return t
 "##,
 ];
+
+/*
+Explicit type instantiation, Luau's turbofish. The argument is a type or a type
+pack, so all of these are legal, and the round trip matters as much as the parse
+because a swallowed span would silently drop the type arguments from the output.
+*/
+#[test]
+fn turbofish_type_arguments() {
+    round_trip("local a = charm.atom<<number>>()\n");
+    round_trip("local a = charm.atom<<(number, string)>>()\n");
+    round_trip("local a = charm.atom<<()>>()\n");
+    round_trip("local a = charm.atom<<...number>>()\n");
+    round_trip("local a = charm.atom<<{ x: number }>>()\n");
+    round_trip("local a = f<<number>>()\n");
+
+    // nested generics, which is why the bracket counting has to be by depth
+    round_trip("local a = charm.atom<<Map<string, number>>>()\n");
+    round_trip("local a = f<<A<B<C>>>>()\n");
+
+    // a method call takes them too
+    round_trip("local a = obj:method<<number>>()\n");
+    round_trip("local a = obj:method<<(number, string)>>()\n");
+
+    // and the other two call argument forms
+    round_trip("local a = f<<number>>{ 1, 2 }\n");
+    round_trip("local a = f<<string>>\"lit\"\n");
+
+    // chained, so the suffix loop keeps going afterwards
+    round_trip("local a = f<<number>>().field\n");
+    round_trip("local a = f<<number>>()<<string>>()\n");
+}
+
+/// A single `<` is still a comparison and must not be read as a turbofish
+#[test]
+fn comparisons_are_not_turbofish() {
+    round_trip("local a = b < c\n");
+    round_trip("local a = b < c and c < d\n");
+    round_trip("local a = f(b < c)\n");
+    round_trip("local a = t[b < c]\n");
+    round_trip("if a < b then end\n");
+
+    // a generic call in type position, unrelated to the expression form
+    round_trip("local a: Map<string, number> = x\n");
+}
+
+/// A turbofish only ever precedes a call, so a bare one is a real error
+#[test]
+fn a_turbofish_without_a_call_is_rejected() {
+    rejects("local a = f<<number>>\n");
+    rejects("local a = f<<number>> + 1\n");
+    rejects("local a = f<<number\n");
+}
 
 #[test]
 fn corpus_round_trips() {

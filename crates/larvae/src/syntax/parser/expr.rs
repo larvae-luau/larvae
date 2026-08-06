@@ -189,11 +189,44 @@ impl<'a> Parser<'a> {
                     self.bump();
 
                     let method = self.expect_name()?;
+
+                    // a method call takes type arguments too, `obj:m<<T>>()`
+                    if self.at("<") && self.text_at(1) == "<" {
+                        self.angle_span()?;
+                    }
+
                     let args = self.call_args()?;
 
                     e = Expr::Call {
                         func: Box::new(e),
                         method: Some(method),
+                        args,
+                        span: TokSpan::new(start, self.pos),
+                    };
+                }
+
+                /*
+                Explicit type instantiation, `f<<T>>()`, which Luau calls a
+                turbofish. This is the only place two `<` sit next to each
+                other: no expression starts with `<`, and Luau has no shift
+                operator, so there is nothing to disambiguate against.
+
+                The argument is a type or a type pack, so `<<number>>`,
+                `<<(number, string)>>`, `<<()>>` and `<<...number>>` are all
+                legal. `angle_span` already depth counts brackets, which is why
+                the nested pair needs no special case.
+
+                A turbofish only ever precedes a call, so `call_args` is
+                required rather than optional, and reports it when missing.
+                */
+                "<" if self.text_at(1) == "<" => {
+                    self.angle_span()?;
+
+                    let args = self.call_args()?;
+
+                    e = Expr::Call {
+                        func: Box::new(e),
+                        method: None,
                         args,
                         span: TokSpan::new(start, self.pos),
                     };
