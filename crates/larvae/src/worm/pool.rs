@@ -38,6 +38,8 @@ pub struct Spec {
     pub manifest: Manifest,
     /// The Luau source or wasm module, kept so a worker never touches the disk
     pub artifact: Vec<u8>,
+    /// Where the worm was unpacked, which a native worm execs from
+    pub dir: std::path::PathBuf,
     /// `[worms.<name>.config]`, untouched
     pub config: toml::Value,
     /// Rules that are on, by name, with the value each resolved to
@@ -268,7 +270,7 @@ impl Pool {
             }
 
             if local.worms[index].is_none() {
-                let mut worm = Worm::from_parts(spec.manifest.clone(), &spec.artifact)
+                let mut worm = Worm::build(spec.manifest.clone(), &spec.artifact, Some(&spec.dir))
                     .with_context(|| format!("worm `{}`", spec.manifest.name))?;
 
                 init(&mut worm, &spec)?;
@@ -285,7 +287,7 @@ fn init(worm: &mut Worm, spec: &Spec) -> Result<()> {
     match worm.manifest.form {
         super::Form::Luau => worm.init(&spec.config, &spec.rules),
 
-        super::Form::Wasm => {
+        super::Form::Wasm | super::Form::Native => {
             let _ = (toml_text(&spec.config), toml_text_map(&spec.rules));
 
             worm.init(&spec.config, &spec.rules)

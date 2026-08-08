@@ -23,6 +23,8 @@ pub struct Loaded {
     pub worm: Worm,
     /// Kept so a worker can build its own instance without touching the disk
     pub artifact: Vec<u8>,
+    /// Where it was unpacked, which only a native worm needs, to exec from
+    pub dir: std::path::PathBuf,
     /// `[worms.<name>.config]`, untouched, handed over at init
     pub config: toml::Value,
     /// Rules that are on, by name, with the value each resolved to
@@ -91,7 +93,7 @@ impl Registry {
             let (manifest, artifact) =
                 Worm::read_parts(&dir).with_context(|| format!("loading worm `{name}`"))?;
 
-            let worm = Worm::from_parts(manifest, &artifact)
+            let worm = Worm::build(manifest, &artifact, Some(&dir))
                 .with_context(|| format!("loading worm `{name}`"))?;
 
             /*
@@ -109,6 +111,7 @@ impl Registry {
             let enabled = resolve_rules(name, &worm, &entry.rules)?;
 
             worms.push(Loaded {
+                dir,
                 worm,
                 artifact,
                 config: entry.config.clone(),
@@ -166,6 +169,7 @@ impl Registry {
                 std::sync::Arc::new(super::pool::Spec {
                     manifest: l.worm.manifest.clone(),
                     artifact: l.artifact.clone(),
+                    dir: l.dir.clone(),
                     config: l.config.clone(),
                     rules: l.rules.clone(),
                     run_order: l.run_order,

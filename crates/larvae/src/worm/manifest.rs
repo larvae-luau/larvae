@@ -15,6 +15,15 @@ pub enum Form {
     Luau,
     /// A `wasm32` module, run in the interpreter
     Wasm,
+    /*
+    An ordinary executable, spoken to over a pipe.
+
+    Native speed, and no sandbox: it runs with everything the user can reach,
+    where a wasm worm cannot read a file we did not hand it. Worth it for a
+    worm doing real work that a project trusts, which is why it is opt in per
+    worm rather than the default.
+    */
+    Native,
 }
 
 /*

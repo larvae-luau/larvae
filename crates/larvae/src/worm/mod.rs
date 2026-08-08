@@ -12,6 +12,7 @@ pub mod fetch;
 pub mod host;
 pub mod luau;
 pub mod manifest;
+pub mod native;
 pub mod nodes;
 pub mod pool;
 pub mod registry;
@@ -34,6 +35,7 @@ pub const MANIFEST: &str = "worm.toml";
 enum Backend {
     Luau(Box<LuauWorm>),
     Wasm(Box<WasmWorm>),
+    Native(Box<native::NativeWorm>),
 }
 
 /// A worm, loaded and ready to be called once per file
@@ -47,6 +49,18 @@ impl Worm {
     /// Build a worm from a manifest and its artifact bytes, which is what a
     /// worker does when it needs its own instance
     pub fn from_parts(manifest: Manifest, artifact: &[u8]) -> Result<Self> {
+        Self::build(manifest, artifact, None)
+    }
+
+    /*
+    Build a worm, given where it was unpacked when that matters.
+
+    Only the native form needs the directory: the other two are handed their
+    bytes and run them in process, while a subprocess has to be a file the
+    operating system can execute. A caller with no directory can still build
+    the other two, which is what keeps `from_parts` usable.
+    */
+    pub fn build(manifest: Manifest, artifact: &[u8], dir: Option<&Path>) -> Result<Self> {
         let backend = match manifest.form {
             Form::Luau => {
                 let source = std::str::from_utf8(artifact)
@@ -56,6 +70,20 @@ impl Worm {
             }
 
             Form::Wasm => Backend::Wasm(Box::new(WasmWorm::load(artifact)?)),
+
+            Form::Native => {
+                let dir = dir.with_context(|| {
+                    format!(
+                        "worm `{}` is native, which needs the file on disk to run",
+                        manifest.name
+                    )
+                })?;
+
+                Backend::Native(Box::new(native::NativeWorm::load(
+                    &dir.join(&manifest.entry),
+                    &manifest.name,
+                )?))
+            }
         };
 
         Ok(Self { manifest, backend })
@@ -74,7 +102,7 @@ impl Worm {
         let artifact = std::fs::read(&entry)
             .with_context(|| format!("cannot read {}", crate::ui::rel(&entry)))?;
 
-        Self::from_parts(manifest, &artifact)
+        Self::build(manifest, &artifact, Some(dir))
     }
 
     /// Read a worm's manifest and artifact without instantiating either
@@ -103,6 +131,9 @@ impl Worm {
             Backend::Luau(worm) => worm.init(config, rules),
 
             Backend::Wasm(worm) => worm.init(&toml_text(config), &toml_text_map(rules)),
+
+            // same text as wasm gets, since neither can be handed a table
+            Backend::Native(worm) => worm.init(&toml_text(config), &toml_text_map(rules)),
         }
     }
 
@@ -118,6 +149,23 @@ impl Worm {
             Backend::Luau(worm) => worm.run_rule(rule, file, matched),
 
             Backend::Wasm(worm) => worm.run_rule(index, file, matched),
+
+            /*
+            Not built, and deliberately not faked.
+
+            The rule protocol crosses once per node, which is the shape this
+            form exists to get away from: 120 crossings a file over a pipe
+            would be slower than the wasm path it is meant to beat. Rules for
+            a native worm land with the batched protocol, not before it.
+            */
+            Backend::Native(_) => {
+                let _ = (rule, index, file, matched);
+
+                anyhow::bail!(
+                    "worm `{}` is native, which does not run rules yet",
+                    self.manifest.name
+                )
+            }
         }
     }
 
@@ -148,6 +196,13 @@ impl Worm {
             Backend::Luau(worm) => worm.transform(source, config),
 
             Backend::Wasm(worm) => worm.transform(source, config),
+
+            /*
+            A native worm reports failure in its reply rather than by trapping,
+            so a message that arrives at all arrived intact and is output.
+            Anything that went wrong came back as an error from the call.
+            */
+            Backend::Native(worm) => worm.transform(source).map(|text| Outcome { text, ok: true }),
         }
         .with_context(|| format!("worm `{}`", self.manifest.name))
     }
