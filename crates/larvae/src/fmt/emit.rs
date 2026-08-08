@@ -20,6 +20,7 @@ use crate::syntax::ast::*;
 use crate::syntax::lexer::{Tok, TokKind};
 
 use super::config::{
+    BlockNewlineGaps,
     CallParens, CollapseSimpleStatement, FmtConfig, QuoteStyle, RequireGrouping,
 };
 use super::doc::Doc;
@@ -497,11 +498,54 @@ impl<'a> Emitter<'a> {
             return Doc::concat([open, Doc::Hard]);
         }
 
+        let (before, after) = self.block_gaps(block);
+
         Doc::concat([
             open,
-            Doc::indent(Doc::concat([Doc::Hard, body])),
-            Doc::Hard,
+            Doc::indent(Doc::concat([before, body])),
+            after,
         ])
+    }
+
+    /*
+    The breaks at the two edges of a block, which `block_newline_gaps` decides.
+
+    A blank line just inside `do` or just before `end` is dropped by default,
+    which is what almost everyone wants and what stylua does. `preserve` keeps
+    the author's, for the style that uses them to give a long body room to
+    breathe.
+
+    Only the edges: blank lines between statements are kept either way, because
+    those separate ideas rather than pad a boundary.
+    */
+    fn block_gaps(&self, block: &Block) -> (Doc<'a>, Doc<'a>) {
+        if self.cfg.block_newline_gaps == BlockNewlineGaps::Never {
+            return (Doc::Hard, Doc::Hard);
+        }
+
+        let lo = self.block_lo(block);
+        let hi = self.block_hi(block);
+
+        let first = block
+            .stmts
+            .iter()
+            .find(|s| !matches!(s, Stmt::Empty(_)))
+            .map_or(hi, |s| self.tok_start(s.span().start));
+
+        let last = block
+            .stmts
+            .iter()
+            .rev()
+            .find(|s| !matches!(s, Stmt::Empty(_)))
+            .map_or(lo, |s| self.tok_end(s.span().end - 1));
+
+        let gap = |from: u32, to: u32| match self.trivia.blank_between(from, to) {
+            true => Doc::Blank,
+
+            false => Doc::Hard,
+        };
+
+        (gap(lo, first), gap(last, hi))
     }
 
     /*

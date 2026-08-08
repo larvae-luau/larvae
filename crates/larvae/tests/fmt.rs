@@ -800,3 +800,55 @@ fn a_comment_is_placed_or_the_file_is_refused_never_dropped() {
         }
     }
 }
+
+// --- block_newline_gaps ----------------------------------------------------
+
+fn gaps(mode: larvae::fmt::config::BlockNewlineGaps) -> FmtConfig {
+    FmtConfig {
+        block_newline_gaps: mode,
+        ..Default::default()
+    }
+}
+
+/// The default, and what stylua does
+#[test]
+fn a_blank_at_the_edge_of_a_block_is_dropped_by_default() {
+    let src = "local function f()\n\n\tbody()\n\nend\n";
+
+    assert_eq!(fmt(src), "local function f()\n\tbody()\nend\n");
+}
+
+#[test]
+fn preserve_keeps_the_blank_at_both_edges() {
+    let src = "local function f()\n\n\tbody()\n\nend\n";
+
+    assert_eq!(
+        fmt_with(src, gaps(larvae::fmt::config::BlockNewlineGaps::Preserve)),
+        src
+    );
+}
+
+#[test]
+fn preserve_keeps_one_edge_when_only_one_has_a_blank() {
+    let cfg = gaps(larvae::fmt::config::BlockNewlineGaps::Preserve);
+
+    assert_eq!(fmt_with("do\n\n\tx()\nend\n", cfg.clone()), "do\n\n\tx()\nend\n");
+    assert_eq!(fmt_with("do\n\tx()\n\nend\n", cfg), "do\n\tx()\n\nend\n");
+}
+
+/// Blanks between statements separate ideas and are kept either way
+#[test]
+fn a_blank_between_statements_is_not_an_edge_gap() {
+    let src = "do\n\ta()\n\n\tb()\nend\n";
+
+    assert_eq!(fmt(src), src, "kept even at the default");
+}
+
+#[test]
+fn preserving_gaps_is_still_idempotent() {
+    let cfg = gaps(larvae::fmt::config::BlockNewlineGaps::Preserve);
+    let src = "local function f()\n\n\tif a then\n\n\t\tb()\n\n\tend\n\nend\n";
+    let once = fmt_with(src, cfg.clone());
+
+    assert_eq!(fmt_with(&once, cfg), once);
+}
