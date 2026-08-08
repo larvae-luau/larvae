@@ -90,19 +90,7 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
     files are even transformable. Loading also validates the whole set: names
     against their keys, and no two worms claiming one extension.
     */
-    let worms = match config.worms.as_ref() {
-        Some(value) => {
-            let named = crate::config::worms::Worms::parse(value)?;
-
-            crate::worm::registry::Registry::load(
-                &root,
-                &root.join(&config.process.cache_dir),
-                &named,
-            )?
-        }
-
-        None => crate::worm::registry::Registry::default(),
-    };
+    let worms = crate::worm::registry::Registry::for_project(&root, config)?;
 
     let claimed = worms.claimed_extensions();
 

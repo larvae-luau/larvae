@@ -51,6 +51,28 @@ pub struct Registry {
 
 impl Registry {
     /// Load every worm the config named, relative to the project root
+    /*
+    The worms a project asks for, or an empty set when it asks for none.
+
+    Every command that touches a project's files needs this, not just the
+    pipeline: a front-end decides which files exist as far as larvae is
+    concerned, so `fmt` and `lint` walking a tree without asking would miss the
+    claimed ones and format the wrong set.
+    */
+    pub fn for_project(root: &Path, config: &crate::config::Config) -> Result<Self> {
+        let Some(value) = config.worms.as_ref() else {
+            return Ok(Self::default());
+        };
+
+        let named = crate::config::worms::Worms::parse(value)?;
+
+        Self::load(
+            root,
+            &root.join(&config.process.cache_dir),
+            &named,
+        )
+    }
+
     pub fn load(root: &Path, cache: &Path, config: &WormsConfig) -> Result<Self> {
         let mut worms = Vec::new();
 

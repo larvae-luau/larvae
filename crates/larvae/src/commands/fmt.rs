@@ -205,6 +205,15 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
         .map(walkdir::DirEntry::into_path)
+        /*
+        Only what larvae itself can read, for now.
+
+        A front-end worm claiming `.luaux` should widen this, and deliberately
+        does not yet: nothing can format a claimed file, so walking one would
+        parse it as Luau, fail, and turn a passing `fmt --check` into a failing
+        one for every project using a front-end. The filter widens in the same
+        change that gives worms something to format with.
+        */
         .filter(|p| {
             matches!(
                 p.extension().and_then(|e| e.to_str()),
