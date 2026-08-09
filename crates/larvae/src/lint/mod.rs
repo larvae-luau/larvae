@@ -13,8 +13,8 @@ refers to, is computed once per file in [`ctx`] rather than once per lint.
 
 pub mod config;
 pub mod ctx;
-pub mod lints;
 pub mod globals;
+pub mod lints;
 pub mod scope;
 
 use std::path::Path;
@@ -107,8 +107,7 @@ run over a tree is expected to report on every file it was given and one file
 that does not compile should not end the run.
 */
 pub fn lint(path: &Path, src: &str, cfg: &LintConfig) -> Result<Vec<Diag>, Diag> {
-    let findings = analyze(src, cfg)
-        .map_err(|e| Diag::error(path, e.message).at(src, e.offset))?;
+    let findings = analyze(src, cfg).map_err(|e| Diag::error(path, e.message).at(src, e.offset))?;
 
     // one scan for the file, rather than one per finding
     let index = crate::diag::LineIndex::new(src);

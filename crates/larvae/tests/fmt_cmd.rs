@@ -121,7 +121,10 @@ fn stdin_writes_the_result_to_stdout() {
     let out = child.wait_with_output().expect("finishes");
 
     assert!(out.status.success());
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "local x = { a = 1 }\n");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "local x = { a = 1 }\n"
+    );
 }
 
 #[test]
@@ -199,7 +202,11 @@ fn an_existing_stylua_config_is_honoured() {
 #[test]
 fn larvae_toml_wins_over_stylua_toml() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), "stylua.toml", "indent_type = \"Spaces\"\nindent_width = 3\n");
+    write(
+        dir.path(),
+        "stylua.toml",
+        "indent_type = \"Spaces\"\nindent_width = 3\n",
+    );
     write(dir.path(), "larvae.toml", "[fmt]\nindent_width = 5\n");
 
     let path = write(dir.path(), "a.luau", "do\nx()\nend\n");
@@ -223,7 +230,10 @@ fn the_project_input_is_the_default_target() {
 
     run(dir.path(), &["fmt"]);
 
-    assert_eq!(std::fs::read_to_string(&inside).unwrap(), "local x = { a = 1 }\n");
+    assert_eq!(
+        std::fs::read_to_string(&inside).unwrap(),
+        "local x = { a = 1 }\n"
+    );
     assert_eq!(
         std::fs::read_to_string(&outside).unwrap(),
         "local y={b=2}\n",
@@ -248,13 +258,19 @@ fn an_excluded_path_is_walked_past() {
 
     run(dir.path(), &["fmt"]);
 
-    assert_eq!(std::fs::read_to_string(&mine).unwrap(), "local x = { a = 1 }\n");
+    assert_eq!(
+        std::fs::read_to_string(&mine).unwrap(),
+        "local x = { a = 1 }\n"
+    );
     assert_eq!(
         std::fs::read_to_string(&vendored).unwrap(),
         "local y={b=2}\n",
         "a named directory takes what is under it"
     );
-    assert_eq!(std::fs::read_to_string(&generated).unwrap(), "local z={c=3}\n");
+    assert_eq!(
+        std::fs::read_to_string(&generated).unwrap(),
+        "local z={c=3}\n"
+    );
 
     run(dir.path(), &["fmt", "src"]);
 
@@ -269,7 +285,11 @@ fn an_excluded_path_is_walked_past() {
 #[test]
 fn an_excluded_file_is_still_formatted_when_named() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), "larvae.toml", "[fmt]\nexclude = [\"src/vendor\"]\n");
+    write(
+        dir.path(),
+        "larvae.toml",
+        "[fmt]\nexclude = [\"src/vendor\"]\n",
+    );
 
     let vendored = write(dir.path(), "src/vendor/b.luau", "local y={b=2}\n");
 

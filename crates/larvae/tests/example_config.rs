@@ -24,8 +24,7 @@ fn example() -> String {
         .expect("the workspace root")
         .join("larvae.example.toml");
 
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("cannot read {}, {e}", path.display()))
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {}, {e}", path.display()))
 }
 
 /// Written into a directory of its own, since discovery reads from the root
@@ -54,8 +53,16 @@ fn the_example_is_not_duplicated() {
         1,
         "[process] appears more than once"
     );
-    assert_eq!(text.matches("\n[fmt]").count(), 1, "[fmt] appears more than once");
-    assert_eq!(text.matches("\n[lint]").count(), 1, "[lint] appears more than once");
+    assert_eq!(
+        text.matches("\n[fmt]").count(),
+        1,
+        "[fmt] appears more than once"
+    );
+    assert_eq!(
+        text.matches("\n[lint]").count(),
+        1,
+        "[lint] appears more than once"
+    );
 }
 
 /// `deny_unknown_fields` means loading it proves every key it names is real
@@ -135,10 +142,22 @@ fn the_documented_fmt_defaults_match() {
         default.collapse_simple_statement
     );
     assert_eq!(from_example.block_newline_gaps, default.block_newline_gaps);
-    assert_eq!(from_example.magic_trailing_comma, default.magic_trailing_comma);
-    assert_eq!(from_example.space_inside_braces, default.space_inside_braces);
-    assert_eq!(from_example.space_inside_parens, default.space_inside_parens);
-    assert_eq!(from_example.space_inside_brackets, default.space_inside_brackets);
+    assert_eq!(
+        from_example.magic_trailing_comma,
+        default.magic_trailing_comma
+    );
+    assert_eq!(
+        from_example.space_inside_braces,
+        default.space_inside_braces
+    );
+    assert_eq!(
+        from_example.space_inside_parens,
+        default.space_inside_parens
+    );
+    assert_eq!(
+        from_example.space_inside_brackets,
+        default.space_inside_brackets
+    );
     assert_eq!(from_example.trailing_comma, default.trailing_comma);
     assert_eq!(
         from_example.sort_requires.enabled,

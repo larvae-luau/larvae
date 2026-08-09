@@ -381,11 +381,9 @@ fn lower_enum_values(text: &str) -> String {
 
         let value = &rest[..close];
 
-        if value
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_uppercase() && value.chars().all(|c| c.is_ascii_alphabetic()))
-        {
+        if value.chars().next().is_some_and(|c| {
+            c.is_ascii_uppercase() && value.chars().all(|c| c.is_ascii_alphabetic())
+        }) {
             out.push_str(&kebab(value));
         } else {
             out.push_str(value);
@@ -476,7 +474,10 @@ call_parentheses = "NoSingleTable"
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(".stylua.toml"), "column_width = 60\n").unwrap();
 
-        assert_eq!(FmtConfig::discover(dir.path(), None).unwrap().column_width, 60);
+        assert_eq!(
+            FmtConfig::discover(dir.path(), None).unwrap().column_width,
+            60
+        );
     }
 
     #[test]

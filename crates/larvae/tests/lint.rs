@@ -58,12 +58,20 @@ fn every_lint_has_a_distinct_name_and_an_explanation() {
             "{} should be snake_case",
             lint.name()
         );
-        assert!(!seen.contains(&lint.name()), "{} is registered twice", lint.name());
+        assert!(
+            !seen.contains(&lint.name()),
+            "{} is registered twice",
+            lint.name()
+        );
 
         seen.push(lint.name());
     }
 
-    assert!(seen.len() >= 29, "expected the full set, found {}", seen.len());
+    assert!(
+        seen.len() >= 29,
+        "expected the full set, found {}",
+        seen.len()
+    );
 }
 
 #[test]
@@ -74,15 +82,20 @@ fn a_lint_can_be_looked_up_by_name() {
 
 #[test]
 fn clean_code_produces_nothing() {
-    let src = "local function add(a: number, b: number): number\n\treturn a + b\nend\n\nreturn add\n";
+    let src =
+        "local function add(a: number, b: number): number\n\treturn a + b\nend\n\nreturn add\n";
 
     assert_eq!(names(src), Vec::<String>::new());
 }
 
 #[test]
 fn a_file_that_does_not_parse_comes_back_as_one_diagnostic() {
-    let err = lint(Path::new("test.luau"), "local = = =", &LintConfig::default())
-        .expect_err("should not parse");
+    let err = lint(
+        Path::new("test.luau"),
+        "local = = =",
+        &LintConfig::default(),
+    )
+    .expect_err("should not parse");
 
     assert_eq!(err.severity, Severity::Error);
     assert!(err.message.contains("syntax error"));
@@ -176,7 +189,10 @@ fn comparing_a_value_to_itself_is_not_reported() {
 #[test]
 fn constant_table_comparison_catches_comparing_to_a_literal() {
     assert!(fires("constant_table_comparison", "if t == {} then end\n"));
-    assert!(fires("constant_table_comparison", "if t ~= { a = 1 } then end\n"));
+    assert!(fires(
+        "constant_table_comparison",
+        "if t ~= { a = 1 } then end\n"
+    ));
 }
 
 #[test]
@@ -205,8 +221,14 @@ fn nan_is_not_also_reported_as_a_division() {
 #[test]
 fn duplicate_keys_catches_a_repeated_name_and_a_repeated_literal() {
     assert!(fires("duplicate_keys", "local t = { a = 1, a = 2 }\n"));
-    assert!(fires("duplicate_keys", "local t = { [1] = 'x', [1] = 'y' }\n"));
-    assert!(fires("duplicate_keys", "local t = { ['k'] = 1, ['k'] = 2 }\n"));
+    assert!(fires(
+        "duplicate_keys",
+        "local t = { [1] = 'x', [1] = 'y' }\n"
+    ));
+    assert!(fires(
+        "duplicate_keys",
+        "local t = { ['k'] = 1, ['k'] = 2 }\n"
+    ));
 }
 
 #[test]
@@ -218,51 +240,87 @@ fn distinct_keys_are_fine_and_a_computed_key_is_not_guessed_at() {
 
 #[test]
 fn ifs_same_cond_catches_a_branch_that_can_never_run() {
-    assert!(fires("ifs_same_cond", "if a then x() elseif a then y() end\n"));
+    assert!(fires(
+        "ifs_same_cond",
+        "if a then x() elseif a then y() end\n"
+    ));
 }
 
 #[test]
 fn different_conditions_are_fine() {
-    assert!(!fires("ifs_same_cond", "if a then x() elseif b then y() end\n"));
+    assert!(!fires(
+        "ifs_same_cond",
+        "if a then x() elseif b then y() end\n"
+    ));
 }
 
 #[test]
 fn if_same_then_else_catches_two_identical_branches() {
-    assert!(fires("if_same_then_else", "if a then\n\tx()\nelse\n\tx()\nend\n"));
+    assert!(fires(
+        "if_same_then_else",
+        "if a then\n\tx()\nelse\n\tx()\nend\n"
+    ));
 }
 
 #[test]
 fn branches_that_differ_are_fine() {
-    assert!(!fires("if_same_then_else", "if a then\n\tx()\nelse\n\ty()\nend\n"));
+    assert!(!fires(
+        "if_same_then_else",
+        "if a then\n\tx()\nelse\n\ty()\nend\n"
+    ));
 }
 
 #[test]
 fn suspicious_reverse_loop_catches_a_countdown_without_a_step() {
-    assert!(fires("suspicious_reverse_loop", "for i = 10, 1 do print(i) end\n"));
+    assert!(fires(
+        "suspicious_reverse_loop",
+        "for i = 10, 1 do print(i) end\n"
+    ));
 }
 
 #[test]
 fn a_countdown_with_a_negative_step_is_correct() {
-    assert!(!fires("suspicious_reverse_loop", "for i = 10, 1, -1 do print(i) end\n"));
-    assert!(!fires("suspicious_reverse_loop", "for i = 1, 10 do print(i) end\n"));
+    assert!(!fires(
+        "suspicious_reverse_loop",
+        "for i = 10, 1, -1 do print(i) end\n"
+    ));
+    assert!(!fires(
+        "suspicious_reverse_loop",
+        "for i = 1, 10 do print(i) end\n"
+    ));
 }
 
 /// A limit that is not a literal could be anything
 #[test]
 fn a_loop_over_computed_bounds_is_not_guessed_at() {
-    assert!(!fires("suspicious_reverse_loop", "for i = n, 1 do print(i) end\n"));
-    assert!(!fires("suspicious_reverse_loop", "for i = 10, #t do print(i) end\n"));
+    assert!(!fires(
+        "suspicious_reverse_loop",
+        "for i = n, 1 do print(i) end\n"
+    ));
+    assert!(!fires(
+        "suspicious_reverse_loop",
+        "for i = 10, #t do print(i) end\n"
+    ));
 }
 
 #[test]
 fn type_check_inside_call_catches_the_misplaced_parenthesis() {
-    assert!(fires("type_check_inside_call", "if type(x == 'number') then end\n"));
-    assert!(fires("type_check_inside_call", "if typeof(x == 'Vector3') then end\n"));
+    assert!(fires(
+        "type_check_inside_call",
+        "if type(x == 'number') then end\n"
+    ));
+    assert!(fires(
+        "type_check_inside_call",
+        "if typeof(x == 'Vector3') then end\n"
+    ));
 }
 
 #[test]
 fn the_correct_form_is_not_reported() {
-    assert!(!fires("type_check_inside_call", "if type(x) == 'number' then end\n"));
+    assert!(!fires(
+        "type_check_inside_call",
+        "if type(x) == 'number' then end\n"
+    ));
 }
 
 #[test]
@@ -301,7 +359,10 @@ fn empty_if_catches_an_empty_branch() {
 /// A branch holding a comment is deliberate, the comment is the content
 #[test]
 fn a_branch_with_only_a_comment_is_left_alone() {
-    assert!(!fires("empty_if", "if a then\n\t-- nothing to do yet\nend\n"));
+    assert!(!fires(
+        "empty_if",
+        "if a then\n\t-- nothing to do yet\nend\n"
+    ));
 }
 
 #[test]
@@ -336,7 +397,10 @@ fn parenthese_conditions_catches_the_habit() {
 
 #[test]
 fn parentheses_that_group_something_are_left_alone() {
-    assert!(!fires("parenthese_conditions", "if (a or b) and c then end\n"));
+    assert!(!fires(
+        "parenthese_conditions",
+        "if (a or b) and c then end\n"
+    ));
 }
 
 #[test]
@@ -387,8 +451,14 @@ fn an_underscore_name_is_exempt() {
 /// A signature is the caller's shape, and `for k, v` where only k is wanted is normal
 #[test]
 fn parameters_and_loop_variables_are_not_reported_by_default() {
-    assert!(!fires("unused_variable", "local function f(a, b)\n\treturn a\nend\nprint(f)\n"));
-    assert!(!fires("unused_variable", "for k, v in pairs(t) do print(k) end\n"));
+    assert!(!fires(
+        "unused_variable",
+        "local function f(a, b)\n\treturn a\nend\nprint(f)\n"
+    ));
+    assert!(!fires(
+        "unused_variable",
+        "for k, v in pairs(t) do print(k) end\n"
+    ));
 }
 
 #[test]
@@ -415,7 +485,8 @@ fn a_variable_written_but_never_read_is_reported_differently() {
     .unwrap();
 
     assert!(
-        out.iter().any(|d| d.message.contains("assigned but never read")),
+        out.iter()
+            .any(|d| d.message.contains("assigned but never read")),
         "{:?}",
         out.iter().map(|d| &d.message).collect::<Vec<_>>()
     );
@@ -429,7 +500,10 @@ fn undefined_variable_catches_a_name_nothing_declares() {
 #[test]
 fn a_standard_global_is_defined() {
     assert!(!fires("undefined_variable", "print(pairs)\n"));
-    assert!(!fires("undefined_variable", "local s = game:GetService('Players')\nprint(s)\n"));
+    assert!(!fires(
+        "undefined_variable",
+        "local s = game:GetService('Players')\nprint(s)\n"
+    ));
 }
 
 #[test]
@@ -479,23 +553,35 @@ fn unscoped_variables_catches_the_missing_local() {
 
 #[test]
 fn a_local_assignment_is_fine() {
-    assert!(!fires("unscoped_variables", "local counter = 0\ncounter = 1\nprint(counter)\n"));
+    assert!(!fires(
+        "unscoped_variables",
+        "local counter = 0\ncounter = 1\nprint(counter)\n"
+    ));
 }
 
 #[test]
 fn shadowing_catches_a_hidden_name() {
-    assert!(fires("shadowing", "local x = 1\nprint(x)\ndo\n\tlocal x = 2\n\tprint(x)\nend\n"));
+    assert!(fires(
+        "shadowing",
+        "local x = 1\nprint(x)\ndo\n\tlocal x = 2\n\tprint(x)\nend\n"
+    ));
 }
 
 /// Re-deriving what you hide is the deliberate form
 #[test]
 fn a_binding_that_reads_what_it_hides_is_not_reported() {
-    assert!(!fires("shadowing", "local x = 1\ndo\n\tlocal x = x + 1\n\tprint(x)\nend\n"));
+    assert!(!fires(
+        "shadowing",
+        "local x = 1\ndo\n\tlocal x = x + 1\n\tprint(x)\nend\n"
+    ));
 }
 
 #[test]
 fn a_sibling_scope_is_not_shadowing() {
-    assert!(!fires("shadowing", "do\n\tlocal x = 1\n\tprint(x)\nend\ndo\n\tlocal x = 2\n\tprint(x)\nend\n"));
+    assert!(!fires(
+        "shadowing",
+        "do\n\tlocal x = 1\n\tprint(x)\nend\ndo\n\tlocal x = 2\n\tprint(x)\nend\n"
+    ));
 }
 
 #[test]
@@ -514,13 +600,22 @@ fn a_local_named_underscore_g_is_not_the_shared_one() {
 
 #[test]
 fn unreachable_code_catches_statements_after_an_exit() {
-    assert!(fires("unreachable_code", "while true do\n\tbreak\n\tprint('never')\nend\n"));
-    assert!(fires("unreachable_code", "for i = 1, 3 do\n\tcontinue\n\tprint('never')\nend\n"));
+    assert!(fires(
+        "unreachable_code",
+        "while true do\n\tbreak\n\tprint('never')\nend\n"
+    ));
+    assert!(fires(
+        "unreachable_code",
+        "for i = 1, 3 do\n\tcontinue\n\tprint('never')\nend\n"
+    ));
 }
 
 #[test]
 fn code_before_the_exit_is_fine() {
-    assert!(!fires("unreachable_code", "while true do\n\tprint('once')\n\tbreak\nend\n"));
+    assert!(!fires(
+        "unreachable_code",
+        "while true do\n\tprint('once')\n\tbreak\nend\n"
+    ));
 }
 
 /// An exit inside a branch leaves the enclosing block reachable
@@ -621,8 +716,10 @@ fn a_call_inside_a_callback_is_not_this_loops_work() {
 
 fn opts(name: &str, body: &str) -> LintConfig {
     let mut cfg = LintConfig::default();
-    cfg.options
-        .insert(name.to_string(), toml::from_str::<toml::Value>(body).unwrap());
+    cfg.options.insert(
+        name.to_string(),
+        toml::from_str::<toml::Value>(body).unwrap(),
+    );
 
     cfg
 }
@@ -661,7 +758,10 @@ fn must_use_catches_a_pure_call_thrown_away() {
 
 #[test]
 fn using_the_result_is_the_whole_point_and_is_quiet() {
-    assert!(!fires("must_use", "local s = string.format('%d', 1)\nprint(s)\n"));
+    assert!(!fires(
+        "must_use",
+        "local s = string.format('%d', 1)\nprint(s)\n"
+    ));
 }
 
 /// A call with side effects is not on the list and must not be guessed at
@@ -702,12 +802,19 @@ fn deprecated_catches_the_replaced_methods() {
 fn a_project_can_deprecate_its_own_functions() {
     let cfg = opts("deprecated", "additional = { oldHelper = \"newHelper\" }");
 
-    assert!(fired("oldHelper()\n", &cfg).iter().any(|n| n == "deprecated"));
+    assert!(
+        fired("oldHelper()\n", &cfg)
+            .iter()
+            .any(|n| n == "deprecated")
+    );
 }
 
 #[test]
 fn restricted_module_paths_is_quiet_until_a_project_fills_it_in() {
-    assert!(!fires("restricted_module_paths", "local m = require('@server/secret')\nprint(m)\n"));
+    assert!(!fires(
+        "restricted_module_paths",
+        "local m = require('@server/secret')\nprint(m)\n"
+    ));
 
     let cfg = opts(
         "restricted_module_paths",
@@ -716,7 +823,10 @@ fn restricted_module_paths_is_quiet_until_a_project_fills_it_in() {
 
     let out = fired("local m = require('@server/secret')\nprint(m)\n", &cfg);
 
-    assert!(out.iter().any(|n| n == "restricted_module_paths"), "{out:?}");
+    assert!(
+        out.iter().any(|n| n == "restricted_module_paths"),
+        "{out:?}"
+    );
 }
 
 #[test]
@@ -846,23 +956,38 @@ fn a_reassigned_function_is_not_checked() {
 
 #[test]
 fn color3_new_over_one_is_caught() {
-    assert!(fires("roblox_incorrect_color3_new_bounds", "local c = Color3.new(255, 0, 0)\nprint(c)\n"));
+    assert!(fires(
+        "roblox_incorrect_color3_new_bounds",
+        "local c = Color3.new(255, 0, 0)\nprint(c)\n"
+    ));
 }
 
 #[test]
 fn color3_new_on_the_right_scale_is_fine() {
-    assert!(!fires("roblox_incorrect_color3_new_bounds", "local c = Color3.new(1, 0, 0)\nprint(c)\n"));
-    assert!(!fires("roblox_incorrect_color3_new_bounds", "local c = Color3.fromRGB(255, 0, 0)\nprint(c)\n"));
+    assert!(!fires(
+        "roblox_incorrect_color3_new_bounds",
+        "local c = Color3.new(1, 0, 0)\nprint(c)\n"
+    ));
+    assert!(!fires(
+        "roblox_incorrect_color3_new_bounds",
+        "local c = Color3.fromRGB(255, 0, 0)\nprint(c)\n"
+    ));
 }
 
 #[test]
 fn udim2_new_with_two_arguments_is_caught() {
-    assert!(fires("roblox_suspicious_udim2_new", "local u = UDim2.new(0.5, 0.5)\nprint(u)\n"));
+    assert!(fires(
+        "roblox_suspicious_udim2_new",
+        "local u = UDim2.new(0.5, 0.5)\nprint(u)\n"
+    ));
 }
 
 #[test]
 fn udim2_new_with_four_arguments_is_the_real_signature() {
-    assert!(!fires("roblox_suspicious_udim2_new", "local u = UDim2.new(0.5, 10, 0.5, 10)\nprint(u)\n"));
+    assert!(!fires(
+        "roblox_suspicious_udim2_new",
+        "local u = UDim2.new(0.5, 10, 0.5, 10)\nprint(u)\n"
+    ));
 }
 
 #[test]
@@ -911,7 +1036,6 @@ fn the_roblox_lints_are_silent_under_plain_luau() {
     );
 }
 
-
 // --- regressions found by review -------------------------------------------
 
 /// A global the file itself defines is defined, which is how Roblox scripts are written
@@ -922,13 +1046,19 @@ fn a_global_declared_in_this_file_is_not_undefined() {
         "function onTouch(hit)\n\tprint(hit)\nend\n\nscript.Parent.Touched:Connect(onTouch)\n"
     ));
 
-    assert!(!fires("undefined_variable", "counter = 0\nprint(counter)\n"));
+    assert!(!fires(
+        "undefined_variable",
+        "counter = 0\nprint(counter)\n"
+    ));
 }
 
 /// Reading it before the line that sets it is still not this lint's complaint
 #[test]
 fn a_forward_reference_to_a_file_global_is_allowed() {
-    assert!(!fires("undefined_variable", "local function a()\n\treturn helper()\nend\nfunction helper() end\nreturn a\n"));
+    assert!(!fires(
+        "undefined_variable",
+        "local function a()\n\treturn helper()\nend\nfunction helper() end\nreturn a\n"
+    ));
 }
 
 #[test]
@@ -1029,5 +1159,9 @@ fn deprecated_methods_are_silent_under_plain_luau() {
         ..Default::default()
     };
 
-    assert!(!fired("part:Remove()\n", &cfg).iter().any(|n| n == "deprecated"));
+    assert!(
+        !fired("part:Remove()\n", &cfg)
+            .iter()
+            .any(|n| n == "deprecated")
+    );
 }

@@ -68,11 +68,7 @@ impl Registry {
 
         let named = crate::config::worms::Worms::parse(value)?;
 
-        Self::load(
-            root,
-            &root.join(&config.process.cache_dir),
-            &named,
-        )
+        Self::load(root, &root.join(&config.process.cache_dir), &named)
     }
 
     pub fn load(root: &Path, cache: &Path, config: &WormsConfig) -> Result<Self> {

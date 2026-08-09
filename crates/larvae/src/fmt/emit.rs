@@ -20,8 +20,7 @@ use crate::syntax::ast::*;
 use crate::syntax::lexer::{Tok, TokKind};
 
 use super::config::{
-    BlockNewlineGaps,
-    CallParens, CollapseSimpleStatement, FmtConfig, QuoteStyle, RequireGrouping,
+    BlockNewlineGaps, CallParens, CollapseSimpleStatement, FmtConfig, QuoteStyle, RequireGrouping,
 };
 use super::doc::Doc;
 use super::trivia::{Attached, Comment, Trivia};
@@ -34,12 +33,7 @@ pub struct Emitter<'a> {
 }
 
 impl<'a> Emitter<'a> {
-    pub fn new(
-        src: &'a str,
-        toks: &'a [Tok],
-        trivia: &'a Trivia<'a>,
-        cfg: &'a FmtConfig,
-    ) -> Self {
+    pub fn new(src: &'a str, toks: &'a [Tok], trivia: &'a Trivia<'a>, cfg: &'a FmtConfig) -> Self {
         Self {
             src,
             toks,
@@ -440,11 +434,15 @@ impl<'a> Emitter<'a> {
             return None;
         }
 
-        let Expr::Call { func, method, args, .. } = &local.values[0] else {
+        let Expr::Call {
+            func, method, args, ..
+        } = &local.values[0]
+        else {
             return None;
         };
 
-        if method.is_some() || !matches!(func.as_ref(), Expr::Name(n) if self.one(*n) == "require") {
+        if method.is_some() || !matches!(func.as_ref(), Expr::Name(n) if self.one(*n) == "require")
+        {
             return None;
         }
 
@@ -500,11 +498,7 @@ impl<'a> Emitter<'a> {
 
         let (before, after) = self.block_gaps(block);
 
-        Doc::concat([
-            open,
-            Doc::indent(Doc::concat([before, body])),
-            after,
-        ])
+        Doc::concat([open, Doc::indent(Doc::concat([before, body])), after])
     }
 
     /*
@@ -687,10 +681,7 @@ impl<'a> Emitter<'a> {
 
     fn local(&self, n: &Local) -> Doc<'a> {
         let keyword = self.one(n.keyword);
-        let names = Doc::join(
-            Doc::text(", "),
-            n.names.iter().map(|b| self.binding(b)),
-        );
+        let names = Doc::join(Doc::text(", "), n.names.iter().map(|b| self.binding(b)));
 
         if n.values.is_empty() {
             return Doc::concat([Doc::text(keyword), Doc::text(" "), names]);
@@ -743,7 +734,8 @@ impl<'a> Emitter<'a> {
 
     fn if_stmt(&self, n: &If) -> Doc<'a> {
         let mut parts = Vec::with_capacity(n.branches.len() * 4 + 3);
-        let collapse = self.collapse_conditionals() && n.branches.len() == 1 && n.else_block.is_none();
+        let collapse =
+            self.collapse_conditionals() && n.branches.len() == 1 && n.else_block.is_none();
 
         for (i, (cond, block)) in n.branches.iter().enumerate() {
             parts.push(Doc::text(if i == 0 { "if " } else { "elseif " }));
@@ -832,7 +824,11 @@ impl<'a> Emitter<'a> {
     fn local_function(&self, n: &LocalFunction) -> Doc<'a> {
         Doc::concat([
             self.attributes(&n.attributes),
-            Doc::text(if n.is_const { "const function " } else { "local function " }),
+            Doc::text(if n.is_const {
+                "const function "
+            } else {
+                "local function "
+            }),
             Doc::text(self.one(n.name)),
             self.function_body(&n.body),
         ])
@@ -897,7 +893,12 @@ impl<'a> Emitter<'a> {
             None => Doc::text(self.one(p.name)),
         });
 
-        self.bracketed("(", ")", Doc::join(Doc::concat([Doc::text(","), Doc::Line]), each), false)
+        self.bracketed(
+            "(",
+            ")",
+            Doc::join(Doc::concat([Doc::text(","), Doc::Line]), each),
+            false,
+        )
     }
 
     fn ret(&self, n: &Return) -> Doc<'a> {
@@ -1492,7 +1493,6 @@ impl<'a> Emitter<'a> {
     }
 }
 
-
 /// Whether a statement has no block nested inside it
 fn is_simple(stmt: &Stmt) -> bool {
     matches!(
@@ -1697,7 +1697,6 @@ fn precedence(op: &str) -> u8 {
         _ => 0,
     }
 }
-
 
 /// Unescaped quote characters of each kind
 fn count_quotes(inner: &str) -> (usize, usize) {

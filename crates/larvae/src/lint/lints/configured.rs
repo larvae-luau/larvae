@@ -116,11 +116,9 @@ fn bad_escapes(inner: &str) -> Vec<(u32, String)> {
             // `\u{1F600}`
             b'u' => {
                 let ok = bytes.get(i + 2) == Some(&b'{')
-                    && inner[i + 3..]
-                        .split_once('}')
-                        .is_some_and(|(d, _)| {
-                            !d.is_empty() && d.bytes().all(|b| b.is_ascii_hexdigit())
-                        });
+                    && inner[i + 3..].split_once('}').is_some_and(|(d, _)| {
+                        !d.is_empty() && d.bytes().all(|b| b.is_ascii_hexdigit())
+                    });
 
                 if !ok {
                     out.push((i as u32, "u".to_string()));
@@ -255,7 +253,11 @@ fn global_path(ctx: &LintCtx<'_>, e: &Expr) -> Option<String> {
             object,
             key: IndexKey::Field(field),
             ..
-        } => Some(format!("{}.{}", global_path(ctx, object)?, ctx.text(*field))),
+        } => Some(format!(
+            "{}.{}",
+            global_path(ctx, object)?,
+            ctx.text(*field)
+        )),
 
         _ => None,
     }
@@ -321,12 +323,8 @@ impl Deprecated {
                     REPLACED_METHODS.iter().find(|(old, _)| *old == name)
                 {
                     out.push(
-                        Finding::new(
-                            "deprecated",
-                            ctx.bytes(*m),
-                            format!("{name} is deprecated"),
-                        )
-                        .with_help(format!("use {replacement} instead")),
+                        Finding::new("deprecated", ctx.bytes(*m), format!("{name} is deprecated"))
+                            .with_help(format!("use {replacement} instead")),
                     );
                 }
 

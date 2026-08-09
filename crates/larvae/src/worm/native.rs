@@ -43,10 +43,7 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "op", rename_all = "snake_case")]
 enum Request<'a> {
     /// Settings and enabled rules, once, before any file
-    Init {
-        config: &'a str,
-        rules: &'a str,
-    },
+    Init { config: &'a str, rules: &'a str },
     /// Turn a claimed file into Luau
     Transform { source: &'a str },
 }
@@ -278,9 +275,8 @@ while True:
     /// Several files over one process, which is the point of keeping it alive
     #[test]
     fn one_process_answers_many_files() {
-        let (_dir, mut worm) = worm_that(
-            r#"    send({"ok": True, "output": req.get("source", "")[::-1]})"#,
-        );
+        let (_dir, mut worm) =
+            worm_that(r#"    send({"ok": True, "output": req.get("source", "")[::-1]})"#);
 
         worm.init("", "").unwrap();
 
@@ -293,9 +289,8 @@ while True:
 
     #[test]
     fn a_worm_reporting_failure_is_reported_by_name() {
-        let (_dir, mut worm) = worm_that(
-            r#"    send({"ok": False, "error": "line 3 is not markup"})"#,
-        );
+        let (_dir, mut worm) =
+            worm_that(r#"    send({"ok": False, "error": "line 3 is not markup"})"#);
 
         let err = worm.transform("x").expect_err("should fail");
         let text = format!("{err:#}");
@@ -339,7 +334,8 @@ while True:
     /// Content with newlines and non-ASCII has to survive the framing intact
     #[test]
     fn the_framing_is_byte_exact() {
-        let (_dir, mut worm) = worm_that(r#"    send({"ok": True, "output": req.get("source", "")})"#);
+        let (_dir, mut worm) =
+            worm_that(r#"    send({"ok": True, "output": req.get("source", "")})"#);
 
         worm.init("", "").unwrap();
 

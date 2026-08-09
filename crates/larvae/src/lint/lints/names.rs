@@ -9,8 +9,8 @@ every keystroke.
 use serde::Deserialize;
 
 use crate::lint::ctx::{Finding, LintCtx};
-use crate::lint::scope::Origin;
 use crate::lint::globals;
+use crate::lint::scope::Origin;
 use crate::lints;
 use crate::syntax::ast::*;
 
@@ -293,8 +293,12 @@ impl GlobalUsage {
             }
 
             out.push(
-                Finding::new("global_usage", ctx.bytes(*span), "_G is shared with every script")
-                    .with_help("return the value from a module instead"),
+                Finding::new(
+                    "global_usage",
+                    ctx.bytes(*span),
+                    "_G is shared with every script",
+                )
+                .with_help("return the value from a module instead"),
             );
         });
     }

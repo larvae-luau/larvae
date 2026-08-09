@@ -340,13 +340,17 @@ impl Server {
                     (path.join("."), 12, n.span)
                 }
 
-                Stmt::LocalFunction(n) => {
-                    (lexed.toks[n.name.start as usize].text(src).to_string(), 12, n.span)
-                }
+                Stmt::LocalFunction(n) => (
+                    lexed.toks[n.name.start as usize].text(src).to_string(),
+                    12,
+                    n.span,
+                ),
 
                 Stmt::Local(n) => match n.names.as_slice() {
                     [binding] => (
-                        lexed.toks[binding.name.start as usize].text(src).to_string(),
+                        lexed.toks[binding.name.start as usize]
+                            .text(src)
+                            .to_string(),
                         13,
                         n.span,
                     ),
@@ -394,7 +398,10 @@ fn severity_of(level: Level) -> u8 {
 }
 
 fn uri_of(params: &Value) -> String {
-    params["textDocument"]["uri"].as_str().unwrap_or_default().to_string()
+    params["textDocument"]["uri"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
 }
 
 /*
@@ -489,7 +496,10 @@ mod tests {
 
     #[test]
     fn formatting_an_unopened_document_is_not_an_error() {
-        assert_eq!(Server::default().format("file:///nope.luau").unwrap(), Value::Null);
+        assert_eq!(
+            Server::default().format("file:///nope.luau").unwrap(),
+            Value::Null
+        );
     }
 
     #[test]
@@ -513,7 +523,10 @@ mod tests {
     fn a_nested_function_is_not_in_the_outline() {
         let server = server_with("local function outer()\n\tlocal function inner() end\nend\n");
 
-        assert_eq!(server.symbols("file:///t.luau").as_array().unwrap().len(), 1);
+        assert_eq!(
+            server.symbols("file:///t.luau").as_array().unwrap().len(),
+            1
+        );
     }
 
     #[test]
@@ -564,7 +577,12 @@ mod tests {
 
         assert_eq!(diags.as_array().unwrap().len(), 1);
         assert_eq!(diags[0]["severity"], 1);
-        assert!(diags[0]["message"].as_str().unwrap().contains("syntax error"));
+        assert!(
+            diags[0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("syntax error")
+        );
     }
 
     #[test]
@@ -581,14 +599,17 @@ mod tests {
     fn an_excluded_document_is_published_empty() {
         let mut server = server_with("local unused = 1\nreturn 1\n");
         server.documents.clear();
-        server
-            .documents
-            .insert("file:///project/Packages/t.luau".into(), "local unused = 1\n".into());
+        server.documents.insert(
+            "file:///project/Packages/t.luau".into(),
+            "local unused = 1\n".into(),
+        );
         server.excluded =
             Excludes::new(std::path::Path::new("/project"), &["Packages".to_string()]).unwrap();
 
         let mut out = Vec::new();
-        server.publish("file:///project/Packages/t.luau", &mut out).unwrap();
+        server
+            .publish("file:///project/Packages/t.luau", &mut out)
+            .unwrap();
 
         let text = String::from_utf8(out).unwrap();
 
@@ -626,7 +647,11 @@ mod tests {
             .unwrap();
 
         assert!(!stop);
-        assert!(String::from_utf8(out).unwrap().contains("documentFormattingProvider"));
+        assert!(
+            String::from_utf8(out)
+                .unwrap()
+                .contains("documentFormattingProvider")
+        );
     }
 
     #[test]
@@ -699,7 +724,11 @@ mod tests {
             .unwrap();
 
         assert!(server.documents.is_empty());
-        assert!(String::from_utf8(out).unwrap().contains(r#""diagnostics":[]"#));
+        assert!(
+            String::from_utf8(out)
+                .unwrap()
+                .contains(r#""diagnostics":[]"#)
+        );
     }
 
     #[test]

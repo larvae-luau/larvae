@@ -427,7 +427,10 @@ impl<'a> Binder<'a> {
             }
 
             if !param.is_vararg {
-                self.declare(TokSpan::new(param.name.start as usize, param.name.end as usize), Origin::Param);
+                self.declare(
+                    TokSpan::new(param.name.start as usize, param.name.end as usize),
+                    Origin::Param,
+                );
             }
         }
 
@@ -549,7 +552,10 @@ impl<'a> Binder<'a> {
     */
     fn type_reads(&mut self, span: TokSpan) {
         for i in span.start..span.end {
-            if !matches!(self.toks[i as usize].kind, crate::syntax::lexer::TokKind::Ident) {
+            if !matches!(
+                self.toks[i as usize].kind,
+                crate::syntax::lexer::TokKind::Ident
+            ) {
                 continue;
             }
 
@@ -713,7 +719,11 @@ mod tests {
         let r = parse("for i = 1, 10 do\n\tprint(i)\nend\nprint(i)\n");
         let names = r.names();
 
-        assert_eq!(names.bindings[0].reads.len(), 1, "read once, inside the loop");
+        assert_eq!(
+            names.bindings[0].reads.len(),
+            1,
+            "read once, inside the loop"
+        );
 
         let loose_i = names
             .undefined
@@ -740,7 +750,12 @@ mod tests {
         let names = r.names();
 
         assert_eq!(names.bindings[0].reads.len(), 1);
-        assert!(names.undefined.iter().all(|&t| r.lexed.toks[t as usize].text(&r.src) != "done"));
+        assert!(
+            names
+                .undefined
+                .iter()
+                .all(|&t| r.lexed.toks[t as usize].text(&r.src) != "done")
+        );
     }
 
     #[test]
@@ -778,10 +793,19 @@ mod tests {
         let r = parse("function t:m()\n\treturn self.x\nend\n");
         let names = r.names();
 
-        let this = names.bindings.iter().find(|b| b.name == "self").expect("self");
+        let this = names
+            .bindings
+            .iter()
+            .find(|b| b.name == "self")
+            .expect("self");
 
         assert_eq!(this.reads.len(), 1);
-        assert!(!names.undefined.iter().any(|&t| r.lexed.toks[t as usize].text(&r.src) == "self"));
+        assert!(
+            !names
+                .undefined
+                .iter()
+                .any(|&t| r.lexed.toks[t as usize].text(&r.src) == "self")
+        );
     }
 
     #[test]

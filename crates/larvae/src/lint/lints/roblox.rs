@@ -100,7 +100,11 @@ impl RobloxSuspiciousUdim2New {
             fractions. Two values under one are scales, whole numbers are
             pixels, and anything else is left unguessed.
             */
-            let suggestion = match args.iter().filter_map(|a| number(ctx, a)).collect::<Vec<_>>() {
+            let suggestion = match args
+                .iter()
+                .filter_map(|a| number(ctx, a))
+                .collect::<Vec<_>>()
+            {
                 values if values.len() == 2 && values.iter().all(|v| v.abs() <= 1.0) => {
                     "UDim2.fromScale"
                 }
@@ -189,10 +193,7 @@ A call of the form `Type.name(...)` where `Type` is a global.
 Rooted at a global for the same reason as everywhere else: a local named
 `Color3` is somebody's own, and this has nothing to say about it.
 */
-fn constructor<'e>(
-    ctx: &LintCtx<'_>,
-    e: &'e Expr,
-) -> Option<(String, &'e [Expr], TokSpan)> {
+fn constructor<'e>(ctx: &LintCtx<'_>, e: &'e Expr) -> Option<(String, &'e [Expr], TokSpan)> {
     let Expr::Call {
         func,
         method: None,
@@ -234,9 +235,7 @@ fn number(ctx: &LintCtx<'_>, e: &Expr) -> Option<f64> {
 
         Expr::Paren { inner, .. } => number(ctx, inner),
 
-        Expr::Unary { op, operand, .. } if ctx.text(*op) == "-" => {
-            number(ctx, operand).map(|v| -v)
-        }
+        Expr::Unary { op, operand, .. } if ctx.text(*op) == "-" => number(ctx, operand).map(|v| -v),
 
         _ => None,
     }

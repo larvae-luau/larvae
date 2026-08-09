@@ -24,9 +24,8 @@ use crate::syntax::{lexer, parser};
 
 /// Format one file's source
 pub fn format(src: &str, cfg: &FmtConfig) -> Result<String> {
-    let lexed = lexer::lex(src).map_err(|e| {
-        anyhow::anyhow!("syntax error at byte {}, {}", e.offset, e.message)
-    })?;
+    let lexed = lexer::lex(src)
+        .map_err(|e| anyhow::anyhow!("syntax error at byte {}, {}", e.offset, e.message))?;
 
     let chunk = parser::parse(src, &lexed.toks)
         .map_err(|e| anyhow::anyhow!("{}", e.message))
@@ -62,9 +61,7 @@ fn check_comments_survived(src: &str, comments: &[(u32, u32)], out: &str) -> Res
         let text = src[start as usize..end as usize].trim_end();
 
         if !out.contains(text) {
-            anyhow::bail!(
-                "formatting would drop the comment {text:?}, so the file was left alone"
-            );
+            anyhow::bail!("formatting would drop the comment {text:?}, so the file was left alone");
         }
     }
 

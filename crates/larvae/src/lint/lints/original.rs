@@ -176,7 +176,9 @@ impl StringConcatInLoop {
                             ctx.text(accumulator)
                         ),
                     )
-                    .with_help("collect the pieces in a table and table.concat once after the loop"),
+                    .with_help(
+                        "collect the pieces in a table and table.concat once after the loop",
+                    ),
                 );
             }
         });
@@ -241,7 +243,13 @@ fn accumulating_concats(ctx: &LintCtx<'_>, block: &Block, loop_start: u32) -> Ve
                     .iter()
                     .find(|b| b.writes.contains(&name.start))
             })
-            .is_some_and(|b| ctx.bytes(TokSpan::new(b.declared_at as usize, b.declared_at as usize + 1)).0 < loop_start);
+            .is_some_and(|b| {
+                ctx.bytes(TokSpan::new(
+                    b.declared_at as usize,
+                    b.declared_at as usize + 1,
+                ))
+                .0 < loop_start
+            });
 
         if !outlives {
             continue;
@@ -278,9 +286,9 @@ fn concatenates(ctx: &LintCtx<'_>, e: &Expr, target: TokSpan) -> bool {
         return false;
     }
 
-    [lhs, rhs].into_iter().any(|side| {
-        ctx.same_text(side.span(), target) || concatenates(ctx, side, target)
-    })
+    [lhs, rhs]
+        .into_iter()
+        .any(|side| ctx.same_text(side.span(), target) || concatenates(ctx, side, target))
 }
 
 // --- loop_invariant_call ---------------------------------------------------
@@ -369,9 +377,7 @@ fn invariant_call(ctx: &LintCtx<'_>, e: &Expr) -> Option<String> {
     }
 
     // `require("@pkg/x")`
-    if method.is_none()
-        && matches!(func.as_ref(), Expr::Name(n) if ctx.text(*n) == "require")
-    {
+    if method.is_none() && matches!(func.as_ref(), Expr::Name(n) if ctx.text(*n) == "require") {
         return Some("require(...)".to_string());
     }
 

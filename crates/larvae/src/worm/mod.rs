@@ -202,7 +202,9 @@ impl Worm {
             so a message that arrives at all arrived intact and is output.
             Anything that went wrong came back as an error from the call.
             */
-            Backend::Native(worm) => worm.transform(source).map(|text| Outcome { text, ok: true }),
+            Backend::Native(worm) => worm
+                .transform(source)
+                .map(|text| Outcome { text, ok: true }),
         }
         .with_context(|| format!("worm `{}`", self.manifest.name))
     }

@@ -152,9 +152,9 @@ impl<'a> LintCtx<'a> {
         let line = self.line(finding.span.0);
 
         [line, line.wrapping_sub(1)].iter().any(|l| {
-            self.allowed.get(l).is_some_and(|names| {
-                names.iter().any(|n| n == "*" || n == finding.lint)
-            })
+            self.allowed
+                .get(l)
+                .is_some_and(|names| names.iter().any(|n| n == "*" || n == finding.lint))
         })
     }
 
@@ -372,7 +372,9 @@ fn collect_suppressions(
 
         let line = (line_starts.partition_point(|&s| s <= start) - 1) as u32;
 
-        out.entry(line).or_default().extend(names.map(str::to_string));
+        out.entry(line)
+            .or_default()
+            .extend(names.map(str::to_string));
     }
 
     out

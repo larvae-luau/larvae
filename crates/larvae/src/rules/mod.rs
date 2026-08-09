@@ -382,7 +382,10 @@ mod tests {
         assert!(out.contains("--!strict"));
         assert!(out.contains("this one is a note"), "a note stays: {out}");
         assert!(out.contains("-- why"));
-        assert!(out.contains("local a = 1\n"), "no trailing space left: {out}");
+        assert!(
+            out.contains("local a = 1\n"),
+            "no trailing space left: {out}"
+        );
         assert_eq!(src.lines().count(), out.lines().count());
     }
 

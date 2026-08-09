@@ -53,7 +53,10 @@ mod tests {
 
     #[test]
     fn a_flag_names_what_it_allows() {
-        assert_eq!(allowed("-- larvae: allow(unused_variable)"), ["unused_variable"]);
+        assert_eq!(
+            allowed("-- larvae: allow(unused_variable)"),
+            ["unused_variable"]
+        );
         assert_eq!(
             allowed("-- larvae: allow(unused_variable, shadowing)"),
             ["unused_variable", "shadowing"]

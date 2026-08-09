@@ -440,7 +440,10 @@ fn flag_comments_are_stripped_from_the_output() {
     let out = read(root, "dist/shared/flagged.luau");
 
     assert!(!out.contains("allow("), "the flag goes: {out}");
-    assert!(out.contains("-- a note"), "an ordinary comment stays: {out}");
+    assert!(
+        out.contains("-- a note"),
+        "an ordinary comment stays: {out}"
+    );
     assert_eq!(out.lines().count(), 3, "line numbers hold: {out}");
 }
 
@@ -491,6 +494,9 @@ fn remove_comments_wins_over_strip_flags() {
 
     let out = read(root, "dist/shared/flagged.luau");
 
-    assert!(out.contains("allow(unused_variable)"), "kept on purpose: {out}");
+    assert!(
+        out.contains("allow(unused_variable)"),
+        "kept on purpose: {out}"
+    );
     assert!(!out.contains("a note"), "and the rest still goes: {out}");
 }

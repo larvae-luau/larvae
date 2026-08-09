@@ -153,7 +153,10 @@ fn a_call_that_does_not_fit_breaks_one_argument_per_line() {
 fn an_inner_call_stays_on_one_line_when_the_outer_one_breaks() {
     let out = fmt_with("outer(inner(a), someVeryLongArgumentName)", narrow(30));
 
-    assert!(out.contains("inner(a)"), "inner should not break, got {out}");
+    assert!(
+        out.contains("inner(a)"),
+        "inner should not break, got {out}"
+    );
     assert!(out.contains("outer(\n"), "outer should break, got {out}");
 }
 
@@ -170,7 +173,10 @@ fn a_chain_breaks_at_the_loosest_operator_first() {
     let out = fmt_with("local x = aaaa and bbbb or cccc and dddd", narrow(24));
 
     assert!(out.contains("\n\tor "), "should break at or, got {out}");
-    assert!(out.contains("aaaa and bbbb"), "and should stay flat, got {out}");
+    assert!(
+        out.contains("aaaa and bbbb"),
+        "and should stay flat, got {out}"
+    );
 }
 
 #[test]
@@ -191,8 +197,14 @@ fn a_table_assigned_to_a_name_hangs_off_the_equals() {
 
 #[test]
 fn one_blank_line_is_kept_and_several_collapse_to_one() {
-    assert_eq!(fmt("local a = 1\n\nlocal b = 2\n"), "local a = 1\n\nlocal b = 2\n");
-    assert_eq!(fmt("local a = 1\n\n\n\nlocal b = 2\n"), "local a = 1\n\nlocal b = 2\n");
+    assert_eq!(
+        fmt("local a = 1\n\nlocal b = 2\n"),
+        "local a = 1\n\nlocal b = 2\n"
+    );
+    assert_eq!(
+        fmt("local a = 1\n\n\n\nlocal b = 2\n"),
+        "local a = 1\n\nlocal b = 2\n"
+    );
 }
 
 #[test]
@@ -241,7 +253,10 @@ fn a_call_is_laid_out_by_width_alone() {
 
 #[test]
 fn a_stray_semicolon_is_dropped() {
-    assert_eq!(fmt("local a = 1;\n;\nlocal b = 2\n"), "local a = 1\nlocal b = 2\n");
+    assert_eq!(
+        fmt("local a = 1;\n;\nlocal b = 2\n"),
+        "local a = 1\nlocal b = 2\n"
+    );
 }
 
 // --- comments --------------------------------------------------------------
@@ -265,12 +280,18 @@ fn a_comment_on_the_opening_keyword_is_not_lost() {
 
 #[test]
 fn a_comment_at_the_end_of_a_block_is_kept() {
-    assert_eq!(fmt("do\n\tx()\n\t-- last\nend"), "do\n\tx()\n\t-- last\nend\n");
+    assert_eq!(
+        fmt("do\n\tx()\n\t-- last\nend"),
+        "do\n\tx()\n\t-- last\nend\n"
+    );
 }
 
 #[test]
 fn a_comment_at_the_end_of_the_file_is_kept() {
-    assert_eq!(fmt("local a = 1\n-- the end\n"), "local a = 1\n-- the end\n");
+    assert_eq!(
+        fmt("local a = 1\n-- the end\n"),
+        "local a = 1\n-- the end\n"
+    );
 }
 
 /// A long comment's own lines are its content and must not be re-indented
@@ -298,10 +319,13 @@ fn quotes_normalise_to_double_by_default() {
 fn requoting_fixes_the_escapes() {
     assert_eq!(fmt(r#"local s = 'it\'s'"#), "local s = \"it's\"\n");
     assert_eq!(
-        fmt_with(r#"local s = "say \"hi\"""#, FmtConfig {
-            quote_style: QuoteStyle::ForceSingle,
-            ..Default::default()
-        }),
+        fmt_with(
+            r#"local s = "say \"hi\"""#,
+            FmtConfig {
+                quote_style: QuoteStyle::ForceSingle,
+                ..Default::default()
+            }
+        ),
         "local s = 'say \"hi\"'\n"
     );
 }
@@ -324,12 +348,18 @@ fn preserve_leaves_every_literal_alone() {
 
 #[test]
 fn a_long_string_is_never_requoted() {
-    assert_eq!(fmt("local s = [[it's \"both\"]]"), "local s = [[it's \"both\"]]\n");
+    assert_eq!(
+        fmt("local s = [[it's \"both\"]]"),
+        "local s = [[it's \"both\"]]\n"
+    );
 }
 
 #[test]
 fn escape_sequences_are_left_intact() {
-    assert_eq!(fmt(r#"local s = "a\tb\nc\\d""#), "local s = \"a\\tb\\nc\\\\d\"\n");
+    assert_eq!(
+        fmt(r#"local s = "a\tb\nc\\d""#),
+        "local s = \"a\\tb\\nc\\\\d\"\n"
+    );
 }
 
 // --- options ---------------------------------------------------------------
@@ -386,7 +416,10 @@ fn inner_spacing_is_configurable() {
     };
 
     assert_eq!(fmt_with("f(a)", cfg.clone()), "f( a )\n");
-    assert_eq!(fmt_with("local x = t[k]", cfg.clone()), "local x = t[ k ]\n");
+    assert_eq!(
+        fmt_with("local x = t[k]", cfg.clone()),
+        "local x = t[ k ]\n"
+    );
     assert_eq!(fmt_with("local t = { a }", cfg), "local t = {a}\n");
 }
 
@@ -425,7 +458,10 @@ fn collapse_simple_statement_folds_a_one_line_body() {
         "local function f(a) return a end\n"
     );
 
-    assert_eq!(fmt_with("if a then\n\treturn\nend", cfg), "if a then return end\n");
+    assert_eq!(
+        fmt_with("if a then\n\treturn\nend", cfg),
+        "if a then return end\n"
+    );
 }
 
 #[test]
@@ -458,11 +494,20 @@ fn a_type_annotation_is_normalised_but_not_restructured() {
         "local x: Array<string> = {}\n"
     );
 
-    assert_eq!(fmt("local f: (  number,string )->boolean"), "local f: (number, string) -> boolean\n");
-    assert_eq!(fmt("local t: {x:number,y:number}"), "local t: { x: number, y: number }\n");
+    assert_eq!(
+        fmt("local f: (  number,string )->boolean"),
+        "local f: (number, string) -> boolean\n"
+    );
+    assert_eq!(
+        fmt("local t: {x:number,y:number}"),
+        "local t: { x: number, y: number }\n"
+    );
     assert_eq!(fmt("local u: A|B&C"), "local u: A | B & C\n");
     assert_eq!(fmt("local o: string ?"), "local o: string?\n");
-    assert_eq!(fmt("local m: {[string] : number}"), "local m: { [string]: number }\n");
+    assert_eq!(
+        fmt("local m: {[string] : number}"),
+        "local m: { [string]: number }\n"
+    );
 }
 
 #[test]
@@ -482,7 +527,10 @@ fn generics_and_return_types_come_through() {
 /// The turbofish, which took a parser fix to accept in the first place
 #[test]
 fn explicit_type_instantiation_survives() {
-    assert_eq!(fmt("local a = charm.atom<<number>>()"), "local a = charm.atom<<number>>()\n");
+    assert_eq!(
+        fmt("local a = charm.atom<<number>>()"),
+        "local a = charm.atom<<number>>()\n"
+    );
     assert_eq!(
         fmt("local a = charm.atom<<(number, string)>>()"),
         "local a = charm.atom<<(number, string)>>()\n"
@@ -595,7 +643,8 @@ fn by_kind_groups_aliases_then_absolute_then_relative() {
 /// A computed require has no order that can be assumed safe to change
 #[test]
 fn a_computed_require_is_not_sorted_and_breaks_the_run() {
-    let src = "local c = require(\"c\")\nlocal x = require(base .. name)\nlocal a = require(\"a\")\n";
+    let src =
+        "local c = require(\"c\")\nlocal x = require(base .. name)\nlocal a = require(\"a\")\n";
 
     assert_eq!(fmt_with(src, sorting(RequireGrouping::Flat)), src);
 }
@@ -621,7 +670,11 @@ fn sorting_is_idempotent_and_keeps_every_comment() {
 fn nested_unary_minus_keeps_its_space() {
     assert_eq!(fmt("local y = - -x"), "local y = - -x\n");
     assert_eq!(fmt("local y = -  -  -a"), "local y = - - -a\n");
-    assert_eq!(fmt("local y = -x"), "local y = -x\n", "one minus still hugs");
+    assert_eq!(
+        fmt("local y = -x"),
+        "local y = -x\n",
+        "one minus still hugs"
+    );
 }
 
 /// A statement opening with `(` continues the line above as a call
@@ -635,7 +688,10 @@ fn a_dropped_semicolon_is_put_back_where_it_is_load_bearing() {
 #[test]
 fn a_bracket_index_of_a_long_string_keeps_its_space() {
     assert_eq!(fmt("local x = t[ [[k]] ]"), "local x = t[ [[k]] ]\n");
-    assert_eq!(fmt("local u = { [ [[key]] ] = 1 }"), "local u = { [ [[key]] ] = 1 }\n");
+    assert_eq!(
+        fmt("local u = { [ [[key]] ] = 1 }"),
+        "local u = { [ [[key]] ] = 1 }\n"
+    );
     assert_eq!(fmt("local x = t[ [=[k]=] ]"), "local x = t[ [=[k]=] ]\n");
 }
 
@@ -648,8 +704,14 @@ fn const_function_stays_const() {
 /// A type can hold an expression through typeof, where `and 1` must not merge
 #[test]
 fn a_word_and_a_number_in_a_type_keep_their_space() {
-    assert_eq!(fmt("local v: typeof(x and 1) = nil"), "local v: typeof(x and 1) = nil\n");
-    assert_eq!(fmt("local w: typeof(2 or b) = nil"), "local w: typeof(2 or b) = nil\n");
+    assert_eq!(
+        fmt("local v: typeof(x and 1) = nil"),
+        "local v: typeof(x and 1) = nil\n"
+    );
+    assert_eq!(
+        fmt("local w: typeof(2 or b) = nil"),
+        "local w: typeof(2 or b) = nil\n"
+    );
     assert_eq!(fmt("type T = typeof(1 .. 2)"), "type T = typeof(1 .. 2)\n");
 }
 
@@ -670,8 +732,7 @@ fn sorting_requires_leaves_the_strict_directive_at_the_top() {
     );
 
     assert_eq!(
-        out,
-        "--!strict\nlocal aaa = require(\"./a\")\nlocal zzz = require(\"./z\")\nreturn nil\n",
+        out, "--!strict\nlocal aaa = require(\"./a\")\nlocal zzz = require(\"./z\")\nreturn nil\n",
         "the directive stays put and the requires still sort"
     );
 }
@@ -704,7 +765,10 @@ fn a_table_of_only_a_comment_keeps_it() {
 /// A line comment flat inside braces would comment out the closing brace
 #[test]
 fn a_comment_forces_a_table_to_expand() {
-    assert_eq!(fmt("local t = { a = 1, -- one\n}"), "local t = {\n\ta = 1, -- one\n}\n");
+    assert_eq!(
+        fmt("local t = { a = 1, -- one\n}"),
+        "local t = {\n\ta = 1, -- one\n}\n"
+    );
 }
 
 #[test]
@@ -832,7 +896,10 @@ fn preserve_keeps_the_blank_at_both_edges() {
 fn preserve_keeps_one_edge_when_only_one_has_a_blank() {
     let cfg = gaps(larvae::fmt::config::BlockNewlineGaps::Preserve);
 
-    assert_eq!(fmt_with("do\n\n\tx()\nend\n", cfg.clone()), "do\n\n\tx()\nend\n");
+    assert_eq!(
+        fmt_with("do\n\n\tx()\nend\n", cfg.clone()),
+        "do\n\n\tx()\nend\n"
+    );
     assert_eq!(fmt_with("do\n\tx()\n\nend\n", cfg), "do\n\tx()\n\nend\n");
 }
 

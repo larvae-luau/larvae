@@ -162,7 +162,11 @@ impl ConstantTableComparison {
                 return;
             }
 
-            let always = if ctx.text(*op) == "==" { "false" } else { "true" };
+            let always = if ctx.text(*op) == "==" {
+                "false"
+            } else {
+                "true"
+            };
 
             out.push(
                 Finding::new(
@@ -422,7 +426,8 @@ impl TypeCheckInsideCall {
                 return;
             };
 
-            if !matches!(func.as_ref(), Expr::Name(n) if matches!(ctx.text(*n), "type" | "typeof")) {
+            if !matches!(func.as_ref(), Expr::Name(n) if matches!(ctx.text(*n), "type" | "typeof"))
+            {
                 return;
             }
 
@@ -450,7 +455,9 @@ impl TypeCheckInsideCall {
                     ctx.bytes(*span),
                     format!("the comparison is inside {name}(), so this is always \"boolean\""),
                 )
-                .with_help(format!("move the closing parenthesis, {name}(x) == \"...\"")),
+                .with_help(format!(
+                    "move the closing parenthesis, {name}(x) == \"...\""
+                )),
             );
         });
     }
@@ -524,9 +531,7 @@ fn number(ctx: &LintCtx<'_>, e: &Expr) -> Option<f64> {
         Expr::Number(s) => ctx.text(*s).parse().ok(),
 
         // `-1` is a unary minus over a literal, not a negative literal
-        Expr::Unary { op, operand, .. } if ctx.text(*op) == "-" => {
-            number(ctx, operand).map(|v| -v)
-        }
+        Expr::Unary { op, operand, .. } if ctx.text(*op) == "-" => number(ctx, operand).map(|v| -v),
 
         _ => None,
     }

@@ -37,7 +37,11 @@ fn run(dir: &Path, args: &[&str]) -> (bool, String) {
 #[test]
 fn a_clean_file_reports_nothing_and_succeeds() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), "a.luau", "local function f(a)\n\treturn a\nend\n\nreturn f\n");
+    write(
+        dir.path(),
+        "a.luau",
+        "local function f(a)\n\treturn a\nend\n\nreturn f\n",
+    );
 
     let (ok, out) = run(dir.path(), &["lint", "a.luau"]);
 
@@ -72,7 +76,11 @@ fn an_error_fails_the_run() {
 #[test]
 fn a_warning_raised_to_deny_fails_the_run() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), "larvae.toml", "[lint.rules]\nunused_variable = \"deny\"\n");
+    write(
+        dir.path(),
+        "larvae.toml",
+        "[lint.rules]\nunused_variable = \"deny\"\n",
+    );
     write(dir.path(), "a.luau", "local unused = 1\nreturn 1\n");
 
     let (ok, out) = run(dir.path(), &["lint", "a.luau"]);
@@ -83,7 +91,11 @@ fn a_warning_raised_to_deny_fails_the_run() {
 #[test]
 fn a_lint_set_to_allow_says_nothing() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), "larvae.toml", "[lint.rules]\nunused_variable = \"allow\"\n");
+    write(
+        dir.path(),
+        "larvae.toml",
+        "[lint.rules]\nunused_variable = \"allow\"\n",
+    );
     write(dir.path(), "a.luau", "local unused = 1\nreturn 1\n");
 
     let (ok, out) = run(dir.path(), &["lint", "a.luau"]);
@@ -96,7 +108,11 @@ fn a_lint_set_to_allow_says_nothing() {
 #[test]
 fn an_existing_selene_config_is_honoured() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), "selene.toml", "[rules]\nunused_variable = \"allow\"\n");
+    write(
+        dir.path(),
+        "selene.toml",
+        "[rules]\nunused_variable = \"allow\"\n",
+    );
     write(dir.path(), "a.luau", "local unused = 1\nreturn 1\n");
 
     let (ok, out) = run(dir.path(), &["lint", "a.luau"]);
@@ -108,7 +124,11 @@ fn an_existing_selene_config_is_honoured() {
 #[test]
 fn project_globals_stop_a_name_being_undefined() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), "larvae.toml", "[lint]\nglobals = [\"MyFramework\"]\n");
+    write(
+        dir.path(),
+        "larvae.toml",
+        "[lint]\nglobals = [\"MyFramework\"]\n",
+    );
     write(dir.path(), "a.luau", "return MyFramework\n");
 
     let (ok, out) = run(dir.path(), &["lint", "a.luau"]);
@@ -178,7 +198,10 @@ fn explaining_an_unknown_lint_lists_the_real_ones() {
     let (ok, out) = run(dir.path(), &["lint", "--explain", "no_such_lint"]);
 
     assert!(!ok);
-    assert!(out.contains("divide_by_zero"), "should list what exists: {out}");
+    assert!(
+        out.contains("divide_by_zero"),
+        "should list what exists: {out}"
+    );
 }
 
 #[test]
@@ -217,7 +240,10 @@ fn excluded_paths_are_walked_past() {
     assert!(out.contains("mine.luau"), "{out}");
     assert!(!out.contains("vendor.luau"), "selene's exclude: {out}");
     assert!(!out.contains("made.gen.luau"), "larvae's exclude: {out}");
-    assert!(out.contains("1 file"), "only the one file was linted: {out}");
+    assert!(
+        out.contains("1 file"),
+        "only the one file was linted: {out}"
+    );
 }
 
 /// Naming the file is saying you meant it, exclude or no exclude
@@ -225,8 +251,16 @@ fn excluded_paths_are_walked_past() {
 fn an_excluded_file_is_still_linted_when_named() {
     let dir = tempfile::tempdir().unwrap();
 
-    write(dir.path(), "larvae.toml", "[lint]\nexclude = [\"src/Packages\"]\n");
-    write(dir.path(), "src/Packages/vendor.luau", "local unused = 1\nreturn 1\n");
+    write(
+        dir.path(),
+        "larvae.toml",
+        "[lint]\nexclude = [\"src/Packages\"]\n",
+    );
+    write(
+        dir.path(),
+        "src/Packages/vendor.luau",
+        "local unused = 1\nreturn 1\n",
+    );
 
     let (_, out) = run(dir.path(), &["lint", "src/Packages/vendor.luau"]);
 

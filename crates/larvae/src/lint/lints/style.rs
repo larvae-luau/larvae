@@ -78,8 +78,12 @@ impl EmptyLoop {
 
             if block.stmts.is_empty() && !holds_comment(ctx, block.span) {
                 out.push(
-                    Finding::new("empty_loop", ctx.bytes(block.span), "this loop body is empty")
-                        .with_help("a loop that does nothing is either a stub or a spin"),
+                    Finding::new(
+                        "empty_loop",
+                        ctx.bytes(block.span),
+                        "this loop body is empty",
+                    )
+                    .with_help("a loop that does nothing is either a stub or a spin"),
                 );
             }
         });
@@ -107,9 +111,9 @@ impl MixedTable {
                 .iter()
                 .any(|f| matches!(f, TableField::Positional(_)));
 
-            let keyed = fields.iter().any(|f| {
-                matches!(f, TableField::Named { .. } | TableField::Computed { .. })
-            });
+            let keyed = fields
+                .iter()
+                .any(|f| matches!(f, TableField::Named { .. } | TableField::Computed { .. }));
 
             if array && keyed {
                 out.push(
@@ -216,7 +220,10 @@ fn holds_comment(ctx: &LintCtx<'_>, span: TokSpan) -> bool {
     let (lo, hi) = match span.is_empty() {
         // an empty block has no tokens, so look between the ones around it
         true => {
-            let before = span.start.checked_sub(1).map_or(0, |i| ctx.toks[i as usize].end);
+            let before = span
+                .start
+                .checked_sub(1)
+                .map_or(0, |i| ctx.toks[i as usize].end);
             let after = ctx
                 .toks
                 .get(span.start as usize)

@@ -203,7 +203,11 @@ mod tests {
 
         assert_eq!(split.trailing, None);
         assert_eq!(
-            split.leading.iter().map(|c| c.text(src)).collect::<Vec<_>>(),
+            split
+                .leading
+                .iter()
+                .map(|c| c.text(src))
+                .collect::<Vec<_>>(),
             ["-- why"]
         );
     }
@@ -220,7 +224,11 @@ mod tests {
 
         assert_eq!(split.trailing.map(|c| c.text(src)), Some("-- trails"));
         assert_eq!(
-            split.leading.iter().map(|c| c.text(src)).collect::<Vec<_>>(),
+            split
+                .leading
+                .iter()
+                .map(|c| c.text(src))
+                .collect::<Vec<_>>(),
             ["-- leads"]
         );
     }

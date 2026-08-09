@@ -249,7 +249,10 @@ pub fn lex(src: &str) -> Result<Lexed, LexError> {
             would panic on the boundary.
             */
             _ if c >= 0x80 => {
-                let ch = src[i..].chars().next().unwrap_or(char::REPLACEMENT_CHARACTER);
+                let ch = src[i..]
+                    .chars()
+                    .next()
+                    .unwrap_or(char::REPLACEMENT_CHARACTER);
 
                 err!(i, "unexpected character {ch:?}")
             }

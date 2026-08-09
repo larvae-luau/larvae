@@ -255,7 +255,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("selene.toml"), "std = \"roblox+testez\"\n").unwrap();
 
-        assert_eq!(LintConfig::discover(dir.path(), None).unwrap().std, StdLib::Roblox);
+        assert_eq!(
+            LintConfig::discover(dir.path(), None).unwrap().std,
+            StdLib::Roblox
+        );
 
         std::fs::write(dir.path().join("selene.toml"), "std = \"something_else\"\n").unwrap();
 

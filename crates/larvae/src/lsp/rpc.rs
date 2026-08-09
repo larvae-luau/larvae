@@ -76,7 +76,12 @@ pub fn read(input: &mut impl BufRead) -> Result<Option<Message>> {
             .strip_prefix("Content-Length:")
             .or_else(|| line.strip_prefix("content-length:"))
         {
-            length = Some(value.trim().parse().context("Content-Length is not a number")?);
+            length = Some(
+                value
+                    .trim()
+                    .parse()
+                    .context("Content-Length is not a number")?,
+            );
         }
     }
 
@@ -85,7 +90,9 @@ pub fn read(input: &mut impl BufRead) -> Result<Option<Message>> {
     };
 
     let mut body = vec![0u8; length];
-    input.read_exact(&mut body).context("reading a message body")?;
+    input
+        .read_exact(&mut body)
+        .context("reading a message body")?;
 
     /*
     A message we cannot parse is skipped rather than fatal. An editor sending
@@ -267,7 +274,11 @@ mod tests {
     /// One bad message should not end the session
     #[test]
     fn an_unparsable_body_is_skipped_rather_than_fatal() {
-        let text = format!("{}{}", framed("not json at all"), framed(r#"{"method":"ok"}"#));
+        let text = format!(
+            "{}{}",
+            framed("not json at all"),
+            framed(r#"{"method":"ok"}"#)
+        );
         let mut input = BufReader::new(text.as_bytes());
 
         assert!(read(&mut input).unwrap().is_none(), "the bad one");
@@ -277,7 +288,12 @@ mod tests {
     #[test]
     fn a_response_is_framed_with_its_length() {
         let mut out = Vec::new();
-        respond(&mut out, &serde_json::json!(7), serde_json::json!({"ok": true})).unwrap();
+        respond(
+            &mut out,
+            &serde_json::json!(7),
+            serde_json::json!({"ok": true}),
+        )
+        .unwrap();
 
         let text = String::from_utf8(out).unwrap();
         let (headers, body) = text.split_once("\r\n\r\n").expect("framed");
@@ -336,7 +352,10 @@ mod tests {
         let src = "local a = 1\n";
         let lines = Lines::new(src);
 
-        assert_eq!(lines.position(src, 9_999), lines.position(src, src.len() as u32));
+        assert_eq!(
+            lines.position(src, 9_999),
+            lines.position(src, src.len() as u32)
+        );
     }
 
     #[test]
