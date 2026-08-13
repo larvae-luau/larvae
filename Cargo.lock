@@ -605,7 +605,7 @@ dependencies = [
 
 [[package]]
 name = "larvae"
-version = "0.1.1-beta"
+version = "0.1.2-beta"
 dependencies = [
  "anyhow",
  "clap",
@@ -635,7 +635,7 @@ dependencies = [
 
 [[package]]
 name = "larvae-worm"
-version = "0.1.1-beta"
+version = "0.1.2-beta"
 dependencies = [
  "serde",
  "serde_json",
