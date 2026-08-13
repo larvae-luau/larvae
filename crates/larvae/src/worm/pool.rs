@@ -84,6 +84,16 @@ impl Spec {
 
         kinds
     }
+
+    /// Whether this worm lays its claimed files out for `larvae fmt`
+    pub fn formats(&self) -> bool {
+        self.manifest.frontend.as_ref().is_some_and(|f| f.fmt)
+    }
+
+    /// Whether this worm reports lints on its claimed files
+    pub fn lints(&self) -> bool {
+        !self.manifest.lints.is_empty()
+    }
 }
 
 /// Worms this build will run, shared across every worker
@@ -205,6 +215,30 @@ impl Pool {
             .collect()
     }
 
+    /*
+    The claimed extensions with a capability behind them, without the dot.
+
+    `larvae fmt` and `larvae lint` widen their walks with these rather than
+    with `claimed()`, so a frontend-only worm's files stay skipped: walking
+    one with nothing able to format it would turn a passing `fmt --check`
+    into a failing one.
+    */
+    pub fn fmt_claimed(&self) -> Vec<String> {
+        Self::extensions(self.specs.iter().filter(|s| s.formats()))
+    }
+
+    /// The same, for the lint walk
+    pub fn lint_claimed(&self) -> Vec<String> {
+        Self::extensions(self.specs.iter().filter(|s| s.lints()))
+    }
+
+    fn extensions<'a>(specs: impl Iterator<Item = &'a Arc<Spec>>) -> Vec<String> {
+        specs
+            .flat_map(|s| &s.claims)
+            .filter_map(|c| c.strip_prefix('.').map(str::to_owned))
+            .collect()
+    }
+
     pub fn spec(&self, index: usize) -> &Arc<Spec> {
         &self.specs[index]
     }
@@ -214,6 +248,16 @@ impl Pool {
         self.with_worm(index, |worm, spec| {
             worm.transform(source, &toml_text(&spec.config))
         })
+    }
+
+    /// Ask a worm for one file's layout, on this thread's instance
+    pub fn format(&self, index: usize, source: &str) -> Result<super::proto::FormatReply> {
+        self.with_worm(index, |worm, _spec| worm.format(source))
+    }
+
+    /// Ask a worm for one file's findings, on this thread's instance
+    pub fn lint(&self, index: usize, source: &str) -> Result<super::proto::LintReply> {
+        self.with_worm(index, |worm, _spec| worm.lint(source))
     }
 
     /*
@@ -278,7 +322,19 @@ impl Pool {
                 local.worms[index] = Some(worm);
             }
 
-            f(local.worms[index].as_mut().expect("just built"), &spec)
+            let result = f(local.worms[index].as_mut().expect("just built"), &spec);
+
+            /*
+            A worm that failed may be a subprocess whose pipe is now dead, and
+            reusing a dead pipe turns one bad file into every later file on
+            this worker failing. Dropping the instance costs one rebuild after
+            an error, so it is not worth telling the forms apart.
+            */
+            if result.is_err() {
+                local.worms[index] = None;
+            }
+
+            result
         })
     }
 }
@@ -337,5 +393,93 @@ impl Matched {
         ids.dedup();
 
         Some(ids)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /*
+    A native worm whose first life ends mid call and whose second life works,
+    told apart by a marker file beside the script. Only a pool that drops a
+    failed instance ever sees the second life.
+    */
+    #[cfg(unix)]
+    #[test]
+    fn a_dead_worm_is_respawned_for_the_next_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("worm.py");
+
+        std::fs::write(
+            &script,
+            r#"#!/usr/bin/env python3
+import sys, json, struct, os
+
+marker = os.path.join(os.path.dirname(sys.argv[0]), "second-life")
+first = not os.path.exists(marker)
+if first:
+    open(marker, "w").close()
+
+def read():
+    n = sys.stdin.buffer.read(4)
+    if len(n) < 4: sys.exit(0)
+    return json.loads(sys.stdin.buffer.read(struct.unpack("<I", n)[0]))
+
+def send(obj):
+    b = json.dumps(obj).encode()
+    sys.stdout.buffer.write(struct.pack("<I", len(b)) + b)
+    sys.stdout.buffer.flush()
+
+while True:
+    req = read()
+    if req["op"] == "init":
+        send({"ok": True})
+    elif first:
+        sys.exit(1)
+    else:
+        send({"ok": True, "output": req["source"]})
+"#,
+        )
+        .unwrap();
+
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let manifest = Manifest::parse(
+            r#"
+name  = "flaky"
+api   = 1
+form  = "native"
+entry = "worm.py"
+
+[frontend]
+claims = [".x"]
+"#,
+        )
+        .unwrap();
+
+        let spec = Arc::new(Spec {
+            manifest,
+            artifact: Vec::new(),
+            dir: dir.path().to_path_buf(),
+            config: toml::from_str("").unwrap(),
+            rules: BTreeMap::new(),
+            run_order: None,
+            requires: super::super::RequireOwner::Larvae,
+            claims: vec![".x".to_owned()],
+        });
+
+        let pool = Pool::new(vec![spec], 1);
+
+        pool.compile(0, "hello").expect_err("the first life dies");
+
+        assert_eq!(
+            pool.compile(0, "hello").expect("a fresh child serves").text,
+            "hello"
+        );
     }
 }

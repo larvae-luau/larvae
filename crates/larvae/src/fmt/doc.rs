@@ -98,6 +98,34 @@ impl<'a> Doc<'a> {
         matches!(self, Self::Nil)
     }
 
+    /// The same document with every borrow bought out, for a document that
+    /// has to outlive the source and token buffers it was emitted from
+    pub fn into_owned(self) -> Doc<'static> {
+        match self {
+            Self::Nil => Doc::Nil,
+
+            Self::Text(s) => Doc::Text(Cow::Owned(s.into_owned())),
+
+            Self::Line => Doc::Line,
+
+            Self::Soft => Doc::Soft,
+
+            Self::Hard => Doc::Hard,
+
+            Self::Blank => Doc::Blank,
+
+            Self::IfBreak(flat, broken) => {
+                Doc::IfBreak(Box::new(flat.into_owned()), Box::new(broken.into_owned()))
+            }
+
+            Self::Group(inner) => Doc::Group(Box::new(inner.into_owned())),
+
+            Self::Indent(inner) => Doc::Indent(Box::new(inner.into_owned())),
+
+            Self::Concat(parts) => Doc::Concat(parts.into_iter().map(Doc::into_owned).collect()),
+        }
+    }
+
     /*
     Whether anything inside forces a break.
 

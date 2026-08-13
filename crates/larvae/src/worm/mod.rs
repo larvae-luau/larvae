@@ -15,11 +15,12 @@ pub mod manifest;
 pub mod native;
 pub mod nodes;
 pub mod pool;
+pub mod proto;
 pub mod registry;
 
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
 pub use host::{Outcome, WasmWorm};
 pub use luau::LuauWorm;
@@ -205,6 +206,39 @@ impl Worm {
             Backend::Native(worm) => worm
                 .transform(source)
                 .map(|text| Outcome { text, ok: true }),
+        }
+        .with_context(|| format!("worm `{}`", self.manifest.name))
+    }
+
+    /// Lay one claimed file out, for the host to render in the project style
+    pub fn format(&mut self, source: &str) -> Result<proto::FormatReply> {
+        match &mut self.backend {
+            Backend::Native(worm) => worm.format(source),
+
+            /*
+            The payload types are transport independent, so these arms are
+            waiting on guest-side work rather than a redesign: a wasm export
+            returning the reply as JSON bytes, and a Luau table contract.
+            */
+            Backend::Luau(_) | Backend::Wasm(_) => bail!(
+                "worm `{}` is {}, which cannot format yet — only native worms format for now",
+                self.manifest.name,
+                self.manifest.form.name()
+            ),
+        }
+        .with_context(|| format!("worm `{}`", self.manifest.name))
+    }
+
+    /// Report one claimed file's problems, severity left to the host
+    pub fn lint(&mut self, source: &str) -> Result<proto::LintReply> {
+        match &mut self.backend {
+            Backend::Native(worm) => worm.lint(source),
+
+            Backend::Luau(_) | Backend::Wasm(_) => bail!(
+                "worm `{}` is {}, which cannot lint yet — only native worms lint for now",
+                self.manifest.name,
+                self.manifest.form.name()
+            ),
         }
         .with_context(|| format!("worm `{}`", self.manifest.name))
     }

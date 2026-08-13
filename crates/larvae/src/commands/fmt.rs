@@ -23,6 +23,7 @@ use rayon::prelude::*;
 use crate::config::{Config, Excludes};
 use crate::fmt::{FmtConfig, format};
 use crate::ui;
+use crate::worm::{pool::Pool, proto, registry::Registry};
 
 /// What happened to one file
 enum Outcome {
@@ -38,13 +39,15 @@ pub fn run(
     stdin: bool,
     config: Option<PathBuf>,
 ) -> Result<ExitCode> {
-    let cfg = discover(root, config)?;
+    let cfg = discover(root, config.clone())?;
 
+    // stdin has no filepath to route to a worm by, so it stays Luau only
     if stdin {
         return from_stdin(&cfg);
     }
 
-    let files = collect(root, &paths, &cfg.excludes(root)?)?;
+    let pool = worm_pool(root, config)?;
+    let files = collect(root, &paths, &cfg.excludes(root)?, &pool.fmt_claimed())?;
 
     if files.is_empty() {
         ui::print_error("no Luau files found");
@@ -55,13 +58,33 @@ pub fn run(
     let outcomes: Vec<(PathBuf, Outcome)> = files
         .into_par_iter()
         .map(|path| {
-            let outcome = one(&path, &cfg, check);
+            let outcome = one(&path, &cfg, check, &pool);
 
             (path, outcome)
         })
         .collect();
 
     report(outcomes, check)
+}
+
+/*
+The project's worms, for the commands that walk a tree themselves.
+
+A project with no config or no `[worms]` gets an empty pool at no cost, which
+keeps `larvae fmt` on a bare directory exactly what it was. A pinned worm on a
+cold cache does fetch here, the same as `larvae process` would.
+*/
+pub fn worm_pool(root: &Path, config: Option<PathBuf>) -> Result<Pool> {
+    let path = config.unwrap_or_else(|| root.join("larvae.toml"));
+
+    if !path.exists() {
+        return Ok(Pool::new(Vec::new(), 1));
+    }
+
+    let cfg = Config::load(&path)?;
+    let registry = Registry::for_project(root, &cfg)?;
+
+    Ok(Pool::new(registry.specs(), cfg.process.run_order))
 }
 
 /*
@@ -83,14 +106,14 @@ fn discover(root: &Path, config: Option<PathBuf>) -> Result<FmtConfig> {
     FmtConfig::discover(root, larvae.as_ref())
 }
 
-fn one(path: &Path, cfg: &FmtConfig, check: bool) -> Outcome {
+fn one(path: &Path, cfg: &FmtConfig, check: bool, pool: &Pool) -> Outcome {
     let src = match std::fs::read_to_string(path) {
         Ok(src) => src,
 
         Err(e) => return Outcome::Failed(format!("cannot read, {e}")),
     };
 
-    let out = match format(&src, cfg) {
+    let out = match formatted(path, &src, cfg, pool) {
         Ok(out) => out,
 
         Err(e) => return Outcome::Failed(format!("{e:#}")),
@@ -109,6 +132,34 @@ fn one(path: &Path, cfg: &FmtConfig, check: bool) -> Outcome {
 
         Err(e) => Outcome::Failed(format!("cannot write, {e}")),
     }
+}
+
+/*
+One file's formatted text, by whoever owns its extension.
+
+A claimed file goes to its worm, which replies with a layout document larvae
+renders in the project's own style. Walks only turn claimed files up when the
+worm formats, so the error arm here is reached by naming a file, and a named
+file that nothing can format is worth a sentence rather than silence.
+*/
+fn formatted(path: &Path, src: &str, cfg: &FmtConfig, pool: &Pool) -> Result<String> {
+    let Some(index) = pool.frontend_for(path) else {
+        return format(src, cfg);
+    };
+
+    let spec = pool.spec(index);
+
+    if !spec.formats() {
+        anyhow::bail!(
+            "worm `{}` claims this file but does not format it",
+            spec.manifest.name
+        );
+    }
+
+    let reply = pool.format(index, src)?;
+
+    proto::render_format(src, &reply, cfg)
+        .with_context(|| format!("worm `{}`", spec.manifest.name))
 }
 
 /// One file over the pipes, which is how an editor asks
@@ -136,9 +187,14 @@ walked when there is a config, and the working directory otherwise.
 to a file somebody named themselves. That is the same line: a walk is us
 guessing, a name is somebody telling us.
 */
-pub fn collect(root: &Path, paths: &[PathBuf], excludes: &Excludes) -> Result<Vec<PathBuf>> {
+pub fn collect(
+    root: &Path,
+    paths: &[PathBuf],
+    excludes: &Excludes,
+    claimed: &[String],
+) -> Result<Vec<PathBuf>> {
     let walked = |dir: &Path| {
-        walk(dir)
+        walk(dir, claimed)
             .into_iter()
             .filter(|p| !excludes.skips(p))
             .collect::<Vec<_>>()
@@ -192,7 +248,7 @@ fn default_roots(root: &Path) -> Vec<PathBuf> {
     }
 }
 
-fn walk(dir: &Path) -> Vec<PathBuf> {
+fn walk(dir: &Path, claimed: &[String]) -> Vec<PathBuf> {
     walkdir::WalkDir::new(dir)
         .into_iter()
         .filter_entry(|e| {
@@ -206,14 +262,19 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
         .filter(|e| e.file_type().is_file())
         .map(walkdir::DirEntry::into_path)
         /*
-        Only what larvae itself can read, for now.
-        A front-end worm claiming `.luaux` should widen this, and deliberately
-        does not yet: nothing can format a claimed file, so walking one would
-        parse it as Luau, fail, and turn a passing `fmt --check` into a failing
-        one for every project using a front-end. The filter widens in the same
-        change that gives worms something to format with.
+        What larvae itself reads, plus claimed extensions the caller's worms
+        can actually serve. The caller passes the capability-filtered list, so
+        a frontend-only worm's files stay skipped: walking one with nothing
+        able to format it would parse it as Luau, fail, and turn a passing
+        `fmt --check` into a failing one.
         */
-        .filter(|p| matches!(p.extension().and_then(|e| e.to_str()), Some("luau" | "lua")))
+        .filter(|p| {
+            let Some(ext) = p.extension().and_then(|e| e.to_str()) else {
+                return false;
+            };
+
+            matches!(ext, "luau" | "lua") || claimed.iter().any(|c| c == ext)
+        })
         .collect()
 }
 

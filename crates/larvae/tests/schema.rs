@@ -47,6 +47,17 @@ fn lint_rules_match_the_registry() {
         Vec::<&String>::new(),
         "these lints are missing from [lint.rules] in the schema"
     );
+
+    /*
+    Names beyond the builtins are worm lints, which the schema cannot know,
+    so extras must stay legal and must still be levels. `false` here would
+    make every editor flag a worm lint the moment a project levels one.
+    */
+    assert_eq!(
+        schema["$defs"]["lint_rules"]["additionalProperties"],
+        serde_json::json!({ "$ref": "#/$defs/lint_level" }),
+        "[lint.rules] must accept worm lint names as levels"
+    );
 }
 
 /// Every level a lint can be set to, spelled the way the config parses it

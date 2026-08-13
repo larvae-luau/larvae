@@ -17,11 +17,12 @@ use std::process::ExitCode;
 use anyhow::{Context, Result};
 use rayon::prelude::*;
 
-use crate::commands::fmt::collect;
+use crate::commands::fmt::{collect, worm_pool};
 use crate::config::Config;
 use crate::diag::{Diag, Severity};
 use crate::lint::{LintConfig, lint, registry};
 use crate::ui;
+use crate::worm::pool::Pool;
 
 pub fn run(
     root: &Path,
@@ -34,13 +35,15 @@ pub fn run(
         return explain_lint(&name);
     }
 
-    let cfg = discover(root, config)?;
+    let cfg = discover(root, config.clone())?;
 
+    // stdin has no filepath to route to a worm by, so it stays Luau only
     if stdin {
         return from_stdin(&cfg);
     }
 
-    let files = collect(root, &paths, &cfg.excludes(root)?)?;
+    let pool = worm_pool(root, config)?;
+    let files = collect(root, &paths, &cfg.excludes(root)?, &pool.lint_claimed())?;
 
     if files.is_empty() {
         ui::print_error("no Luau files found");
@@ -51,7 +54,7 @@ pub fn run(
     let mut diags: Vec<Diag> = files
         .par_iter()
         .flat_map(|path| match std::fs::read_to_string(path) {
-            Ok(src) => match lint(path, &src, &cfg) {
+            Ok(src) => match one(path, &src, &cfg, &pool) {
                 Ok(found) => found,
 
                 Err(e) => vec![e],
@@ -64,6 +67,33 @@ pub fn run(
     diags.sort_by(|a, b| a.file.cmp(&b.file).then(a.line_col.cmp(&b.line_col)));
 
     report(&diags, files.len())
+}
+
+/*
+One file's diagnostics, by whoever owns its extension.
+
+A claimed file is linted by its worm when the worm declares lints, and skipped
+quietly otherwise: the walk only turns claimed files up for lint-capable
+worms, so reaching the quiet arm means the file was named, and naming a file
+at a linter with nothing to say about it is not an error the way naming one
+at a formatter is — there is simply nothing to report.
+*/
+fn one(path: &Path, src: &str, cfg: &LintConfig, pool: &Pool) -> Result<Vec<Diag>, Diag> {
+    let Some(index) = pool.frontend_for(path) else {
+        return lint(path, src, cfg);
+    };
+
+    let spec = pool.spec(index);
+
+    if !spec.lints() {
+        return Ok(Vec::new());
+    }
+
+    let reply = pool
+        .lint(index, src)
+        .map_err(|e| Diag::error(path, format!("{e:#}")))?;
+
+    crate::lint::from_worm(path, src, reply, cfg, &spec.manifest.lints, &spec.manifest.name)
 }
 
 fn discover(root: &Path, config: Option<PathBuf>) -> Result<LintConfig> {

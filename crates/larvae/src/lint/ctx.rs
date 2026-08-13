@@ -17,8 +17,9 @@ use super::scope::Names;
 /// One thing a lint found
 #[derive(Debug, Clone)]
 pub struct Finding {
-    /// Which lint said so
-    pub lint: &'static str,
+    /// Which lint said so. Borrowed for the builtins, owned for a worm's,
+    /// whose names are read out of its manifest at runtime.
+    pub lint: std::borrow::Cow<'static, str>,
     /// Filled in by the runner from the config, a lint leaves it at its default
     pub level: Level,
     /// Byte range in the source
@@ -28,9 +29,13 @@ pub struct Finding {
 }
 
 impl Finding {
-    pub fn new(lint: &'static str, span: (u32, u32), message: impl Into<String>) -> Self {
+    pub fn new(
+        lint: impl Into<std::borrow::Cow<'static, str>>,
+        span: (u32, u32),
+        message: impl Into<String>,
+    ) -> Self {
         Self {
-            lint,
+            lint: lint.into(),
             level: Level::Warn,
             span,
             message: message.into(),
@@ -79,13 +84,7 @@ impl<'a> LintCtx<'a> {
         chunk: &'a Chunk,
         cfg: &'a LintConfig,
     ) -> Self {
-        let mut line_starts = vec![0u32];
-
-        for (i, b) in src.bytes().enumerate() {
-            if b == b'\n' {
-                line_starts.push(i as u32 + 1);
-            }
-        }
+        let line_starts = line_starts_of(src);
 
         let names = super::scope::resolve(src, toks, chunk);
         let allowed = collect_suppressions(src, comments, &line_starts);
@@ -140,22 +139,9 @@ impl<'a> LintCtx<'a> {
         (self.line_starts.partition_point(|&s| s <= byte) - 1) as u32
     }
 
-    /*
-    Whether an author already said this one is wrong here.
-
-    A suppression on the line above covers the line below, which is the form
-    people write, and one on the same line covers itself, which is the form
-    people write when the statement is short. Both are checked because guessing
-    which an author meant is worse than accepting either.
-    */
+    /// Whether an author already said this one is wrong here, see [`allowed_here`]
     pub fn suppressed(&self, finding: &Finding) -> bool {
-        let line = self.line(finding.span.0);
-
-        [line, line.wrapping_sub(1)].iter().any(|l| {
-            self.allowed
-                .get(l)
-                .is_some_and(|names| names.iter().any(|n| n == "*" || n == finding.lint))
-        })
+        allowed_here(&self.allowed, self.line(finding.span.0), &finding.lint)
     }
 
     /*
@@ -352,13 +338,43 @@ impl<'a> Collected<'a> {
     }
 }
 
+/// Where each line begins, for turning a byte offset into a line number
+pub(crate) fn line_starts_of(src: &str) -> Vec<u32> {
+    let mut line_starts = vec![0u32];
+
+    for (i, b) in src.bytes().enumerate() {
+        if b == b'\n' {
+            line_starts.push(i as u32 + 1);
+        }
+    }
+
+    line_starts
+}
+
+/*
+Whether an author already said `lint` is wrong on `line`.
+
+A suppression on the line above covers the line below, which is the form
+people write, and one on the same line covers itself, which is the form people
+write when the statement is short. Both are checked because guessing which an
+author meant is worse than accepting either. Shared with worm findings, whose
+comments arrive as spans in the lint reply rather than from our lexer.
+*/
+pub(crate) fn allowed_here(allowed: &HashMap<u32, Vec<String>>, line: u32, lint: &str) -> bool {
+    [line, line.wrapping_sub(1)].iter().any(|l| {
+        allowed
+            .get(l)
+            .is_some_and(|names| names.iter().any(|n| n == "*" || n == lint))
+    })
+}
+
 /*
 Find every `-- larvae: allow(name, other)` in the file.
 
 What counts as one lives in [`crate::flags`], because `larvae process` reads
 the same comments to know which ones it can leave out of the output.
 */
-fn collect_suppressions(
+pub(crate) fn collect_suppressions(
     src: &str,
     comments: &[(u32, u32)],
     line_starts: &[u32],

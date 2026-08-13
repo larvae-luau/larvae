@@ -42,6 +42,42 @@ pub fn format(src: &str, cfg: &FmtConfig) -> Result<String> {
 }
 
 /*
+The layout document for a source slice, without the file-final newline
+`format` adds.
+
+These exist for worm formatting: a worm's document marks spans of ordinary
+Luau as `host` and larvae lays them out, so a claimed file breaks lines the
+way a Luau file does. The document is bought out to `'static` because the
+tokens and trivia it borrows from live on this stack frame; `format` does not
+pay that copy, which is why it does not call these.
+*/
+pub(crate) fn doc_of(src: &str, cfg: &FmtConfig) -> Result<doc::Doc<'static>> {
+    let lexed = lexer::lex(src)
+        .map_err(|e| anyhow::anyhow!("syntax error at byte {}, {}", e.offset, e.message))?;
+
+    let chunk = parser::parse(src, &lexed.toks).map_err(|e| anyhow::anyhow!("{}", e.message))?;
+
+    let trivia = trivia::Trivia::new(src, &lexed.comments);
+    let emitter = emit::Emitter::new(src, &lexed.toks, &trivia, cfg);
+
+    Ok(emitter.block_body(&chunk.block).into_owned())
+}
+
+/// The same, for a slice holding one expression rather than statements
+pub(crate) fn doc_of_expr(src: &str, cfg: &FmtConfig) -> Result<doc::Doc<'static>> {
+    let lexed = lexer::lex(src)
+        .map_err(|e| anyhow::anyhow!("syntax error at byte {}, {}", e.offset, e.message))?;
+
+    let expr =
+        parser::parse_expr(src, &lexed.toks).map_err(|e| anyhow::anyhow!("{}", e.message))?;
+
+    let trivia = trivia::Trivia::new(src, &lexed.comments);
+    let emitter = emit::Emitter::new(src, &lexed.toks, &trivia, cfg);
+
+    Ok(emitter.expr(&expr).into_owned())
+}
+
+/*
 Refuse to return output that lost a comment.
 
 The emitter places comments at the positions it knows about, between statements
@@ -56,7 +92,7 @@ file is left exactly as it was and the run reports it.
 This is a backstop, not the fix. Every position it catches is a position the
 emitter should learn to place, and it costs one pass over the comment list.
 */
-fn check_comments_survived(src: &str, comments: &[(u32, u32)], out: &str) -> Result<()> {
+pub(crate) fn check_comments_survived(src: &str, comments: &[(u32, u32)], out: &str) -> Result<()> {
     for &(start, end) in comments {
         let text = src[start as usize..end as usize].trim_end();
 

@@ -38,27 +38,52 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
+use super::proto;
+
 /// What the host asks a worm to do
 #[derive(Serialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 enum Request<'a> {
-    /// Settings and enabled rules, once, before any file
-    Init { config: &'a str, rules: &'a str },
+    /// Settings and enabled rules, once, before any file. `doc_version` is
+    /// the layout contract the host speaks; a worm that never formats is
+    /// free to ignore it.
+    Init {
+        config: &'a str,
+        rules: &'a str,
+        doc_version: u32,
+    },
     /// Turn a claimed file into Luau
     Transform { source: &'a str },
+    /// Lay a claimed file out, replying with a document to render
+    Format { source: &'a str },
+    /// Report a claimed file's problems, severity left to the host
+    Lint { source: &'a str },
 }
 
-/// What comes back
+/// What comes back, one struct for every op since the fields are disjoint
 #[derive(Deserialize)]
 struct Response {
     #[serde(default)]
     ok: bool,
-    /// Present when `ok`, for the operations that return text
+    /// Present when `ok`, for `transform`
     #[serde(default)]
     output: Option<String>,
     /// Present when not `ok`
     #[serde(default)]
     error: Option<String>,
+    /// The doc version a `format` reply speaks
+    #[serde(default)]
+    doc: Option<u32>,
+    /// A `format` reply's document
+    #[serde(default)]
+    document: Option<proto::WireDoc>,
+    /// A `lint` reply's findings
+    #[serde(default)]
+    findings: Option<Vec<proto::WireFinding>>,
+    /// Comment spans, from `format` (the survival backstop) and `lint`
+    /// (suppression)
+    #[serde(default)]
+    comments: Option<Vec<(u32, u32)>>,
 }
 
 pub struct NativeWorm {
@@ -92,7 +117,11 @@ impl NativeWorm {
 
     /// Settings and rules, handed over once before any file
     pub fn init(&mut self, config: &str, rules: &str) -> Result<()> {
-        self.call(&Request::Init { config, rules })?;
+        self.call(&Request::Init {
+            config,
+            rules,
+            doc_version: proto::DOC_VERSION,
+        })?;
 
         Ok(())
     }
@@ -104,6 +133,35 @@ impl NativeWorm {
         response
             .output
             .with_context(|| format!("worm `{}` returned no output", self.name))
+    }
+
+    /// A claimed file's layout, for the host to render
+    pub fn format(&mut self, source: &str) -> Result<proto::FormatReply> {
+        let response = self.call(&Request::Format { source })?;
+
+        let doc = response
+            .doc
+            .with_context(|| format!("worm `{}` did not say which doc version it speaks", self.name))?;
+
+        let document = response
+            .document
+            .with_context(|| format!("worm `{}` returned no document", self.name))?;
+
+        Ok(proto::FormatReply {
+            doc,
+            document,
+            comments: response.comments.unwrap_or_default(),
+        })
+    }
+
+    /// A claimed file's problems, severity left to the host
+    pub fn lint(&mut self, source: &str) -> Result<proto::LintReply> {
+        let response = self.call(&Request::Lint { source })?;
+
+        Ok(proto::LintReply {
+            findings: response.findings.unwrap_or_default(),
+            comments: response.comments.unwrap_or_default(),
+        })
     }
 
     /*
@@ -342,5 +400,58 @@ while True:
         let awkward = "line one\nline two\r\n\ttabbed \u{1F600} héllo \"quoted\" \\slash";
 
         assert_eq!(worm.transform(awkward).unwrap(), awkward);
+    }
+
+    #[test]
+    fn a_worm_answers_format_with_a_document() {
+        let (_dir, mut worm) = worm_that(
+            r#"    if req["op"] == "init":
+        send({"ok": True})
+    else:
+        send({"ok": True, "doc": 1, "document": {"src": [0, 2]}, "comments": [[0, 1]]})"#,
+        );
+
+        worm.init("", "").unwrap();
+
+        let reply = worm.format("ab").unwrap();
+
+        assert_eq!(reply.doc, 1);
+        assert_eq!(reply.document, proto::WireDoc::Src(0, 2));
+        assert_eq!(reply.comments, vec![(0, 1)]);
+    }
+
+    #[test]
+    fn a_format_reply_missing_its_doc_version_is_refused() {
+        let (_dir, mut worm) = worm_that(r#"    send({"ok": True, "document": "nil"})"#);
+
+        let err = worm.format("x").expect_err("no doc field");
+
+        assert!(format!("{err:#}").contains("doc version"), "{err:#}");
+    }
+
+    #[test]
+    fn a_worm_answers_lint_with_findings() {
+        let (_dir, mut worm) = worm_that(
+            r#"    send({"ok": True, "findings": [{"span": [0, 1], "lint": "tidy", "message": "untidy"}]})"#,
+        );
+
+        let reply = worm.lint("x").unwrap();
+
+        assert_eq!(reply.findings.len(), 1);
+        assert_eq!(reply.findings[0].lint, "tidy");
+        assert_eq!(reply.findings[0].help, None);
+        assert!(reply.comments.is_empty());
+    }
+
+    /// The worm learns our layout contract at init, so it can refuse early
+    #[test]
+    fn init_carries_the_doc_version() {
+        let (_dir, mut worm) = worm_that(
+            r#"    send({"ok": False, "error": "saw doc v%d" % req.get("doc_version", -1)})"#,
+        );
+
+        let err = worm.init("", "").expect_err("the worm refuses everything");
+
+        assert!(format!("{err:#}").contains("saw doc v1"), "{err:#}");
     }
 }

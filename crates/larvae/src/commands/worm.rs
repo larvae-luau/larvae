@@ -35,6 +35,12 @@ pub enum WormCommand {
         /// Write the result here instead of to stdout
         #[arg(long, short)]
         out: Option<PathBuf>,
+        /// Format the file instead of transforming it
+        #[arg(long)]
+        fmt: bool,
+        /// Lint the file instead of transforming it
+        #[arg(long, conflicts_with = "fmt")]
+        lint: bool,
     },
 
     /// Report what a worm declares, without running it
@@ -61,7 +67,9 @@ pub fn run(cmd: WormCommand) -> Result<ExitCode> {
             file,
             config,
             out,
-        } => run_worm(&worm, &file, config.as_deref(), out.as_deref()),
+            fmt,
+            lint,
+        } => run_worm(&worm, &file, config.as_deref(), out.as_deref(), fmt, lint),
 
         WormCommand::Info { worm } => info(&worm),
 
@@ -74,6 +82,8 @@ fn run_worm(
     file: &Path,
     config: Option<&Path>,
     out: Option<&Path>,
+    fmt: bool,
+    lint: bool,
 ) -> Result<ExitCode> {
     let source =
         std::fs::read_to_string(file).with_context(|| format!("cannot read {}", ui::rel(file)))?;
@@ -85,7 +95,22 @@ fn run_worm(
         None => String::new(),
     };
 
+    let value: toml::Value = toml::from_str(&config).context("--config is not TOML")?;
+
     let mut worm = Worm::load(dir)?;
+
+    // the same handover a project run does, so a worm reading its config at
+    // init sees it here too
+    worm.init(&value, &Default::default())?;
+
+    if fmt {
+        return fmt_worm(&mut worm, &source, out);
+    }
+
+    if lint {
+        return lint_worm(&mut worm, file, &source);
+    }
+
     let outcome = worm.transform(&source, &config)?;
 
     if !outcome.ok {
@@ -123,6 +148,96 @@ fn run_worm(
     Ok(ExitCode::SUCCESS)
 }
 
+/*
+`--fmt`, the formatting half of the dev loop.
+
+Rendering uses the default style since there is no project here to read one
+from. The output is then formatted a second time and compared, because
+idempotence is the worm's own guarantee — larvae never double-formats at run
+time — and the dev loop is where breaking it should surface, not a user's
+diff.
+*/
+fn fmt_worm(worm: &mut Worm, source: &str, out: Option<&Path>) -> Result<ExitCode> {
+    let cfg = crate::fmt::FmtConfig::default();
+    let name = worm.name().to_owned();
+
+    let render = |worm: &mut Worm, src: &str| -> Result<String> {
+        let reply = worm.format(src)?;
+
+        crate::worm::proto::render_format(src, &reply, &cfg)
+            .with_context(|| format!("worm `{name}`"))
+    };
+
+    let text = render(worm, source)?;
+
+    match render(worm, &text) {
+        Ok(second) if second == text => eprintln!("idempotent, formatting the output changes nothing"),
+
+        Ok(_) => ui::print_error(
+            "not idempotent, formatting the output changes it again, which turns saves into diffs",
+        ),
+
+        Err(e) => ui::print_error(&format!("cannot format its own output, {e:#}")),
+    }
+
+    match out {
+        Some(path) => {
+            std::fs::write(path, &text)
+                .with_context(|| format!("cannot write {}", ui::rel(path)))?;
+
+            ui::print_success(&format!("wrote {}", ui::rel(path)));
+        }
+
+        None => print!("{text}"),
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+/*
+`--lint`, the linting half.
+
+Levels come from the manifest's own defaults, since there is no project and
+no `[lint.rules]` here. The exit code answers the same way `larvae lint`
+would, so a worm author's fixture files can assert on it.
+*/
+fn lint_worm(worm: &mut Worm, file: &Path, source: &str) -> Result<ExitCode> {
+    let reply = worm.lint(source)?;
+    let declared = worm.manifest.lints.clone();
+    let name = worm.name().to_owned();
+
+    let diags = crate::lint::from_worm(
+        file,
+        source,
+        reply,
+        &crate::lint::LintConfig::default(),
+        &declared,
+        &name,
+    )
+    .unwrap_or_else(|refusal| vec![refusal]);
+
+    let color = ui::want_color();
+
+    for diag in &diags {
+        println!("{}", diag.render(color));
+    }
+
+    let errors = diags
+        .iter()
+        .filter(|d| d.severity == crate::diag::Severity::Error)
+        .count();
+
+    if diags.is_empty() {
+        ui::print_success("nothing to report");
+    }
+
+    match errors {
+        0 => Ok(ExitCode::SUCCESS),
+
+        _ => Ok(ExitCode::FAILURE),
+    }
+}
+
 fn info(dir: &Path) -> Result<ExitCode> {
     let worm = Worm::load(dir)?;
     let m = &worm.manifest;
@@ -134,9 +249,23 @@ fn info(dir: &Path) -> Result<ExitCode> {
     eprintln!("  requires   {:?}", m.requires);
 
     match &m.frontend {
-        Some(frontend) => eprintln!("  claims     {}", frontend.claims.join(", ")),
+        Some(frontend) => {
+            eprintln!("  claims     {}", frontend.claims.join(", "));
+
+            eprintln!(
+                "  fmt        {}",
+                match frontend.fmt {
+                    true => "yes, it lays claimed files out",
+                    false => "no",
+                }
+            );
+        }
 
         None => eprintln!("  claims     nothing, this worm has no frontend"),
+    }
+
+    for (name, decl) in &m.lints {
+        eprintln!("  lint       {name} (default {:?})", decl.default);
     }
 
     if m.rules.is_empty() {

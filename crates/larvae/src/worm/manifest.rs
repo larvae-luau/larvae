@@ -26,6 +26,19 @@ pub enum Form {
     Native,
 }
 
+impl Form {
+    /// The manifest spelling, for error messages
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Luau => "luau",
+
+            Self::Wasm => "wasm",
+
+            Self::Native => "native",
+        }
+    }
+}
+
 /*
 Where a worm's rules sit relative to larvae's own.
 
@@ -95,6 +108,21 @@ pub enum RequireOwner {
 pub struct Frontend {
     /// Extensions this worm turns into Luau, ex: `[".luaux"]`
     pub claims: Vec<String>,
+    /// Whether this worm also lays claimed files out for `larvae fmt`
+    #[serde(default)]
+    pub fmt: bool,
+}
+
+/// One lint a worm declares, so `[lint.rules]` can set its level by name
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LintDecl {
+    /// Shown by `larvae lint --explain`, via the JSON schema
+    #[serde(default)]
+    pub description: Option<String>,
+    /// The level when `[lint.rules]` says nothing, warn like most builtins
+    #[serde(default)]
+    pub default: crate::lint::Level,
 }
 
 /// One rule a worm adds to our `[rules]` table
@@ -148,6 +176,9 @@ pub struct Manifest {
     /// Rules this worm creates, and nothing else
     #[serde(default)]
     pub rules: BTreeMap<String, RuleDecl>,
+    /// Lints this worm reports on the files it claims
+    #[serde(default)]
+    pub lints: BTreeMap<String, LintDecl>,
 }
 
 impl Manifest {
@@ -202,6 +233,18 @@ impl Manifest {
         if self.frontend.is_none() && !self.has_rules() {
             bail!(
                 "worm `{}` declares neither a frontend nor any rules, so it would never run",
+                self.name
+            );
+        }
+
+        /*
+        Lints run on the files a worm claims, so a lint with no claims has no
+        file it could ever see. Requiring the frontend up front reads better
+        than a lint silently never firing.
+        */
+        if self.frontend.is_none() && !self.lints.is_empty() {
+            bail!(
+                "worm `{}` declares lints but no [frontend], and claims are what say which files its lints run on",
                 self.name
             );
         }
@@ -390,5 +433,58 @@ default = false
 
         assert_eq!(rule.resolve(Some(&on)), Some(&on));
         assert_eq!(rule.resolve(None), Some(&toml::Value::Boolean(false)));
+    }
+
+    #[test]
+    fn a_frontend_can_say_it_formats() {
+        let text = FRONTEND.replace("claims = [\".luaux\"]", "claims = [\".luaux\"]\nfmt = true");
+
+        assert!(Manifest::parse(&text).unwrap().frontend.unwrap().fmt);
+
+        // and saying nothing means it does not
+        assert!(!Manifest::parse(FRONTEND).unwrap().frontend.unwrap().fmt);
+    }
+
+    #[test]
+    fn a_lint_declaration_carries_its_default() {
+        let text = format!(
+            r#"{FRONTEND}
+[lints.luaux_unclosed_element]
+description = "An element opened and never closed"
+default = "deny"
+
+[lints.luaux_untidy]
+"#
+        );
+
+        let m = Manifest::parse(&text).unwrap();
+
+        assert_eq!(
+            m.lints["luaux_unclosed_element"].default,
+            crate::lint::Level::Deny
+        );
+
+        // an unset default warns, like most builtins
+        assert_eq!(m.lints["luaux_untidy"].default, crate::lint::Level::Warn);
+    }
+
+    #[test]
+    fn lints_without_a_frontend_are_refused() {
+        let err = Manifest::parse(
+            r#"
+name = "w"
+api = 1
+form = "luau"
+entry = "init.luau"
+
+[rules.r]
+
+[lints.tidy]
+"#,
+        )
+        .err()
+        .unwrap();
+
+        assert!(err.to_string().contains("no [frontend]"), "{err}");
     }
 }

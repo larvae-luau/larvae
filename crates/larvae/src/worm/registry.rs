@@ -119,6 +119,7 @@ impl Registry {
         let registry = Self { worms };
 
         registry.check_claims()?;
+        registry.check_lints()?;
 
         Ok(registry)
     }
@@ -189,6 +190,17 @@ impl Registry {
             .flat_map(|l| l.worm.manifest.rules.keys().map(String::as_str))
     }
 
+    /// Lint names every worm declared, with the defaults each asked for
+    pub fn declared_lints(&self) -> impl Iterator<Item = (&str, &super::manifest::LintDecl)> {
+        self.worms.iter().flat_map(|l| {
+            l.worm
+                .manifest
+                .lints
+                .iter()
+                .map(|(name, decl)| (name.as_str(), decl))
+        })
+    }
+
     /*
     A claim is exclusive. Two front-ends over one extension is a config error
     rather than a merge, because there is no sensible order to run them in and
@@ -206,6 +218,36 @@ impl Registry {
                 if let Some(other) = seen.insert(claim, loaded.worm.name()) {
                     bail!(
                         "worms `{other}` and `{}` both claim {claim}, only one may",
+                        loaded.worm.name()
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /*
+    Worm lints share `[lint.rules]` with the builtins, which is what lets
+    `luaux_unclosed_element = "deny"` just work. Shared names need guarding:
+    a collision would make one `[lint.rules]` line level two different lints,
+    so both directions are refused with the parties named.
+    */
+    fn check_lints(&self) -> Result<()> {
+        let mut seen: BTreeMap<&str, &str> = BTreeMap::new();
+
+        for loaded in &self.worms {
+            for name in loaded.worm.manifest.lints.keys() {
+                if crate::lint::find(name).is_some() {
+                    bail!(
+                        "worm `{}` declares lint `{name}`, which is a builtin lint's name",
+                        loaded.worm.name()
+                    );
+                }
+
+                if let Some(other) = seen.insert(name, loaded.worm.name()) {
+                    bail!(
+                        "worms `{other}` and `{}` both declare lint `{name}`, only one may",
                         loaded.worm.name()
                     );
                 }
@@ -473,5 +515,52 @@ mod tests {
 
         assert!(r.frontend_for(Path::new("a/b.echo")).is_some());
         assert!(r.frontend_for(Path::new("a/b.luau")).is_none());
+    }
+
+    #[test]
+    fn a_worm_lint_named_like_a_builtin_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        write_worm(
+            root.path(),
+            "w",
+            "name = \"echo\"\napi = 1\nform = \"luau\"\nentry = \"init.luau\"\n\n[frontend]\nclaims = [\".echo\"]\n\n[lints.unused_variable]\n",
+            ECHO,
+        );
+
+        let err = Registry::load(
+            root.path(),
+            &root.path().join(".larvae"),
+            &config("echo = { path = \"w\" }"),
+        )
+        .err()
+        .unwrap();
+
+        assert!(format!("{err:#}").contains("builtin"), "{err:#}");
+    }
+
+    #[test]
+    fn two_worms_declaring_one_lint_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+
+        for (dir, name, ext) in [("a", "one", ".aa"), ("b", "two", ".bb")] {
+            write_worm(
+                root.path(),
+                dir,
+                &format!(
+                    "name = \"{name}\"\napi = 1\nform = \"luau\"\nentry = \"init.luau\"\n\n[frontend]\nclaims = [\"{ext}\"]\n\n[lints.tidy]\n"
+                ),
+                ECHO,
+            );
+        }
+
+        let err = Registry::load(
+            root.path(),
+            &root.path().join(".larvae"),
+            &config("one = { path = \"a\" }\ntwo = { path = \"b\" }"),
+        )
+        .err()
+        .unwrap();
+
+        assert!(format!("{err:#}").contains("both declare lint `tidy`"), "{err:#}");
     }
 }

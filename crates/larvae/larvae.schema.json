@@ -819,9 +819,11 @@
       "description": "\"allow\" is off, \"warn\" is reported and leaves the exit code alone, \"deny\" is reported and fails the run."
     },
     "lint_rules": {
-      "description": "How loudly each lint speaks. A lint keeps its own default until it is named here.",
+      "description": "How loudly each lint speaks. A lint keeps its own default until it is named here. A name not listed below is a worm's lint, declared in that worm's [lints] and levelled here the same way.",
       "type": "object",
-      "additionalProperties": false,
+      "additionalProperties": {
+        "$ref": "#/$defs/lint_level"
+      },
       "properties": {
         "almost_swapped": {
           "$ref": "#/$defs/lint_level",

@@ -1,0 +1,272 @@
+//! `larvae fmt` and `larvae lint` over files a native worm claims
+
+#![cfg(unix)]
+
+use std::path::Path;
+use std::process::Command;
+
+fn bin() -> &'static Path {
+    Path::new(env!("CARGO_BIN_EXE_larvae"))
+}
+
+fn write(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+    let path = dir.join(name);
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("makes the directory");
+    }
+
+    std::fs::write(&path, body).expect("writes");
+
+    path
+}
+
+fn run(dir: &Path, args: &[&str]) -> (bool, String) {
+    let out = Command::new(bin())
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("runs");
+
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    (out.status.success(), text)
+}
+
+/*
+A whole native worm in a few lines of python.
+
+Its format op hands the entire file back as one `host` span, so larvae lays
+it out as Luau — enough to prove the document crosses, splices and renders.
+Its lint op reports one finding when the file contains "bad", and returns the
+span of a leading comment so `-- larvae: allow(...)` works.
+*/
+fn install_worm(root: &Path) {
+    write(
+        root,
+        "mywormdir/worm.toml",
+        r#"
+name  = "markup"
+api   = 1
+form  = "native"
+entry = "worm.py"
+
+[frontend]
+claims = [".luaux"]
+fmt = true
+
+[lints.markup_bad_word]
+description = "The word bad is bad"
+"#,
+    );
+
+    let script = write(
+        root,
+        "mywormdir/worm.py",
+        r#"#!/usr/bin/env python3
+import sys, json, struct
+
+def read():
+    n = sys.stdin.buffer.read(4)
+    if len(n) < 4: sys.exit(0)
+    return json.loads(sys.stdin.buffer.read(struct.unpack("<I", n)[0]))
+
+def send(obj):
+    b = json.dumps(obj).encode()
+    sys.stdout.buffer.write(struct.pack("<I", len(b)) + b)
+    sys.stdout.buffer.flush()
+
+def comments(src):
+    if src.startswith("--"):
+        return [[0, src.index("\n")]]
+    return []
+
+while True:
+    req = read()
+    op = req["op"]
+    if op == "init":
+        send({"ok": True})
+    elif op == "format":
+        src = req["source"]
+        send({"ok": True, "doc": 1,
+              "document": {"host": {"start": 0, "end": len(src.encode())}},
+              "comments": comments(src)})
+    elif op == "lint":
+        src = req["source"]
+        findings = []
+        if "bad" in src:
+            i = src.index("bad")
+            findings.append({"span": [i, i + 3], "lint": "markup_bad_word",
+                             "message": "the word bad"})
+        send({"ok": True, "findings": findings, "comments": comments(src)})
+    else:
+        send({"ok": True, "output": req["source"]})
+"#,
+    );
+
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
+fn project(worms: bool) -> tempfile::TempDir {
+    let root = tempfile::tempdir().unwrap();
+
+    let worms_table = match worms {
+        true => "\n[worms.markup]\npath = \"mywormdir\"\n",
+        false => "",
+    };
+
+    write(
+        root.path(),
+        "larvae.toml",
+        &format!("[process]\ninput = \"src\"\n{worms_table}"),
+    );
+
+    if worms {
+        install_worm(root.path());
+    }
+
+    root
+}
+
+#[test]
+fn fmt_formats_a_claimed_file_through_its_worm() {
+    let root = project(true);
+    let file = write(root.path(), "src/app.luaux", "local  x   =    1\n");
+    write(root.path(), "src/plain.luau", "local  y  =  2\n");
+
+    let (ok, text) = run(root.path(), &["fmt"]);
+
+    assert!(ok, "{text}");
+
+    // the worm's host span was rendered by larvae's own emitter
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "local x = 1\n");
+
+    // and the ordinary file went down the ordinary path
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("src/plain.luau")).unwrap(),
+        "local y = 2\n"
+    );
+}
+
+#[test]
+fn fmt_check_counts_a_claimed_file() {
+    let root = project(true);
+    write(root.path(), "src/app.luaux", "local  x   =    1\n");
+
+    let (ok, text) = run(root.path(), &["fmt", "--check"]);
+
+    assert!(!ok, "an unformatted claimed file has to fail --check: {text}");
+    assert!(text.contains("app.luaux"), "{text}");
+
+    write(root.path(), "src/app.luaux", "local x = 1\n");
+
+    let (ok, text) = run(root.path(), &["fmt", "--check"]);
+
+    assert!(ok, "{text}");
+}
+
+#[test]
+fn without_worms_a_claimed_file_is_left_alone() {
+    let root = project(false);
+    let file = write(root.path(), "src/app.luaux", "local  x   =    1\n");
+    write(root.path(), "src/plain.luau", "local y = 2\n");
+
+    let (ok, text) = run(root.path(), &["fmt"]);
+
+    assert!(ok, "{text}");
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "local  x   =    1\n",
+        "no worm formats .luaux, so the walk must skip it"
+    );
+}
+
+#[test]
+fn lint_reports_a_worm_finding_and_the_level_lever_works() {
+    let root = project(true);
+    write(root.path(), "src/app.luaux", "local bad = 1\n");
+
+    let (ok, text) = run(root.path(), &["lint"]);
+
+    assert!(ok, "a warning alone exits zero: {text}");
+    assert!(text.contains("markup_bad_word"), "{text}");
+
+    // raising it to deny in [lint.rules] fails the run, like a builtin
+    let config = std::fs::read_to_string(root.path().join("larvae.toml")).unwrap();
+    write(
+        root.path(),
+        "larvae.toml",
+        &format!("{config}\n[lint.rules]\nmarkup_bad_word = \"deny\"\n"),
+    );
+
+    let (ok, text) = run(root.path(), &["lint"]);
+
+    assert!(!ok, "{text}");
+}
+
+#[test]
+fn an_allow_comment_suppresses_a_worm_finding() {
+    let root = project(true);
+    write(
+        root.path(),
+        "src/app.luaux",
+        "-- larvae: allow(markup_bad_word)\nlocal bad = 1\n",
+    );
+
+    let (ok, text) = run(root.path(), &["lint"]);
+
+    assert!(ok, "{text}");
+    assert!(
+        !text.contains("markup_bad_word"),
+        "the allow comment must silence it: {text}"
+    );
+}
+
+#[test]
+fn worm_run_fmt_is_the_dev_loop() {
+    let root = project(true);
+    let file = write(root.path(), "messy.luaux", "local  x   =    1\n");
+
+    let (ok, text) = run(
+        root.path(),
+        &[
+            "worm",
+            "run",
+            "--fmt",
+            "mywormdir",
+            file.to_str().unwrap(),
+        ],
+    );
+
+    assert!(ok, "{text}");
+    assert!(text.contains("local x = 1"), "{text}");
+    assert!(text.contains("idempotent"), "{text}");
+}
+
+#[test]
+fn worm_run_lint_answers_like_the_linter() {
+    let root = project(true);
+    let file = write(root.path(), "app.luaux", "local bad = 1\n");
+
+    let (ok, text) = run(
+        root.path(),
+        &[
+            "worm",
+            "run",
+            "--lint",
+            "mywormdir",
+            file.to_str().unwrap(),
+        ],
+    );
+
+    assert!(ok, "a warn-level finding exits zero: {text}");
+    assert!(text.contains("markup_bad_word"), "{text}");
+}

@@ -254,7 +254,7 @@ impl<'a> Emitter<'a> {
     it. Everything else keeps the shape the author gave it: one statement per
     line, and one blank line wherever they left one or more.
     */
-    fn block_body(&self, block: &Block) -> Doc<'a> {
+    pub(crate) fn block_body(&self, block: &Block) -> Doc<'a> {
         let (prologue, mut pieces, tail) = self.pieces(block);
 
         if self.cfg.sort_requires.enabled {
@@ -923,7 +923,7 @@ impl<'a> Emitter<'a> {
 
     // --- expressions -------------------------------------------------------
 
-    fn expr(&self, e: &Expr) -> Doc<'a> {
+    pub(crate) fn expr(&self, e: &Expr) -> Doc<'a> {
         match e {
             Expr::Nil(_) => Doc::text("nil"),
 

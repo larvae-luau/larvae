@@ -41,6 +41,25 @@ pub fn parse(src: &str, toks: &[Tok]) -> Result<Chunk, ParseError> {
     Ok(Chunk { block })
 }
 
+/// Parse one expression covering the whole token stream, for a source slice
+/// somebody else cut, like a worm's `host` span holding an attribute value
+pub fn parse_expr(src: &str, toks: &[Tok]) -> Result<Expr, ParseError> {
+    let mut p = Parser {
+        src,
+        toks,
+        pos: 0,
+        depth: 0,
+    };
+
+    let expr = p.expr()?;
+
+    if !p.at_end() {
+        return Err(p.err("unexpected token after the expression"));
+    }
+
+    Ok(expr)
+}
+
 struct Parser<'a> {
     src: &'a str,
     toks: &'a [Tok],
