@@ -219,7 +219,9 @@ impl Registry {
     */
     pub fn resolve_fmt(&self, cfg: &mut crate::fmt::FmtConfig) -> Result<()> {
         for (key, value) in &cfg.rest {
-            let Some((worm, option)) = self.declared_fmt().find(|(_, name, _)| *name == key)
+            let Some((worm, option)) = self
+                .declared_fmt()
+                .find(|(_, name, _)| *name == key)
                 .map(|(worm, _, option)| (worm, option))
             else {
                 bail!("`[fmt] {key}` is not an option of larvae or of any worm this project loads");
@@ -254,9 +256,7 @@ impl Registry {
     }
 
     /// Every format option that a worm declared, with the worm that declared it
-    pub fn declared_fmt(
-        &self,
-    ) -> impl Iterator<Item = (&str, &str, &super::manifest::OptionDecl)> {
+    pub fn declared_fmt(&self) -> impl Iterator<Item = (&str, &str, &super::manifest::OptionDecl)> {
         self.worms.iter().flat_map(|l| {
             l.worm
                 .manifest
@@ -281,7 +281,9 @@ impl Registry {
             }
 
             if let Some(other) = seen.insert(name, worm) {
-                bail!("worms `{other}` and `{worm}` both declare format option `{name}`, only one may");
+                bail!(
+                    "worms `{other}` and `{worm}` both declare format option `{name}`, only one may"
+                );
             }
         }
 
@@ -413,10 +415,7 @@ fn resolve_config(name: &str, worm: &Worm, user: &toml::Value) -> Result<toml::V
         return Ok(user.clone());
     }
 
-    let mut out = user
-        .as_table()
-        .cloned()
-        .unwrap_or_default();
+    let mut out = user.as_table().cloned().unwrap_or_default();
 
     /*
     A key the worm does not declare is a setting that does nothing. It is
@@ -845,7 +844,10 @@ mod tests {
         .err()
         .unwrap();
 
-        assert!(format!("{err:#}").contains("larvae already owns"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("larvae already owns"),
+            "{err:#}"
+        );
     }
 
     #[test]
@@ -892,6 +894,9 @@ mod tests {
         .err()
         .unwrap();
 
-        assert!(format!("{err:#}").contains("both declare lint `tidy`"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("both declare lint `tidy`"),
+            "{err:#}"
+        );
     }
 }

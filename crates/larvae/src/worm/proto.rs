@@ -211,9 +211,10 @@ fn from_spans<'a>(src: &'a str, spans: &[(u32, u32)], cfg: &FmtConfig) -> Result
         }
 
         parts.push(Doc::Text(Cow::Borrowed(slice(src, at, start)?)));
-        parts.push(crate::fmt::doc_of(slice(src, start, end)?, cfg).with_context(|| {
-            format!("in the Luau span {start}..{end}")
-        })?);
+        parts.push(
+            crate::fmt::doc_of(slice(src, start, end)?, cfg)
+                .with_context(|| format!("in the Luau span {start}..{end}"))?,
+        );
 
         at = end;
     }
@@ -251,10 +252,9 @@ fn convert<'a>(wire: &'a WireDoc, src: &'a str, cfg: &FmtConfig) -> Result<Doc<'
 
         WireDoc::Blank => Doc::Blank,
 
-        WireDoc::IfBreak(flat, broken) => Doc::if_break(
-            convert(flat, src, cfg)?,
-            convert(broken, src, cfg)?,
-        ),
+        WireDoc::IfBreak(flat, broken) => {
+            Doc::if_break(convert(flat, src, cfg)?, convert(broken, src, cfg)?)
+        }
 
         WireDoc::Group(inner) => Doc::group(convert(inner, src, cfg)?),
 

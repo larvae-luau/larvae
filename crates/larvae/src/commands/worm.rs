@@ -171,7 +171,9 @@ fn fmt_worm(worm: &mut Worm, source: &str, out: Option<&Path>) -> Result<ExitCod
     let text = render(worm, source)?;
 
     match render(worm, &text) {
-        Ok(second) if second == text => eprintln!("idempotent, formatting the output changes nothing"),
+        Ok(second) if second == text => {
+            eprintln!("idempotent, formatting the output changes nothing")
+        }
 
         Ok(_) => ui::print_error(
             "not idempotent, formatting the output changes it again, which turns saves into diffs",

@@ -77,7 +77,8 @@ pub fn write(cache: &Path, registry: &crate::worm::registry::Registry) -> Result
 
     let text = serde_json::to_string_pretty(&for_project(registry)?)?;
 
-    std::fs::write(&path, text).with_context(|| format!("cannot write {}", crate::ui::rel(&path)))?;
+    std::fs::write(&path, text)
+        .with_context(|| format!("cannot write {}", crate::ui::rel(&path)))?;
 
     Ok(path)
 }

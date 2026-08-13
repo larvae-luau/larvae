@@ -131,7 +131,11 @@ lives in the settings of the project, so it applies to this repository alone.
 */
 fn project_schema(root: &Path) -> Result<()> {
     let generated = root
-        .join(&crate::config::Config::load(&root.join("larvae.toml"))?.process.cache_dir)
+        .join(
+            &crate::config::Config::load(&root.join("larvae.toml"))?
+                .process
+                .cache_dir,
+        )
         .join(crate::schema::FILE);
 
     if !generated.exists() {
@@ -166,7 +170,10 @@ fn project_schema(root: &Path) -> Result<()> {
             ui::rel(&settings)
         )),
 
-        false => ui::print_success(&format!("{} already points at {target}", ui::rel(&settings))),
+        false => ui::print_success(&format!(
+            "{} already points at {target}",
+            ui::rel(&settings)
+        )),
     }
 
     Ok(())

@@ -83,7 +83,7 @@ impl Source {
 enum Raw {
     /// `luaux = "luau-xml/worm@0.1.0"`
     Pin(String),
-    Table(Table),
+    Table(Box<Table>),
 }
 
 #[derive(Debug, Deserialize)]
@@ -192,7 +192,13 @@ fn source_of(name: &str, raw: Raw) -> Result<Entry> {
             t.inherit.clone(),
         ),
 
-        Raw::Pin(_) => (None, BTreeMap::new(), empty_table(), None, Inherit::default()),
+        Raw::Pin(_) => (
+            None,
+            BTreeMap::new(),
+            empty_table(),
+            None,
+            Inherit::default(),
+        ),
     };
 
     inherit.validate(name)?;
@@ -204,7 +210,7 @@ fn source_of(name: &str, raw: Raw) -> Result<Entry> {
     let source = match raw {
         Raw::Pin(pin) => parse_pin(name, &pin)?,
 
-        Raw::Table(t) => match (t.path, t.repo, t.version) {
+        Raw::Table(t) => match (t.path.clone(), t.repo.clone(), t.version.clone()) {
             (Some(path), None, None) => {
                 if t.asset.is_some() {
                     bail!("worm `{name}`: asset means nothing with path, it is not a release");

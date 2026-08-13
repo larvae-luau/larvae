@@ -168,9 +168,7 @@ impl Worm {
             it is the only form that formats and lints. The other two forms
             gain the same field when their guests can answer those ops.
             */
-            Backend::Native(worm) => {
-                worm.init(&toml_text(config), &toml_text_map(rules), settings)
-            }
+            Backend::Native(worm) => worm.init(&toml_text(config), &toml_text_map(rules), settings),
         }
     }
 

@@ -276,7 +276,10 @@ fn inherited_findings(
     let findings = analyze(text, cfg).map_err(|e| {
         Diag::error(
             path,
-            format!("worm `{worm}` returned Luau larvae cannot read, {}", e.message),
+            format!(
+                "worm `{worm}` returned Luau larvae cannot read, {}",
+                e.message
+            ),
         )
     })?;
 

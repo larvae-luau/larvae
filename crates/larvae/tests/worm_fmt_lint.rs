@@ -168,7 +168,10 @@ fn fmt_check_counts_a_claimed_file() {
 
     let (ok, text) = run(root.path(), &["fmt", "--check"]);
 
-    assert!(!ok, "an unformatted claimed file has to fail --check: {text}");
+    assert!(
+        !ok,
+        "an unformatted claimed file has to fail --check: {text}"
+    );
     assert!(text.contains("app.luaux"), "{text}");
 
     write(root.path(), "src/app.luaux", "local x = 1\n");
@@ -242,13 +245,7 @@ fn worm_run_fmt_is_the_dev_loop() {
 
     let (ok, text) = run(
         root.path(),
-        &[
-            "worm",
-            "run",
-            "--fmt",
-            "mywormdir",
-            file.to_str().unwrap(),
-        ],
+        &["worm", "run", "--fmt", "mywormdir", file.to_str().unwrap()],
     );
 
     assert!(ok, "{text}");
@@ -263,13 +260,7 @@ fn worm_run_lint_answers_like_the_linter() {
 
     let (ok, text) = run(
         root.path(),
-        &[
-            "worm",
-            "run",
-            "--lint",
-            "mywormdir",
-            file.to_str().unwrap(),
-        ],
+        &["worm", "run", "--lint", "mywormdir", file.to_str().unwrap()],
     );
 
     assert!(ok, "a warn-level finding exits zero: {text}");
@@ -334,7 +325,11 @@ fn an_inherited_lint_can_be_turned_off() {
 #[test]
 fn a_project_can_inherit_only_the_lints_it_names() {
     let root = project(true);
-    write(root.path(), "src/app.luaux", "local unused = 1\nlocal x = x\n");
+    write(
+        root.path(),
+        "src/app.luaux",
+        "local unused = 1\nlocal x = x\n",
+    );
 
     let config = std::fs::read_to_string(root.path().join("larvae.toml")).unwrap();
     write(

@@ -152,9 +152,12 @@ impl NativeWorm {
     pub fn format(&mut self, source: &str) -> Result<proto::FormatReply> {
         let response = self.call(&Request::Format { source })?;
 
-        let doc = response
-            .doc
-            .with_context(|| format!("worm `{}` did not say which doc version it speaks", self.name))?;
+        let doc = response.doc.with_context(|| {
+            format!(
+                "worm `{}` did not say which doc version it speaks",
+                self.name
+            )
+        })?;
 
         Ok(proto::FormatReply {
             doc,

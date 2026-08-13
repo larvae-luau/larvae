@@ -81,11 +81,6 @@ impl Default for Server {
     }
 }
 
-/// A pool with no worm in it. Every file then takes the Luau route.
-fn no_worms() -> Pool {
-    Pool::new(Vec::new(), 1)
-}
-
 impl Server {
     /// Returns true when the server must stop
     fn handle(&mut self, message: &rpc::Message, out: &mut impl Write) -> Result<bool> {
@@ -518,6 +513,11 @@ fn capabilities() -> Value {
         },
         "serverInfo": { "name": "larvae", "version": env!("CARGO_PKG_VERSION") },
     })
+}
+
+/// A pool with no worm in it. Every file then takes the Luau route.
+fn no_worms() -> Pool {
+    Pool::new(Vec::new(), 1)
 }
 
 /*
@@ -1158,8 +1158,11 @@ while True:
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("larvae.toml"), "= = not toml = =").unwrap();
 
-        let mut server = Server::default();
-        server.root = Some(dir.path().to_path_buf());
+        let mut server = Server {
+            root: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        };
+
         server.load_config();
 
         assert!(server.worms.is_empty());

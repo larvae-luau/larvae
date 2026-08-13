@@ -143,11 +143,7 @@ impl Pool {
 
     /// The same, with the settings of the project for the worms that lay out
     /// or report
-    pub fn with_settings(
-        specs: Vec<Arc<Spec>>,
-        native: i64,
-        settings: super::Settings,
-    ) -> Self {
+    pub fn with_settings(specs: Vec<Arc<Spec>>, native: i64, settings: super::Settings) -> Self {
         Self {
             build: NEXT_BUILD.fetch_add(1, Ordering::Relaxed),
             specs,
