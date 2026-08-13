@@ -239,6 +239,19 @@ pub struct Format {
 pub struct Lint {
     /// The problems found
     pub findings: Vec<Finding>,
+    /**
+    The Luau shadow of the file, for the lints of larvae to read.
+
+    The shadow is the source with every region that is not Luau replaced by
+    filler of the same byte length. Thus each offset in the shadow is the same
+    offset in the source, and larvae maps no spans. The shadow must parse as
+    Luau.
+
+    Set this field when `worm.toml` says `inherit_lints = true` and you want
+    exact columns. Leave it empty to let larvae read the output of your own
+    `transform` instead, which maps by line.
+    */
+    pub luau: Option<String>,
     /// The comment spans, so `-- larvae: allow(...)` works in a claimed file.
     /// Leave the list empty to remove your findings from suppression.
     pub comments: Vec<(u32, u32)>,
@@ -253,9 +266,16 @@ Implement the operations that your worm.toml declares: `transform` for a
 answer only when a manifest and its worm disagree.
 */
 pub trait Handler {
-    /// The settings and enabled rules, sent once before the first file
-    fn init(&mut self, config: &str, rules: &str) -> Result<(), String> {
-        let _ = (config, rules);
+    /**
+    The settings and enabled rules, sent once before the first file.
+
+    `settings` carries the resolved `[fmt]` table and the lint levels of the
+    project. Read them to lay your own constructs out in the style that the
+    project asked for. Then the user states a setting one time, and not a
+    second time under `[worms.<name>.config]`.
+    */
+    fn init(&mut self, config: &str, rules: &str, settings: &Settings) -> Result<(), String> {
+        let _ = (config, rules, settings);
 
         Ok(())
     }
@@ -282,6 +302,16 @@ pub trait Handler {
     }
 }
 
+/// The resolved settings of the project, as larvae sent them
+#[derive(Debug, Clone, Default)]
+pub struct Settings {
+    /// The `[fmt]` table of the project, as JSON text. It is empty when the
+    /// project states nothing.
+    pub fmt: String,
+    /// The lint levels of the project, as JSON text
+    pub lint: String,
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 enum Request {
@@ -293,6 +323,12 @@ enum Request {
         /// A host older than the format op does not send this field
         #[serde(default)]
         doc_version: u32,
+        /// The `[fmt]` table of the project, as JSON text
+        #[serde(default)]
+        fmt: String,
+        /// The lint levels of the project, as JSON text
+        #[serde(default)]
+        lint: String,
     },
     Transform {
         source: String,
@@ -341,6 +377,8 @@ fn answer(handler: &mut impl Handler, request: Request) -> Vec<u8> {
             config,
             rules,
             doc_version,
+            fmt,
+            lint,
         } => {
             // 0 means a host from before the format op existed. Such a host
             // does not send one, so only a real mismatch is a reason to refuse.
@@ -351,7 +389,7 @@ fn answer(handler: &mut impl Handler, request: Request) -> Vec<u8> {
             }
 
             handler
-                .init(&config, &rules)
+                .init(&config, &rules, &Settings { fmt, lint })
                 .map(|()| serde_json::json!({ "ok": true }))
         }
 
@@ -373,6 +411,7 @@ fn answer(handler: &mut impl Handler, request: Request) -> Vec<u8> {
                 "ok": true,
                 "findings": lint.findings,
                 "comments": lint.comments,
+                "luau": lint.luau,
             })
         }),
     };

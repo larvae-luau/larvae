@@ -101,7 +101,7 @@ fn run_worm(
 
     // The same handover as a project run, so a worm that reads its config at
     // init sees the config here too.
-    worm.init(&value, &Default::default())?;
+    worm.init(&value, &Default::default(), &Default::default())?;
 
     if fmt {
         return fmt_worm(&mut worm, &source, out);

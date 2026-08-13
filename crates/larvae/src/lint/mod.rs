@@ -186,6 +186,100 @@ pub fn from_worm(
         .collect())
 }
 
+/*
+A Luau view of a claimed file, for the lints of larvae to read.
+
+A claimed file is not Luau, so the builtin lints cannot read it. The worm
+gives larvae one of these two views instead, and the lints run unchanged. The
+variants differ only in how exact the position of a finding is.
+*/
+pub enum LuauView<'a> {
+    /*
+    The source with every region that is not Luau replaced by filler of the
+    same byte length.
+
+    Each offset in the shadow is the same offset in the source, so larvae maps
+    nothing. The scope is also correct, because the shadow is one whole file
+    and not a set of fragments.
+    */
+    Shadow(&'a str),
+    /*
+    The output of the front-end of the worm.
+
+    Larvae maps a finding by line, because a front-end keeps the line count of
+    its input. The column becomes the start of the line. This view costs the
+    worm nothing, because the worm already compiles the file.
+    */
+    Projection(&'a str),
+}
+
+/*
+Run the lints of larvae over a claimed file.
+
+The worm reports what only the worm knows. These lints know Luau, and a
+claimed file is mostly Luau. Thus a project that opts in with `inherit_lints`
+gets both sets, and the worm author writes no Luau lint.
+
+The levels, the suppression, and the rendering are the same code the builtin
+path uses. Thus a lint behaves the same way in a `.luau` file and in a file
+that a worm claims.
+*/
+pub fn inherited(
+    path: &Path,
+    src: &str,
+    view: &LuauView<'_>,
+    cfg: &LintConfig,
+    worm: &str,
+) -> Result<Vec<Diag>, Diag> {
+    let (text, exact) = match view {
+        LuauView::Shadow(text) => (*text, true),
+
+        LuauView::Projection(text) => (*text, false),
+    };
+
+    /*
+    A view that does not parse is a fault of the worm, and not of the file the
+    author wrote. The message names the worm, so the reader knows which side
+    to repair.
+    */
+    let findings = analyze(text, cfg).map_err(|e| {
+        Diag::error(
+            path,
+            format!("worm `{worm}` returned Luau larvae cannot read, {}", e.message),
+        )
+    })?;
+
+    let index = crate::diag::LineIndex::new(src);
+
+    if exact {
+        return Ok(findings
+            .into_iter()
+            .filter(|f| (f.span.0 as usize) <= src.len())
+            .map(|f| f.into_diag(path, src, &index))
+            .collect());
+    }
+
+    /*
+    A line of the projection is the same line of the source, because a
+    front-end keeps the line count. The byte inside the line moved, so the
+    finding points at the start of the line.
+    */
+    let view_starts = ctx::line_starts_of(text);
+    let src_starts = ctx::line_starts_of(src);
+
+    Ok(findings
+        .into_iter()
+        .filter_map(|mut f| {
+            let line = view_starts.partition_point(|&s| s <= f.span.0) - 1;
+            let start = *src_starts.get(line)?;
+
+            f.span = (start, start);
+
+            Some(f.into_diag(path, src, &index))
+        })
+        .collect())
+}
+
 /// Returns true if a span lies on the source. The span came from a wire, so the host checks it.
 fn span_ok(src: &str, (start, end): (u32, u32)) -> bool {
     let (s, e) = (start as usize, end as usize);
@@ -263,6 +357,7 @@ mod worm_tests {
         LintReply {
             findings,
             comments: Vec::new(),
+            luau: None,
         }
     }
 
@@ -330,6 +425,7 @@ mod worm_tests {
             LintReply {
                 findings: vec![finding("tidy", (23, 30))],
                 comments: vec![(0, 22)],
+                luau: None,
             },
             &LintConfig::default(),
             &declared("tidy", Level::Warn),

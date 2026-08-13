@@ -124,6 +124,20 @@ pub struct LintReply {
     /// A worm that omits them removes its findings from suppression.
     #[serde(default)]
     pub comments: Vec<(u32, u32)>,
+    /*
+    The Luau shadow of the file, for the lints of larvae to read.
+
+    The shadow is the source with every region that is not Luau replaced by
+    filler of the same byte length. Thus each offset in the shadow is the same
+    offset in the source, and larvae maps no spans at all. The shadow must
+    parse as Luau, because a lint reads a tree.
+
+    A worm that sets `inherit_lints` and omits this field gets the output of
+    its own `transform` instead. That output maps by line and not by byte, so
+    the columns are less exact.
+    */
+    #[serde(default)]
+    pub luau: Option<String>,
 }
 
 /// Render the format reply of a worm with the style of the project

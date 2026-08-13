@@ -84,16 +84,66 @@ fn one(path: &Path, src: &str, cfg: &LintConfig, pool: &Pool) -> Result<Vec<Diag
     };
 
     let spec = pool.spec(index);
+    let name = &spec.manifest.name;
+    let mut diags = Vec::new();
 
-    if !spec.lints() {
-        return Ok(Vec::new());
+    /*
+    The worm speaks first, and its reply can also carry the Luau shadow. Thus
+    a worm that both reports and inherits answers one request and not two.
+    */
+    let reply = match spec.lints() {
+        true => Some(
+            pool.lint(index, src)
+                .map_err(|e| Diag::error(path, format!("{e:#}")))?,
+        ),
+
+        false => None,
+    };
+
+    if spec.inherits_lints() {
+        let shadow = reply.as_ref().and_then(|r| r.luau.clone());
+
+        /*
+        A worm that sends no shadow still inherits, through the output of its
+        own front-end. That output costs the worm nothing, because the worm
+        already compiles the file for the pipeline.
+        */
+        let view = match shadow {
+            Some(text) => Some(text),
+
+            None => pool
+                .compile(index, src)
+                .map_err(|e| Diag::error(path, format!("{e:#}")))?
+                .into_source()
+                .map(Some)
+                .map_err(|e| Diag::error(path, format!("worm `{name}`, {e:#}")))?,
+        };
+
+        if let Some(text) = view {
+            let view = match reply.as_ref().and_then(|r| r.luau.as_ref()).is_some() {
+                true => crate::lint::LuauView::Shadow(&text),
+
+                false => crate::lint::LuauView::Projection(&text),
+            };
+
+            diags.extend(crate::lint::inherited(path, src, &view, cfg, name)?);
+        }
     }
 
-    let reply = pool
-        .lint(index, src)
-        .map_err(|e| Diag::error(path, format!("{e:#}")))?;
+    if let Some(reply) = reply {
+        diags.extend(crate::lint::from_worm(
+            path,
+            src,
+            reply,
+            cfg,
+            &spec.manifest.lints,
+            name,
+        )?);
+    }
 
-    crate::lint::from_worm(path, src, reply, cfg, &spec.manifest.lints, &spec.manifest.name)
+    diags.sort_by_key(|d| d.line_col);
+
+    Ok(diags)
 }
 
 fn discover(root: &Path, config: Option<PathBuf>) -> Result<LintConfig> {

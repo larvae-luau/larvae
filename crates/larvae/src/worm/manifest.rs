@@ -112,6 +112,15 @@ pub struct Frontend {
     /// If true, this worm also formats the claimed files for `larvae fmt`
     #[serde(default)]
     pub fmt: bool,
+    /*
+    If true, the lints of larvae also run on the claimed files.
+
+    The worm reports what only the worm can know. The builtin lints know
+    Luau, and a claimed file is mostly Luau. With this key the project gets
+    both sets, and the worm author writes no Luau lint of their own.
+    */
+    #[serde(default)]
+    pub inherit_lints: bool,
 }
 
 /// One lint that a worm declares, so `[lint.rules]` can set its level by name

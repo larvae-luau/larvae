@@ -84,7 +84,11 @@ pub fn worm_pool(root: &Path, config: Option<PathBuf>) -> Result<Pool> {
     let cfg = Config::load(&path)?;
     let registry = Registry::for_project(root, &cfg)?;
 
-    Ok(Pool::new(registry.specs(), cfg.process.run_order))
+    Ok(Pool::with_settings(
+        registry.specs(),
+        cfg.process.run_order,
+        crate::worm::Settings::new(&FmtConfig::discover(root, cfg.fmt.as_ref())?, &crate::lint::LintConfig::discover(root, cfg.lint.as_ref())?),
+    ))
 }
 
 /*

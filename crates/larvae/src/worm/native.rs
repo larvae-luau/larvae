@@ -51,6 +51,11 @@ enum Request<'a> {
         config: &'a str,
         rules: &'a str,
         doc_version: u32,
+        /// The resolved `[fmt]` table of the project, as JSON. A worm reads
+        /// it to lay its own constructs out in the style of the project.
+        fmt: &'a str,
+        /// The resolved lint levels of the project, as JSON
+        lint: &'a str,
     },
     /// Turn a claimed file into Luau
     Transform { source: &'a str },
@@ -84,6 +89,9 @@ struct Response {
     /// (suppression)
     #[serde(default)]
     comments: Option<Vec<(u32, u32)>>,
+    /// The Luau shadow of a `lint` reply, for the inherited lints
+    #[serde(default)]
+    luau: Option<String>,
 }
 
 pub struct NativeWorm {
@@ -116,11 +124,13 @@ impl NativeWorm {
     }
 
     /// Send the settings and rules once, before the first file
-    pub fn init(&mut self, config: &str, rules: &str) -> Result<()> {
+    pub fn init(&mut self, config: &str, rules: &str, settings: &super::Settings) -> Result<()> {
         self.call(&Request::Init {
             config,
             rules,
             doc_version: proto::DOC_VERSION,
+            fmt: &settings.fmt,
+            lint: &settings.lint,
         })?;
 
         Ok(())
@@ -161,6 +171,7 @@ impl NativeWorm {
         Ok(proto::LintReply {
             findings: response.findings.unwrap_or_default(),
             comments: response.comments.unwrap_or_default(),
+            luau: response.luau,
         })
     }
 
@@ -326,7 +337,7 @@ while True:
         send({"ok": True, "output": req["source"].upper()})"#,
         );
 
-        worm.init("a = 1", "").expect("init");
+        worm.init("a = 1", "", &Default::default()).expect("init");
 
         assert_eq!(worm.transform("hello").unwrap(), "HELLO");
     }
@@ -337,7 +348,7 @@ while True:
         let (_dir, mut worm) =
             worm_that(r#"    send({"ok": True, "output": req.get("source", "")[::-1]})"#);
 
-        worm.init("", "").unwrap();
+        worm.init("", "", &Default::default()).unwrap();
 
         for text in ["abc", "defg", "hi"] {
             let reversed: String = text.chars().rev().collect();
@@ -396,7 +407,7 @@ while True:
         let (_dir, mut worm) =
             worm_that(r#"    send({"ok": True, "output": req.get("source", "")})"#);
 
-        worm.init("", "").unwrap();
+        worm.init("", "", &Default::default()).unwrap();
 
         let awkward = "line one\nline two\r\n\ttabbed \u{1F600} héllo \"quoted\" \\slash";
 
@@ -412,7 +423,7 @@ while True:
         send({"ok": True, "doc": 1, "document": {"src": [0, 2]}, "comments": [[0, 1]]})"#,
         );
 
-        worm.init("", "").unwrap();
+        worm.init("", "", &Default::default()).unwrap();
 
         let reply = worm.format("ab").unwrap();
 
@@ -451,7 +462,9 @@ while True:
             r#"    send({"ok": False, "error": "saw doc v%d" % req.get("doc_version", -1)})"#,
         );
 
-        let err = worm.init("", "").expect_err("the worm refuses everything");
+        let err = worm
+            .init("", "", &Default::default())
+            .expect_err("the worm refuses everything");
 
         assert!(format!("{err:#}").contains("saw doc v1"), "{err:#}");
     }

@@ -60,6 +60,7 @@ entry = "worm.py"
 [frontend]
 claims = [".luaux"]
 fmt = true
+inherit_lints = true
 
 [lints.markup_bad_word]
 description = "The word bad is bad"
@@ -104,7 +105,9 @@ while True:
             i = src.index("bad")
             findings.append({"span": [i, i + 3], "lint": "markup_bad_word",
                              "message": "the word bad"})
-        send({"ok": True, "findings": findings, "comments": comments(src)})
+        shadow = src.replace("<Frame/>", "(nil)   ")
+        send({"ok": True, "findings": findings, "comments": comments(src),
+              "luau": shadow})
     else:
         send({"ok": True, "output": req["source"]})
 "#,
@@ -271,4 +274,58 @@ fn worm_run_lint_answers_like_the_linter() {
 
     assert!(ok, "a warn-level finding exits zero: {text}");
     assert!(text.contains("markup_bad_word"), "{text}");
+}
+
+/*
+A claimed file also gets the lints of larvae.
+
+The worm sets `inherit_lints`, so the builtin lints read its Luau shadow. The
+shadow keeps every byte offset, so the finding points at the real column.
+*/
+#[test]
+fn a_claimed_file_inherits_the_lints_of_larvae() {
+    let root = project(true);
+    write(root.path(), "src/app.luaux", "local unused = <Frame/>\n");
+
+    let (ok, text) = run(root.path(), &["lint"]);
+
+    assert!(ok, "{text}");
+    assert!(text.contains("unused_variable"), "{text}");
+}
+
+/// The inherited lints obey `[lint.rules]`, the same as in a `.luau` file
+#[test]
+fn an_inherited_lint_takes_the_level_of_the_project() {
+    let root = project(true);
+    write(root.path(), "src/app.luaux", "local unused = <Frame/>\n");
+
+    let config = std::fs::read_to_string(root.path().join("larvae.toml")).unwrap();
+    write(
+        root.path(),
+        "larvae.toml",
+        &format!("{config}\n[lint.rules]\nunused_variable = \"deny\"\n"),
+    );
+
+    let (ok, text) = run(root.path(), &["lint"]);
+
+    assert!(!ok, "a denied lint has to fail the run: {text}");
+}
+
+/// An allow level turns an inherited lint off, and the file still lints
+#[test]
+fn an_inherited_lint_can_be_turned_off() {
+    let root = project(true);
+    write(root.path(), "src/app.luaux", "local unused = <Frame/>\n");
+
+    let config = std::fs::read_to_string(root.path().join("larvae.toml")).unwrap();
+    write(
+        root.path(),
+        "larvae.toml",
+        &format!("{config}\n[lint.rules]\nunused_variable = \"allow\"\n"),
+    );
+
+    let (ok, text) = run(root.path(), &["lint"]);
+
+    assert!(ok, "{text}");
+    assert!(!text.contains("unused_variable"), "{text}");
 }

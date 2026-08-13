@@ -100,6 +100,41 @@ fn fmt_section(root: &Path) -> String {
     }
 }
 
+/*
+Every lint at the level it keeps when the user states nothing.
+
+The list is generated from the registry, so it cannot drift from the code. The
+lines are comments, because a project that writes nothing gets these levels
+already. To change one, remove the `#` and edit the level.
+*/
+fn defaults() -> String {
+    let mut lints: Vec<_> = crate::lint::registry().iter().collect();
+    lints.sort_by_key(|l| l.name());
+
+    let width = lints.iter().map(|l| l.name().len()).max().unwrap_or(0);
+
+    let mut out = String::from(
+        "# Every lint keeps the level below until the user names it here.\n\
+         # Remove the `#` to change one.\n",
+    );
+
+    for lint in lints {
+        let level = match lint.default_level() {
+            crate::lint::Level::Allow => "allow",
+            crate::lint::Level::Warn => "warn",
+            crate::lint::Level::Deny => "deny",
+        };
+
+        out.push_str(&format!(
+            "# {:<width$} = {level:?}\n",
+            lint.name(),
+            width = width
+        ));
+    }
+
+    out
+}
+
 /// The same behavior for the linter, for the same reasons
 fn lint_section(root: &Path) -> String {
     match existing(root, &SELENE) {
@@ -108,13 +143,7 @@ fn lint_section(root: &Path) -> String {
              # A [lint] table here would layer over it.\n"
         ),
 
-        None => "\n[lint]\n\
-             std = \"roblox\"\n\
-             \n[lint.rules]\n\
-             # Every lint keeps its own default until it is named here.\n\
-             # unused_variable = \"deny\"\n\
-             # multiple_statements = \"warn\"\n"
-            .to_string(),
+        None => format!("\n[lint]\nstd = \"roblox\"\n\n[lint.rules]\n{}", defaults()),
     }
 }
 

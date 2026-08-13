@@ -28,7 +28,7 @@ use crate::rules::edits::Edit;
 
 use super::ctx::FileCtx;
 use super::manifest::Manifest;
-use super::{Worm, toml_text, toml_text_map};
+use super::{Worm, toml_text};
 
 /// The id of one registry, so a worker can see that its instances are stale
 static NEXT_BUILD: AtomicU64 = AtomicU64::new(1);
@@ -94,6 +94,14 @@ impl Spec {
     pub fn lints(&self) -> bool {
         !self.manifest.lints.is_empty()
     }
+
+    /// Report if the lints of larvae also run on the claimed files of this worm
+    pub fn inherits_lints(&self) -> bool {
+        self.manifest
+            .frontend
+            .as_ref()
+            .is_some_and(|f| f.inherit_lints)
+    }
 }
 
 /// The worms this build runs, shared across every worker
@@ -102,6 +110,8 @@ pub struct Pool {
     specs: Vec<Arc<Spec>>,
     /// The slot of the native rules of larvae. It gives before and after a meaning.
     native: i64,
+    /// The resolved settings of the project, given to each worm at init
+    settings: super::Settings,
 }
 
 thread_local! {
@@ -116,10 +126,21 @@ struct Local {
 
 impl Pool {
     pub fn new(specs: Vec<Arc<Spec>>, native: i64) -> Self {
+        Self::with_settings(specs, native, super::Settings::default())
+    }
+
+    /// The same, with the settings of the project for the worms that lay out
+    /// or report
+    pub fn with_settings(
+        specs: Vec<Arc<Spec>>,
+        native: i64,
+        settings: super::Settings,
+    ) -> Self {
         Self {
             build: NEXT_BUILD.fetch_add(1, Ordering::Relaxed),
             specs,
             native,
+            settings,
         }
     }
 
@@ -320,7 +341,7 @@ impl Pool {
                 let mut worm = Worm::build(spec.manifest.clone(), &spec.artifact, Some(&spec.dir))
                     .with_context(|| format!("worm `{}`", spec.manifest.name))?;
 
-                init(&mut worm, &spec)?;
+                init(&mut worm, &spec, &self.settings)?;
 
                 local.worms[index] = Some(worm);
             }
@@ -342,16 +363,8 @@ impl Pool {
     }
 }
 
-fn init(worm: &mut Worm, spec: &Spec) -> Result<()> {
-    match worm.manifest.form {
-        super::Form::Luau => worm.init(&spec.config, &spec.rules),
-
-        super::Form::Wasm | super::Form::Native => {
-            let _ = (toml_text(&spec.config), toml_text_map(&spec.rules));
-
-            worm.init(&spec.config, &spec.rules)
-        }
-    }
+fn init(worm: &mut Worm, spec: &Spec, settings: &super::Settings) -> Result<()> {
+    worm.init(&spec.config, &spec.rules, settings)
 }
 
 /// The nodes that match the filter of each rule, computed once per file

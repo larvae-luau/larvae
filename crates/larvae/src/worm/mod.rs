@@ -32,6 +32,35 @@ pub const ABI_VERSION: u32 = 1;
 /// The manifest filename inside the zip of a worm
 pub const MANIFEST: &str = "worm.toml";
 
+/*
+The settings of the project, for a worm that lays out or reports.
+
+A worm that formats its own constructs has to know the width and the spacing
+the project asked for. Without these settings the user writes the same values
+a second time under `[worms.<name>.config]`, and the two copies drift.
+
+Both fields are JSON text, because the native transport already speaks JSON
+and larvae builds TOML without a serializer. The fields are empty for a
+project that states nothing, and a worm that ignores them stays correct.
+*/
+#[derive(Debug, Clone, Default)]
+pub struct Settings {
+    /// The resolved `[fmt]` table
+    pub fmt: String,
+    /// The resolved lint levels, by lint name
+    pub lint: String,
+}
+
+impl Settings {
+    /// The settings a project resolved, for the worms it loads
+    pub fn new(fmt: &crate::fmt::FmtConfig, lint: &crate::lint::LintConfig) -> Self {
+        Self {
+            fmt: serde_json::to_string(fmt).unwrap_or_default(),
+            lint: serde_json::to_string(&lint.rules).unwrap_or_default(),
+        }
+    }
+}
+
 /// A loaded worm of either form
 enum Backend {
     Luau(Box<LuauWorm>),
@@ -127,14 +156,21 @@ impl Worm {
         &mut self,
         config: &toml::Value,
         rules: &std::collections::BTreeMap<String, toml::Value>,
+        settings: &Settings,
     ) -> Result<()> {
         match &mut self.backend {
             Backend::Luau(worm) => worm.init(config, rules),
 
             Backend::Wasm(worm) => worm.init(&toml_text(config), &toml_text_map(rules)),
 
-            // the same text as the wasm form gets, because neither form can take a table
-            Backend::Native(worm) => worm.init(&toml_text(config), &toml_text_map(rules)),
+            /*
+            The native form also receives the settings of the project, because
+            it is the only form that formats and lints. The other two forms
+            gain the same field when their guests can answer those ops.
+            */
+            Backend::Native(worm) => {
+                worm.init(&toml_text(config), &toml_text_map(rules), settings)
+            }
         }
     }
 
