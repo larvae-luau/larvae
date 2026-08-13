@@ -48,6 +48,8 @@ pub struct Spec {
     pub run_order: Option<super::manifest::Stage>,
     /// The choice of the user about the inherited lints. It wins over the manifest.
     pub inherit_lints: Option<bool>,
+    /// Which inherited lints and format options apply in the files of this worm
+    pub inherit: crate::config::worms::Inherit,
     /// The owner of the requires in the output of this worm
     pub requires: super::RequireOwner,
     /// The extensions the front-end of this worm claims. It is empty when there is none.
@@ -496,6 +498,7 @@ claims = [".x"]
             rules: BTreeMap::new(),
             run_order: None,
             inherit_lints: None,
+            inherit: Default::default(),
             requires: super::super::RequireOwner::Larvae,
             claims: vec![".x".to_owned()],
         });

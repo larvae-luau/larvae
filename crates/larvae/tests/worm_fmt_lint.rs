@@ -329,3 +329,62 @@ fn an_inherited_lint_can_be_turned_off() {
     assert!(ok, "{text}");
     assert!(!text.contains("unused_variable"), "{text}");
 }
+
+/// A project keeps one inherited lint and drops the rest with `lints_only`
+#[test]
+fn a_project_can_inherit_only_the_lints_it_names() {
+    let root = project(true);
+    write(root.path(), "src/app.luaux", "local unused = 1\nlocal x = x\n");
+
+    let config = std::fs::read_to_string(root.path().join("larvae.toml")).unwrap();
+    write(
+        root.path(),
+        "larvae.toml",
+        &format!("{config}\n[worms.markup.inherit]\nlints_only = [\"unused_variable\"]\n"),
+    );
+
+    let (_, text) = run(root.path(), &["lint"]);
+
+    assert!(text.contains("unused_variable"), "{text}");
+    assert!(!text.contains("undefined_variable"), "{text}");
+}
+
+/// The same project, stated the other way round with `lints_except`
+#[test]
+fn a_project_can_drop_one_inherited_lint() {
+    let root = project(true);
+    write(root.path(), "src/app.luaux", "local unused = 1\n");
+
+    let config = std::fs::read_to_string(root.path().join("larvae.toml")).unwrap();
+    write(
+        root.path(),
+        "larvae.toml",
+        &format!("{config}\n[worms.markup.inherit]\nlints_except = [\"unused_variable\"]\n"),
+    );
+
+    let (ok, text) = run(root.path(), &["lint"]);
+
+    assert!(ok, "{text}");
+    assert!(!text.contains("unused_variable"), "{text}");
+}
+
+/// The two lists are exclusive, because both together state two answers
+#[test]
+fn stating_both_lists_is_refused() {
+    let root = project(true);
+    write(root.path(), "src/app.luaux", "local x = 1\n");
+
+    let config = std::fs::read_to_string(root.path().join("larvae.toml")).unwrap();
+    write(
+        root.path(),
+        "larvae.toml",
+        &format!(
+            "{config}\n[worms.markup.inherit]\nlints_only = [\"shadowing\"]\nlints_except = [\"unused_variable\"]\n"
+        ),
+    );
+
+    let (ok, text) = run(root.path(), &["lint"]);
+
+    assert!(!ok, "{text}");
+    assert!(text.contains("not both"), "{text}");
+}

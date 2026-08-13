@@ -121,6 +121,25 @@ pub fn from_worm(
     declared: &std::collections::BTreeMap<String, crate::worm::manifest::LintDecl>,
     worm: &str,
 ) -> Result<Vec<Diag>, Diag> {
+    let findings = worm_findings(path, src, reply, cfg, declared, worm)?;
+
+    Ok(into_diags(path, src, findings))
+}
+
+/*
+The same findings, with the byte spans kept.
+
+[`from_worm`] gives a line and a column, which a terminal needs. The language
+server needs the byte span instead, because the editor underlines a range.
+*/
+fn worm_findings(
+    path: &Path,
+    src: &str,
+    reply: crate::worm::proto::LintReply,
+    cfg: &LintConfig,
+    declared: &std::collections::BTreeMap<String, crate::worm::manifest::LintDecl>,
+    worm: &str,
+) -> Result<Vec<Finding>, Diag> {
     let bad_span = |what: &str, (start, end): (u32, u32)| {
         Diag::error(
             path,
@@ -178,12 +197,7 @@ pub fn from_worm(
 
     findings.sort_by(|a, b| (a.span.0, a.lint.as_ref()).cmp(&(b.span.0, b.lint.as_ref())));
 
-    let index = crate::diag::LineIndex::new(src);
-
-    Ok(findings
-        .into_iter()
-        .map(|f| f.into_diag(path, src, &index))
-        .collect())
+    Ok(findings)
 }
 
 /*
@@ -230,7 +244,22 @@ pub fn inherited(
     view: &LuauView<'_>,
     cfg: &LintConfig,
     worm: &str,
+    policy: &crate::config::worms::Inherit,
 ) -> Result<Vec<Diag>, Diag> {
+    let findings = inherited_findings(path, src, view, cfg, worm, policy)?;
+
+    Ok(into_diags(path, src, findings))
+}
+
+/// The same findings, with the byte spans kept, for an editor
+fn inherited_findings(
+    path: &Path,
+    src: &str,
+    view: &LuauView<'_>,
+    cfg: &LintConfig,
+    worm: &str,
+    policy: &crate::config::worms::Inherit,
+) -> Result<Vec<Finding>, Diag> {
     let (text, exact) = match view {
         LuauView::Shadow(text) => (*text, true),
 
@@ -242,6 +271,8 @@ pub fn inherited(
     author wrote. The message names the worm, so the reader knows which side
     to repair.
     */
+    let keep = |f: &Finding| policy.allows_lint(&f.lint);
+
     let findings = analyze(text, cfg).map_err(|e| {
         Diag::error(
             path,
@@ -249,13 +280,10 @@ pub fn inherited(
         )
     })?;
 
-    let index = crate::diag::LineIndex::new(src);
-
     if exact {
         return Ok(findings
             .into_iter()
-            .filter(|f| (f.span.0 as usize) <= src.len())
-            .map(|f| f.into_diag(path, src, &index))
+            .filter(|f| (f.span.0 as usize) <= src.len() && keep(f))
             .collect());
     }
 
@@ -269,15 +297,112 @@ pub fn inherited(
 
     Ok(findings
         .into_iter()
+        .filter(keep)
         .filter_map(|mut f| {
             let line = view_starts.partition_point(|&s| s <= f.span.0) - 1;
             let start = *src_starts.get(line)?;
 
             f.span = (start, start);
 
-            Some(f.into_diag(path, src, &index))
+            Some(f)
         })
         .collect())
+}
+
+/*
+Every finding of one claimed file, from the worm and from larvae.
+
+The routing of a claimed file lives here, because `larvae lint` and the
+language server both need it. The two callers differ only in what they make
+of a finding: the command renders a line and a column, and the server sends a
+range to the editor.
+*/
+pub fn claimed(
+    path: &Path,
+    src: &str,
+    cfg: &LintConfig,
+    pool: &crate::worm::pool::Pool,
+    index: usize,
+) -> Result<Vec<Finding>, Diag> {
+    let spec = pool.spec(index);
+    let worm = &spec.manifest.name;
+    let mut findings = Vec::new();
+
+    /*
+    The worm speaks first, and its reply can also carry the Luau shadow. Thus
+    a worm that both reports and inherits answers one request and not two.
+    */
+    let reply = match spec.lints() {
+        true => Some(
+            pool.lint(index, src)
+                .map_err(|e| Diag::error(path, format!("{e:#}")))?,
+        ),
+
+        false => None,
+    };
+
+    if spec.inherits_lints() {
+        let shadow = reply.as_ref().and_then(|r| r.luau.clone());
+
+        /*
+        A worm that sends no shadow still inherits, through the output of its
+        own front-end. That output costs the worm nothing, because the worm
+        already compiles the file for the pipeline.
+        */
+        let view = match shadow {
+            Some(text) => Some(text),
+
+            None => pool
+                .compile(index, src)
+                .map_err(|e| Diag::error(path, format!("{e:#}")))?
+                .into_source()
+                .map(Some)
+                .map_err(|e| Diag::error(path, format!("worm `{worm}`, {e:#}")))?,
+        };
+
+        if let Some(text) = view {
+            let view = match reply.as_ref().and_then(|r| r.luau.as_ref()).is_some() {
+                true => LuauView::Shadow(&text),
+
+                false => LuauView::Projection(&text),
+            };
+
+            findings.extend(inherited_findings(
+                path,
+                src,
+                &view,
+                cfg,
+                worm,
+                &spec.inherit,
+            )?);
+        }
+    }
+
+    if let Some(reply) = reply {
+        findings.extend(worm_findings(
+            path,
+            src,
+            reply,
+            cfg,
+            &spec.manifest.lints,
+            worm,
+        )?);
+    }
+
+    // A stable sort keeps an inherited finding before a worm finding on one byte.
+    findings.sort_by_key(|f| f.span.0);
+
+    Ok(findings)
+}
+
+/// Findings as diagnostics for a terminal. One index serves the whole file.
+pub fn into_diags(path: &Path, src: &str, findings: Vec<Finding>) -> Vec<Diag> {
+    let index = crate::diag::LineIndex::new(src);
+
+    findings
+        .into_iter()
+        .map(|f| f.into_diag(path, src, &index))
+        .collect()
 }
 
 /// Returns true if a span lies on the source. The span came from a wire, so the host checks it.
@@ -297,13 +422,7 @@ not compile must not stop the run.
 pub fn lint(path: &Path, src: &str, cfg: &LintConfig) -> Result<Vec<Diag>, Diag> {
     let findings = analyze(src, cfg).map_err(|e| Diag::error(path, e.message).at(src, e.offset))?;
 
-    // One scan for the file, not one scan per finding.
-    let index = crate::diag::LineIndex::new(src);
-
-    Ok(findings
-        .into_iter()
-        .map(|f| f.into_diag(path, src, &index))
-        .collect())
+    Ok(into_diags(path, src, findings))
 }
 
 impl Finding {

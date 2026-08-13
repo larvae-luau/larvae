@@ -1104,6 +1104,38 @@
               },
               "config": {
                 "$ref": "#/$defs/worm_config"
+              },
+              "inherit_lints": {
+                "type": "boolean",
+                "description": "Run the lints of larvae on the files this worm claims. It overrides what the worm declared in its worm.toml."
+              },
+              "inherit": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "Which inherited lints and format options apply inside the files of this worm. Inheritance takes everything unless this table states less.",
+                "properties": {
+                  "lints_only": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "The only lints of larvae that run in the files of this worm."
+                  },
+                  "lints_except": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "The lints of larvae that do not run in the files of this worm."
+                  },
+                  "fmt_except": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "The format options that do not apply in the files of this worm. An option named here keeps its own default there."
+                  }
+                }
               }
             }
           }

@@ -173,7 +173,10 @@ fn formatted(path: &Path, src: &str, cfg: &FmtConfig, pool: &Pool) -> Result<Str
 
     let reply = pool.format(index, src)?;
 
-    proto::render_format(src, &reply, cfg)
+    // a project can keep one option out of the files this worm claims
+    let cfg = cfg.without(&spec.inherit.fmt_except);
+
+    proto::render_format(src, &reply, &cfg)
         .with_context(|| format!("worm `{}`", spec.manifest.name))
 }
 

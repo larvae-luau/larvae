@@ -32,7 +32,7 @@ pub fn run(
     config: Option<PathBuf>,
 ) -> Result<ExitCode> {
     if let Some(name) = explain {
-        return explain_lint(&name);
+        return explain_lint(root, config.as_deref(), &name);
     }
 
     let cfg = discover(root, config.clone())?;
@@ -101,67 +101,9 @@ fn one(path: &Path, src: &str, cfg: &LintConfig, pool: &Pool) -> Result<Vec<Diag
         return lint(path, src, cfg);
     };
 
-    let spec = pool.spec(index);
-    let name = &spec.manifest.name;
-    let mut diags = Vec::new();
+    let findings = crate::lint::claimed(path, src, cfg, pool, index)?;
 
-    /*
-    The worm speaks first, and its reply can also carry the Luau shadow. Thus
-    a worm that both reports and inherits answers one request and not two.
-    */
-    let reply = match spec.lints() {
-        true => Some(
-            pool.lint(index, src)
-                .map_err(|e| Diag::error(path, format!("{e:#}")))?,
-        ),
-
-        false => None,
-    };
-
-    if spec.inherits_lints() {
-        let shadow = reply.as_ref().and_then(|r| r.luau.clone());
-
-        /*
-        A worm that sends no shadow still inherits, through the output of its
-        own front-end. That output costs the worm nothing, because the worm
-        already compiles the file for the pipeline.
-        */
-        let view = match shadow {
-            Some(text) => Some(text),
-
-            None => pool
-                .compile(index, src)
-                .map_err(|e| Diag::error(path, format!("{e:#}")))?
-                .into_source()
-                .map(Some)
-                .map_err(|e| Diag::error(path, format!("worm `{name}`, {e:#}")))?,
-        };
-
-        if let Some(text) = view {
-            let view = match reply.as_ref().and_then(|r| r.luau.as_ref()).is_some() {
-                true => crate::lint::LuauView::Shadow(&text),
-
-                false => crate::lint::LuauView::Projection(&text),
-            };
-
-            diags.extend(crate::lint::inherited(path, src, &view, cfg, name)?);
-        }
-    }
-
-    if let Some(reply) = reply {
-        diags.extend(crate::lint::from_worm(
-            path,
-            src,
-            reply,
-            cfg,
-            &spec.manifest.lints,
-            name,
-        )?);
-    }
-
-    diags.sort_by_key(|d| d.line_col);
-
-    Ok(diags)
+    Ok(crate::lint::into_diags(path, src, findings))
 }
 
 fn discover(root: &Path, config: Option<PathBuf>) -> Result<LintConfig> {
@@ -195,10 +137,30 @@ fn from_stdin(cfg: &LintConfig) -> Result<ExitCode> {
 }
 
 /// `--explain <name>` shows the details of a finding in the terminal
-fn explain_lint(name: &str) -> Result<ExitCode> {
+fn explain_lint(root: &Path, config: Option<&Path>, name: &str) -> Result<ExitCode> {
     if let Some(found) = crate::lint::find(name) {
         println!("{}\n  {}", found.name(), found.about());
         println!("  default: {:?}", found.default_level());
+
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    /*
+    A lint of a worm is explained from the manifest that declares it. The
+    project has to load its worms to read that text, so this runs only after
+    the builtin table misses.
+    */
+    if let Some((worm, decl)) = worm_lint(root, config, name) {
+        println!("{name}");
+
+        match &decl.description {
+            Some(text) => println!("  {text}"),
+
+            None => println!("  worm `{worm}` declares this lint and describes it nowhere"),
+        }
+
+        println!("  default: {:?}", decl.default);
+        println!("  from:    worm `{worm}`");
 
         return Ok(ExitCode::SUCCESS);
     }
@@ -217,6 +179,39 @@ fn explain_lint(name: &str) -> Result<ExitCode> {
     }
 
     Ok(ExitCode::FAILURE)
+}
+
+/// The worm that declares one lint, with what it declared about it
+fn worm_lint(
+    root: &Path,
+    config: Option<&Path>,
+    name: &str,
+) -> Option<(String, crate::worm::manifest::LintDecl)> {
+    let path = config
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| root.join("larvae.toml"));
+
+    if !path.exists() {
+        return None;
+    }
+
+    let project = Config::load(&path).ok()?;
+    let registry = crate::worm::registry::Registry::for_project(root, &project).ok()?;
+
+    registry
+        .declared_lints()
+        .find(|(lint, _)| *lint == name)
+        .map(|(_, decl)| decl.clone())
+        .and_then(|decl| {
+            let worm = registry
+                .iter()
+                .find(|l| l.worm.manifest.lints.contains_key(name))?
+                .worm
+                .name()
+                .to_owned();
+
+            Some((worm, decl))
+        })
 }
 
 fn files(n: usize) -> String {

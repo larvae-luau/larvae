@@ -14,20 +14,27 @@ occur here.
 The server reads all text from the document store: the editor sends the text
 on every change. So the server never reads a file that the editor has open,
 and never answers from a version that the user already edited past.
+
+A worm of the project can claim an extension, for example `.luaux`. The
+server sends such a file to its worm, and does not read the file as Luau. So
+the editor shows the findings and the layout of the worm. Without this route,
+the Luau parser reads the first markup character and reports a syntax error.
 */
 
 pub mod rpc;
 
 use std::collections::HashMap;
 use std::io::{BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde_json::{Value, json};
 
+use crate::commands::fmt::worm_pool;
 use crate::config::Excludes;
 use crate::fmt::{self, FmtConfig};
-use crate::lint::{self, Level, LintConfig};
+use crate::lint::{self, Finding, Level, LintConfig};
+use crate::worm::{pool::Pool, proto};
 
 pub fn run() -> Result<()> {
     let stdin = std::io::stdin();
@@ -46,7 +53,6 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
-#[derive(Default)]
 struct Server {
     /// Open documents, keyed by the uri that the editor gave them
     documents: HashMap<String, String>,
@@ -55,8 +61,29 @@ struct Server {
     lint: LintConfig,
     /// The paths that `[lint] exclude` covers, so an excluded file stays quiet
     excluded: Excludes,
+    /// The worms of the project. They own the files that they claim.
+    worms: Pool,
     /// `shutdown` sets this, so a later `exit` is clean and not abrupt
     shutting_down: bool,
+}
+
+impl Default for Server {
+    fn default() -> Self {
+        Self {
+            documents: HashMap::new(),
+            root: None,
+            fmt: FmtConfig::default(),
+            lint: LintConfig::default(),
+            excluded: Excludes::default(),
+            worms: no_worms(),
+            shutting_down: false,
+        }
+    }
+}
+
+/// A pool with no worm in it. Every file then takes the Luau route.
+fn no_worms() -> Pool {
+    Pool::new(Vec::new(), 1)
 }
 
 impl Server {
@@ -202,20 +229,47 @@ impl Server {
     incomplete is worse than one that formats with defaults until the save.
     */
     fn load_config(&mut self) {
-        let Some(root) = &self.root else {
+        // The load of the worms takes `&mut self`, so the root arrives as a copy.
+        let Some(root) = self.root.clone() else {
             return;
         };
 
         let project = crate::config::Config::load(&root.join("larvae.toml")).ok();
 
-        if let Ok(cfg) = FmtConfig::discover(root, project.as_ref().and_then(|c| c.fmt.as_ref())) {
+        if let Ok(cfg) = FmtConfig::discover(&root, project.as_ref().and_then(|c| c.fmt.as_ref())) {
             self.fmt = cfg;
         }
 
-        if let Ok(cfg) = LintConfig::discover(root, project.as_ref().and_then(|c| c.lint.as_ref()))
+        if let Ok(cfg) = LintConfig::discover(&root, project.as_ref().and_then(|c| c.lint.as_ref()))
         {
-            self.excluded = cfg.excludes(root).unwrap_or_default();
+            self.excluded = cfg.excludes(&root).unwrap_or_default();
             self.lint = cfg;
+        }
+
+        self.load_worms(&root);
+    }
+
+    /*
+    Read the worms of the project.
+
+    The server keeps no worm when the build fails, and then serves the Luau
+    files as before. A user who edits `[worms]` breaks that table for some
+    keystrokes, and an editor that stops at each of them is not usable.
+
+    The build also checks the `[fmt]` table against the options that the
+    worms declare, and fills each missing option. So the server takes the new
+    fmt config only when the build succeeds.
+    */
+    fn load_worms(&mut self, root: &Path) {
+        let mut fmt = self.fmt.clone();
+
+        match worm_pool(root, None, &mut fmt) {
+            Ok(pool) => {
+                self.fmt = fmt;
+                self.worms = pool;
+            }
+
+            Err(_) => self.worms = no_worms(),
         }
     }
 
@@ -225,12 +279,14 @@ impl Server {
             return Ok(());
         };
 
+        let path = path_of_uri(uri);
+
         /*
         The server publishes an excluded file as empty and does not skip it.
         A skip would keep the old diagnostics on screen until the editor
         closed the file.
         */
-        if path_of_uri(uri).is_some_and(|p| self.excluded.skips(&p)) {
+        if path.as_deref().is_some_and(|p| self.excluded.skips(p)) {
             return rpc::notify(
                 out,
                 "textDocument/publishDiagnostics",
@@ -240,35 +296,32 @@ impl Server {
 
         let lines = rpc::Lines::new(src);
 
-        let diagnostics = match lint::analyze(src, &self.lint) {
-            Ok(findings) => findings
-                .into_iter()
-                .map(|f| {
-                    json!({
-                        "range": lines.range(src, f.span),
-                        "severity": severity_of(f.level),
+        // The owner of the extension reports on the file, and nobody else.
+        let claimed = path
+            .as_deref()
+            .and_then(|p| self.worms.frontend_for(p).map(|index| (p, index)));
+
+        let diagnostics = match claimed {
+            Some((path, index)) => self.claimed_diagnostics(path, index, src, &lines),
+
+            None => match lint::analyze(src, &self.lint) {
+                Ok(findings) => findings
+                    .into_iter()
+                    .map(|f| diagnostic(src, &lines, f))
+                    .collect::<Vec<_>>(),
+
+                // A syntax error is one diagnostic, and it stops the other checks.
+                Err(e) => {
+                    let at = e.offset as u32;
+
+                    vec![json!({
+                        "range": lines.range(src, (at, at + 1)),
+                        "severity": 1,
                         "source": "larvae",
-                        "code": f.lint,
-                        "message": match f.help {
-                            Some(help) => format!("{}\n{help}", f.message),
-
-                            None => f.message,
-                        },
-                    })
-                })
-                .collect::<Vec<_>>(),
-
-            // A syntax error is one diagnostic, and it stops the other checks.
-            Err(e) => {
-                let at = e.offset as u32;
-
-                vec![json!({
-                    "range": lines.range(src, (at, at + 1)),
-                    "severity": 1,
-                    "source": "larvae",
-                    "message": e.message,
-                })]
-            }
+                        "message": e.message,
+                    })]
+                }
+            },
         };
 
         rpc::notify(
@@ -278,13 +331,60 @@ impl Server {
         )
     }
 
+    /*
+    The diagnostics of a file that a worm claims.
+
+    The worm reports its own findings. The lints of larvae read the Luau view
+    of the file as well, when the project inherits them. A worm that does
+    neither leaves the list empty, and the file is then quiet.
+    */
+    fn claimed_diagnostics(
+        &self,
+        path: &Path,
+        index: usize,
+        src: &str,
+        lines: &rpc::Lines,
+    ) -> Vec<Value> {
+        match lint::claimed(path, src, &self.lint, &self.worms, index) {
+            Ok(findings) => findings
+                .into_iter()
+                .map(|f| diagnostic(src, lines, f))
+                .collect(),
+
+            /*
+            A worm that fails becomes one diagnostic at its position. The
+            editor then names the reason, and the file does not look clean.
+            */
+            Err(e) => {
+                let (line, column) = e.line_col.unwrap_or((1, 1));
+                let at = json!({
+                    "line": line.saturating_sub(1),
+                    "character": column.saturating_sub(1),
+                });
+
+                vec![json!({
+                    "range": { "start": at, "end": at },
+                    "severity": 1,
+                    "source": "larvae",
+                    "message": match e.help {
+                        Some(help) => format!("{}\n{help}", e.message),
+
+                        None => e.message,
+                    },
+                })]
+            }
+        }
+    }
+
     /// One edit that replaces the whole document; a formatter produces this
     fn format(&self, uri: &str) -> Result<Value> {
         let Some(src) = self.documents.get(uri) else {
             return Ok(Value::Null);
         };
 
-        let formatted = fmt::format(src, &self.fmt)?;
+        let Some(formatted) = self.formatted(uri, src)? else {
+            return Ok(json!([]));
+        };
 
         // An edit that changes nothing still makes the editor mark the file dirty.
         if formatted == *src {
@@ -295,6 +395,36 @@ impl Server {
             "range": rpc::Lines::new(src).whole(src),
             "newText": formatted,
         }]))
+    }
+
+    /*
+    The formatted text of one document, from the owner of its extension.
+
+    A claimed file goes to its worm. The worm replies with a layout document,
+    and larvae renders it in the style of the project. A worm that does not
+    format its files gives `None` here, and the server then sends no edit. A
+    message is correct for `larvae fmt`, because a user named that file. A
+    message is wrong for an editor, because the editor asks on each save.
+    */
+    fn formatted(&self, uri: &str, src: &str) -> Result<Option<String>> {
+        let Some(index) = path_of_uri(uri).and_then(|p| self.worms.frontend_for(&p)) else {
+            return fmt::format(src, &self.fmt).map(Some);
+        };
+
+        let spec = self.worms.spec(index);
+
+        if !spec.formats() {
+            return Ok(None);
+        }
+
+        let reply = self.worms.format(index, src)?;
+
+        // a project can keep one option out of the files this worm claims
+        let cfg = self.fmt.without(&spec.inherit.fmt_except);
+
+        proto::render_format(src, &reply, &cfg)
+            .with_context(|| format!("worm `{}`", spec.manifest.name))
+            .map(Some)
     }
 
     /*
@@ -387,6 +517,27 @@ fn capabilities() -> Value {
             "documentSymbolProvider": true,
         },
         "serverInfo": { "name": "larvae", "version": env!("CARGO_PKG_VERSION") },
+    })
+}
+
+/*
+One finding as a diagnostic of the protocol.
+
+A finding of larvae and a finding of a worm arrive in the same shape, so both
+routes render here. The help goes into the message, because the editor has
+the room for it.
+*/
+fn diagnostic(src: &str, lines: &rpc::Lines, finding: Finding) -> Value {
+    json!({
+        "range": lines.range(src, finding.span),
+        "severity": severity_of(finding.level),
+        "source": "larvae",
+        "code": finding.lint,
+        "message": match finding.help {
+            Some(help) => format!("{}\n{help}", finding.message),
+
+            None => finding.message,
+        },
     })
 }
 
@@ -540,18 +691,23 @@ mod tests {
 
     // --- diagnostics -------------------------------------------------------
 
-    fn diagnostics_of(src: &str) -> Value {
-        let mut server = server_with(src);
-        server.lint = LintConfig::default();
-
+    /// The diagnostics that one publish put on the wire
+    fn published(server: &Server, uri: &str) -> Value {
         let mut out = Vec::new();
-        server.publish("file:///t.luau", &mut out).unwrap();
+        server.publish(uri, &mut out).unwrap();
 
         let text = String::from_utf8(out).unwrap();
         let body = text.split_once("\r\n\r\n").expect("framed").1;
         let value: Value = serde_json::from_str(body).unwrap();
 
         value["params"]["diagnostics"].clone()
+    }
+
+    fn diagnostics_of(src: &str) -> Value {
+        let mut server = server_with(src);
+        server.lint = LintConfig::default();
+
+        published(&server, "file:///t.luau")
     }
 
     #[test]
@@ -788,5 +944,224 @@ mod tests {
     #[test]
     fn a_uri_that_is_not_a_file_is_declined() {
         assert_eq!(path_of_uri("untitled:Untitled-1"), None);
+    }
+
+    // --- worms -------------------------------------------------------------
+
+    /// A worm that claims `.luaux` and does nothing else with it
+    const FRONTEND: &str = r#"
+name  = "luaux"
+api   = 1
+form  = "native"
+entry = "worm.py"
+
+[frontend]
+claims = [".luaux"]
+"#;
+
+    /// The same worm, which also lays out the files it claims
+    const FORMATTER: &str = r#"
+name  = "luaux"
+api   = 1
+form  = "native"
+entry = "worm.py"
+
+[frontend]
+claims = [".luaux"]
+fmt    = true
+"#;
+
+    /// The same worm, which also reports one lint
+    const LINTER: &str = r#"
+name  = "luaux"
+api   = 1
+form  = "native"
+entry = "worm.py"
+
+[frontend]
+claims = [".luaux"]
+
+[lints.tidy]
+"#;
+
+    fn spec(manifest: &str, dir: &std::path::Path) -> std::sync::Arc<crate::worm::pool::Spec> {
+        std::sync::Arc::new(crate::worm::pool::Spec {
+            manifest: crate::worm::manifest::Manifest::parse(manifest).unwrap(),
+            artifact: Vec::new(),
+            dir: dir.to_path_buf(),
+            config: toml::from_str("").unwrap(),
+            rules: Default::default(),
+            run_order: None,
+            inherit_lints: None,
+            inherit: Default::default(),
+            requires: crate::worm::RequireOwner::Larvae,
+            claims: vec![".luaux".to_owned()],
+        })
+    }
+
+    /// A server that holds one `.luaux` document and the worm that claims it
+    fn server_with_worm(manifest: &str, dir: &std::path::Path, src: &str) -> Server {
+        let mut server = Server::default();
+        server
+            .documents
+            .insert("file:///p/t.luaux".into(), src.into());
+        server.worms = Pool::new(vec![spec(manifest, dir)], 1);
+
+        server
+    }
+
+    /*
+    A worm process that answers `init` and then repeats one reply.
+
+    The tests need a real transport, because a claimed file reaches the worm
+    over that transport and over nothing else.
+    */
+    #[cfg(unix)]
+    fn worm_that(dir: &std::path::Path, reply: &str) {
+        let script = dir.join("worm.py");
+
+        std::fs::write(
+            &script,
+            format!(
+                r#"#!/usr/bin/env python3
+import sys, json, struct
+
+def read():
+    n = sys.stdin.buffer.read(4)
+    if len(n) < 4: sys.exit(0)
+    return json.loads(sys.stdin.buffer.read(struct.unpack("<I", n)[0]))
+
+def send(obj):
+    b = json.dumps(obj).encode()
+    sys.stdout.buffer.write(struct.pack("<I", len(b)) + b)
+    sys.stdout.buffer.flush()
+
+while True:
+    req = read()
+    if req["op"] == "init":
+        send({{"ok": True}})
+        continue
+{reply}
+"#
+            ),
+        )
+        .unwrap();
+
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /*
+    The test that states the problem. The Luau parser reads the first markup
+    character of a `.luaux` file and reports a syntax error. The worm owns
+    that file, so the server must not read it as Luau.
+    */
+    #[test]
+    fn a_claimed_file_whose_worm_reports_nothing_is_published_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = server_with_worm(FRONTEND, dir.path(), "<Frame>\n\t<Label />\n</Frame>\n");
+
+        assert_eq!(published(&server, "file:///p/t.luaux"), json!([]));
+    }
+
+    /// The editor asks on every save, so silence is the answer and not an error
+    #[test]
+    fn a_claimed_file_whose_worm_does_not_format_produces_no_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = server_with_worm(FRONTEND, dir.path(), "<Frame>\n");
+
+        assert_eq!(server.format("file:///p/t.luaux").unwrap(), json!([]));
+    }
+
+    /// A worm claims one extension, and larvae keeps every other file
+    #[test]
+    fn a_luau_file_keeps_the_luau_route_beside_a_worm() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut server = server_with_worm(FORMATTER, dir.path(), "<Frame>\n");
+        server
+            .documents
+            .insert("file:///p/t.luau".into(), "local x={a=1}\n".into());
+
+        let edits = server.format("file:///p/t.luau").unwrap();
+
+        assert_eq!(edits[0]["newText"], "local x = { a = 1 }\n");
+        assert_eq!(
+            published(&server, "file:///p/t.luau")[0]["code"],
+            "unused_variable"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_claimed_file_carries_the_findings_of_its_worm() {
+        let dir = tempfile::tempdir().unwrap();
+        worm_that(
+            dir.path(),
+            r#"    send({"ok": True, "findings": [{"span": [0, 7], "lint": "tidy", "message": "untidy"}]})"#,
+        );
+
+        let server = server_with_worm(LINTER, dir.path(), "<Frame>\n");
+        let diags = published(&server, "file:///p/t.luaux");
+
+        assert_eq!(diags.as_array().unwrap().len(), 1);
+        assert_eq!(diags[0]["code"], "tidy");
+        assert_eq!(diags[0]["source"], "larvae");
+        assert_eq!(diags[0]["severity"], 2, "a warning");
+        assert_eq!(diags[0]["range"]["end"]["character"], 7);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_claimed_file_is_laid_out_by_its_worm() {
+        let dir = tempfile::tempdir().unwrap();
+        worm_that(
+            dir.path(),
+            r#"    send({"ok": True, "doc": 1, "document": {"lit": "<Frame />"}})"#,
+        );
+
+        let server = server_with_worm(FORMATTER, dir.path(), "<Frame></Frame>\n");
+        let edits = server.format("file:///p/t.luaux").unwrap();
+
+        assert_eq!(edits[0]["newText"], "<Frame />\n");
+        assert_eq!(edits[0]["range"]["start"]["line"], 0);
+    }
+
+    /// A worm that fails states why, and the editor keeps working
+    #[cfg(unix)]
+    #[test]
+    fn a_worm_that_fails_becomes_one_diagnostic() {
+        let dir = tempfile::tempdir().unwrap();
+        worm_that(
+            dir.path(),
+            r#"    send({"ok": False, "error": "line 1 is not markup"})"#,
+        );
+
+        let server = server_with_worm(LINTER, dir.path(), "<Frame>\n");
+        let diags = published(&server, "file:///p/t.luaux");
+
+        assert_eq!(diags.as_array().unwrap().len(), 1);
+        assert_eq!(diags[0]["severity"], 1);
+        assert!(
+            diags[0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("line 1 is not markup"),
+            "{}",
+            diags[0]
+        );
+    }
+
+    /// A user who edits `larvae.toml` breaks it for some keystrokes
+    #[test]
+    fn a_project_config_that_does_not_load_leaves_the_server_with_no_worms() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("larvae.toml"), "= = not toml = =").unwrap();
+
+        let mut server = Server::default();
+        server.root = Some(dir.path().to_path_buf());
+        server.load_config();
+
+        assert!(server.worms.is_empty());
     }
 }

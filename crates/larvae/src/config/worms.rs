@@ -25,6 +25,8 @@ pub struct Entry {
     /// The choice of the user about the inherited lints. It overrides what
     /// the worm declared in its manifest.
     pub inherit_lints: Option<bool>,
+    /// Which of the inherited lints and format options apply to this worm
+    pub inherit: Inherit,
     pub source: Source,
     /// The position of the rules of this worm; the user setting wins
     pub run_order: Option<Stage>,
@@ -103,6 +105,51 @@ struct Table {
     config: Option<toml::Value>,
     #[serde(default)]
     inherit_lints: Option<bool>,
+    #[serde(default)]
+    inherit: Inherit,
+}
+
+/*
+Which inherited lints and format options apply inside the files of one worm.
+
+A project turns inheritance on and gets everything, because that is the answer
+a project wants almost every time. A project that wants less states `only` or
+`except`. The two are exclusive: a list of what to keep and a list of what to
+drop, given together, cannot both be the answer.
+*/
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Inherit {
+    /// The only lints of larvae that run in the files of this worm
+    #[serde(default)]
+    pub lints_only: Vec<String>,
+    /// The lints of larvae that do not run in the files of this worm
+    #[serde(default)]
+    pub lints_except: Vec<String>,
+    /// The format options of larvae that do not apply in the files of this
+    /// worm. An option named here keeps its own default there.
+    #[serde(default)]
+    pub fmt_except: Vec<String>,
+}
+
+impl Inherit {
+    /// Report if one inherited lint runs in the files of this worm
+    pub fn allows_lint(&self, name: &str) -> bool {
+        if !self.lints_only.is_empty() {
+            return self.lints_only.iter().any(|n| n == name);
+        }
+
+        !self.lints_except.iter().any(|n| n == name)
+    }
+
+    /// Check that the project stated one list and not both
+    pub fn validate(&self, name: &str) -> Result<()> {
+        if !self.lints_only.is_empty() && !self.lints_except.is_empty() {
+            bail!("worm `{name}`: inherit takes lints_only or lints_except, not both");
+        }
+
+        Ok(())
+    }
 }
 
 /// Every worm that a project requests, by name
@@ -136,16 +183,19 @@ impl Worms {
 }
 
 fn source_of(name: &str, raw: Raw) -> Result<Entry> {
-    let (run_order, rules, config, inherit_lints) = match &raw {
+    let (run_order, rules, config, inherit_lints, inherit) = match &raw {
         Raw::Table(t) => (
             t.run_order,
             t.rules.clone(),
             t.config.clone().unwrap_or_else(empty_table),
             t.inherit_lints,
+            t.inherit.clone(),
         ),
 
-        Raw::Pin(_) => (None, BTreeMap::new(), empty_table(), None),
+        Raw::Pin(_) => (None, BTreeMap::new(), empty_table(), None, Inherit::default()),
     };
+
+    inherit.validate(name)?;
 
     if !config.is_table() {
         bail!("worm `{name}`: config has to be a table, ex: [worms.{name}.config]");
@@ -183,6 +233,7 @@ fn source_of(name: &str, raw: Raw) -> Result<Entry> {
         rules,
         config,
         inherit_lints,
+        inherit,
     })
 }
 

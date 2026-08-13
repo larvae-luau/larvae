@@ -32,6 +32,8 @@ pub struct Loaded {
     pub run_order: Option<Stage>,
     /// The choice of the user about the inherited lints, which wins over the manifest
     pub inherit_lints: Option<bool>,
+    /// Which inherited lints and format options apply in the files of this worm
+    pub inherit: crate::config::worms::Inherit,
 }
 
 impl Loaded {
@@ -118,6 +120,7 @@ impl Registry {
                 rules: enabled,
                 run_order: entry.run_order,
                 inherit_lints: entry.inherit_lints,
+                inherit: entry.inherit.clone(),
             });
         }
 
@@ -185,6 +188,7 @@ impl Registry {
                     rules: l.rules.clone(),
                     run_order: l.run_order,
                     inherit_lints: l.inherit_lints,
+                    inherit: l.inherit.clone(),
                     requires: l.worm.manifest.requires,
                     claims: l
                         .worm

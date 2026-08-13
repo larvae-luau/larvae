@@ -231,6 +231,42 @@ impl Default for FmtConfig {
 }
 
 impl FmtConfig {
+    /*
+    The same settings, with the named options back at their own defaults.
+
+    A project uses this to keep one option out of the files that a worm
+    claims. The swap goes through JSON, because larvae builds TOML without a
+    serializer, and because a name out of a config file cannot select a field
+    in any other way.
+    */
+    pub fn without(&self, except: &[String]) -> Self {
+        if except.is_empty() {
+            return self.clone();
+        }
+
+        let (Ok(mut mine), Ok(base)) = (
+            serde_json::to_value(self),
+            serde_json::to_value(Self::default()),
+        ) else {
+            return self.clone();
+        };
+
+        for name in except {
+            match base.get(name) {
+                Some(value) => mine[name] = value.clone(),
+
+                // a name larvae does not own is an option of a worm, and it drops out
+                None => {
+                    if let Some(table) = mine.as_object_mut() {
+                        table.remove(name);
+                    }
+                }
+            }
+        }
+
+        serde_json::from_value(mine).unwrap_or_else(|_| self.clone())
+    }
+
     /// Returns the layout style that this config requests from the renderer.
     pub fn style(&self) -> Style {
         Style {
