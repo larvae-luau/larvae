@@ -1,14 +1,14 @@
 /*!
 `larvae lint`.
 
-A lint is a thing that reads a parsed file and says what looks wrong. This
-module holds what every lint shares: the trait, the registry, the run, and the
-suppression comments that let an author say a particular one is wrong here.
+A lint reads a parsed file and reports what looks wrong. This module holds
+what every lint shares: the trait, the registry, the run, and the suppression
+comments. With such a comment, an author says that one finding is wrong here.
 
-The design constraint that shaped it is the editor. A lint pass runs on every
-keystroke once the language server exists, so nothing here builds an index it
-could have borrowed, and the shared analysis every lint wants, what each name
-refers to, is computed once per file in [`ctx`] rather than once per lint.
+The editor is the design constraint. When the language server exists, a lint
+pass runs on every keystroke. Thus no code here builds an index that it can
+borrow instead. larvae computes the analysis that every lint needs, the
+target of each name, once per file in [`ctx`] and not once per lint.
 */
 
 pub mod config;
@@ -27,31 +27,31 @@ use crate::syntax::{lexer, parser};
 pub use config::{Level, LintConfig};
 pub use ctx::{Finding, LintCtx};
 
-/// One thing that can be wrong with a file
+/// One thing that can be wrong with a file.
 pub trait Lint: Sync {
-    /// What a user writes to configure it, matching selene's spelling
+    /// The name that a user writes to configure the lint. It matches selene's spelling.
     fn name(&self) -> &'static str;
 
-    /// Whether it is on by default, and how loudly
+    /// Tells if the lint is on by default, and at which level.
     fn default_level(&self) -> Level;
 
-    /// One line, shown by `larvae lint --explain`
+    /// One line of description. `larvae lint --explain` shows it.
     fn about(&self) -> &'static str;
 
     fn run(&self, ctx: &LintCtx<'_>, out: &mut Vec<Finding>);
 }
 
-/// Every lint, in the order their findings are reported within a line
+/// Returns every lint, in the order that larvae reports their findings within a line.
 pub fn registry() -> &'static [&'static dyn Lint] {
     lints::ALL
 }
 
-/// Look up one lint by the name a user would write
+/// Look up one lint by the name that a user writes.
 pub fn find(name: &str) -> Option<&'static dyn Lint> {
     registry().iter().copied().find(|l| l.name() == name)
 }
 
-/// A file that did not parse, so nothing could be said about it
+/// A file that did not parse, so larvae cannot report on it.
 #[derive(Debug)]
 pub struct ParseFailure {
     pub offset: usize,
@@ -59,11 +59,12 @@ pub struct ParseFailure {
 }
 
 /*
-Run every enabled lint over one file, keeping the byte spans.
+Run every enabled lint over one file, and keep the byte spans.
 
-The spans are why this is separate from [`lint`]. A terminal wants a line and
-column, an editor wants a range to underline, and turning a span into either is
-easy while turning a line and column back into a span is not.
+The spans are the reason that this is separate from [`lint`]. A terminal
+needs a line and a column. An editor needs a range to underline. To turn a
+span into either form is easy. To turn a line and a column back into a span
+is not easy.
 */
 pub fn analyze(src: &str, cfg: &LintConfig) -> Result<Vec<Finding>, ParseFailure> {
     let fail = |offset, message: String| ParseFailure {
@@ -87,7 +88,7 @@ pub fn analyze(src: &str, cfg: &LintConfig) -> Result<Vec<Finding>, ParseFailure
         let before = findings.len();
         lint.run(&ctx, &mut findings);
 
-        // a lint states what it found, the config states how loudly to say it
+        // A lint states what it found. The config states the level.
         for finding in &mut findings[before..] {
             finding.level = level;
         }
@@ -100,14 +101,17 @@ pub fn analyze(src: &str, cfg: &LintConfig) -> Result<Vec<Finding>, ParseFailure
 }
 
 /*
-Lint one claimed file with what its worm reported.
+Lint one claimed file with the findings that its worm reported.
 
-The worm found the problems and nothing more. Everything about how they are
-treated happens here, exactly as it does for the builtins: `[lint.rules]`
-levels over the manifest's defaults, `-- larvae: allow(...)` suppression via
-the comment spans the worm returned, and the same rendering. A finding under
-a name the worm never declared is refused, because otherwise a typo in a worm
-is a lint that cannot be configured or explained.
+The worm found the problems, and nothing more. The host treats the findings
+here, exactly as it treats the builtin findings. The `[lint.rules]` levels
+override the manifest's defaults. The `-- larvae: allow(...)` comments
+suppress through the comment spans that the worm returned. The rendering is
+the same.
+
+The host refuses a finding under a name that the worm did not declare.
+Without that rule, a typo in a worm is a lint that the user cannot configure
+or explain.
 */
 pub fn from_worm(
     path: &Path,
@@ -150,7 +154,7 @@ pub fn from_worm(
             return Err(bad_span("a finding", finding.span));
         }
 
-        // the worm states what it found, the config states how loudly
+        // The worm states what it found. The config states the level.
         let level = cfg.level_for(&finding.lint, decl.default);
 
         if level == Level::Allow {
@@ -182,7 +186,7 @@ pub fn from_worm(
         .collect())
 }
 
-/// Whether a wire span lies on the source, since it came off a wire
+/// Returns true if a span lies on the source. The span came from a wire, so the host checks it.
 fn span_ok(src: &str, (start, end): (u32, u32)) -> bool {
     let (s, e) = (start as usize, end as usize);
 
@@ -190,16 +194,16 @@ fn span_ok(src: &str, (start, end): (u32, u32)) -> bool {
 }
 
 /*
-Lint one file, as diagnostics for a terminal.
+Lint one file, and return diagnostics for a terminal.
 
-Parse failures come back as a diagnostic rather than an error, because a lint
-run over a tree is expected to report on every file it was given and one file
-that does not compile should not end the run.
+A parse failure comes back as a diagnostic, not as an error. A lint run over
+a tree must report on every file that the user gave it. One file that does
+not compile must not stop the run.
 */
 pub fn lint(path: &Path, src: &str, cfg: &LintConfig) -> Result<Vec<Diag>, Diag> {
     let findings = analyze(src, cfg).map_err(|e| Diag::error(path, e.message).at(src, e.offset))?;
 
-    // one scan for the file, rather than one per finding
+    // One scan for the file, not one scan per finding.
     let index = crate::diag::LineIndex::new(src);
 
     Ok(findings
@@ -281,7 +285,7 @@ mod worm_tests {
         assert_eq!(diags[0].severity, crate::diag::Severity::Warning);
         assert!(diags[0].message.contains("(tidy)"), "{}", diags[0].message);
 
-        // [lint.rules] beats the manifest, exactly as it does for builtins
+        // The [lint.rules] level overrides the manifest, exactly as for a builtin lint.
         let mut cfg = LintConfig::default();
         cfg.rules.insert("tidy".to_owned(), Level::Deny);
 
@@ -335,7 +339,7 @@ mod worm_tests {
 
         assert!(suppressed.is_empty());
 
-        // without the comment spans the same finding stands, by design
+        // Without the comment spans, the same finding stays. This is by design.
         let stands = from_worm(
             Path::new("a.luaux"),
             src,

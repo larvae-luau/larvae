@@ -1,4 +1,4 @@
-//! Datamodel checks, the ones that stop a rewrite from breaking at runtime
+//! The datamodel checks that stop a rewrite from a runtime failure
 
 use crate::diag::Diag;
 use crate::requires::datamodel::{DmPath, Realm};
@@ -78,7 +78,8 @@ impl<'a> Resolver<'a> {
         }
 
         if target_realm == Realm::StarterClone {
-            // absolute @game into a Starter container hits the template, only same container relatives work
+            // An absolute @game path into a Starter container reaches the template;
+            // only relatives in the same container work.
             if req_dm.service() != target_dm.service() {
                 diags.push(
                     Diag::error(ctx.path, format!("require(\"{spec}\") targets {} from outside it; Starter containers run as clones, so this would resolve to the template", target_dm.service()))
@@ -90,7 +91,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // Self require?
+        // A module must not require itself.
         if req_dm.segments == target_dm.segments {
             diags.push(
                 Diag::error(
@@ -141,11 +142,11 @@ impl<'a> Resolver<'a> {
         }
 
         /*
-        Nothing in the project puts anything at that path, so the rewrite
-        compiles and then fails in a live game. Usually a package directory
-        someone forgot to mount, which is the failure this whole tool exists
-        to stop, so it is worth saying even though a second project file or
-        a plugin could in theory put it there
+        The project puts no module at that path, so the rewrite compiles and
+        then fails in a live game. The usual cause is a package directory
+        that a user did not mount, and this tool exists to stop that failure.
+        So larvae reports it, although a second project file or a plugin
+        could in theory put a module there.
         */
         self.report(
             ctx,
@@ -159,7 +160,7 @@ impl<'a> Resolver<'a> {
         );
     }
 
-    /// Warn, or fail outright when the config asked for strict
+    /// Warn, or fail when the config sets strict
     fn report(
         &self,
         ctx: &FileCtx,

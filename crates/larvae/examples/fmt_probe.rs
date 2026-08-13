@@ -1,4 +1,4 @@
-//! Scratch harness, checks format invariants over the given files
+//! This harness checks the format invariants over the files it is given.
 fn main() {
     let cfg = larvae::fmt::FmtConfig::default();
     let (mut ok, mut bad) = (0u32, 0u32);

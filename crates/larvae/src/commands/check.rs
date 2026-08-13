@@ -1,4 +1,4 @@
-//! `larvae check`, validate all requires without writing output
+//! `larvae check` validates all requires and does not write output.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;

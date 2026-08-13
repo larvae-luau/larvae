@@ -1,20 +1,21 @@
 /*!
-The AST, flattened into something a worm can hold a handle to.
+The AST, flattened into a form that a worm can hold a handle to.
 
-Our tree is `Box` and `Vec` of borrowed nodes, so it cannot cross a boundary:
-mlua userdata has to be `'static`, and handing a guest a raw pointer into the
-tree is undefined the moment it stashes one in a global. So each file's tree is
-walked once into an owned table of records addressed by **pre-order index**,
-which is the node id §4.1 of the plan reserved for exactly this.
+The syntax tree is `Box` and `Vec` of borrowed nodes, so it cannot cross a
+boundary. mlua userdata must be `'static`. A raw pointer into the tree, given
+to a guest, becomes undefined when the guest stores it in a global. Thus
+larvae walks the tree of each file once into an owned table of records. The
+records are addressed by **pre-order index**, which is the node id that §4.1
+of the plan reserved for this purpose.
 
-A worm never receives our node types. It receives `(epoch, id)` pairs and calls
-accessors, which is what lets us reshape the AST without breaking every pinned
-worm. That trap is the one SWC fell into by making its tree the plugin ABI.
+A worm does not receive the node types of larvae. It receives `(epoch, id)`
+pairs and calls accessors. This lets larvae reshape the AST without breakage
+of every pinned worm. SWC made its tree the plugin ABI and got that problem.
 */
 
 use crate::syntax::ast::*;
 
-/// What a node is, as the guest sees it. `filter` in `worm.toml` names these.
+/// The type of a node, as the guest sees it. `filter` in `worm.toml` names these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Block,
@@ -56,7 +57,7 @@ pub enum Kind {
 }
 
 impl Kind {
-    /// The name a worm writes in `filter`, and gets back from `node:kind()`
+    /// The name that a worm writes in `filter` and gets back from `node:kind()`
     pub fn name(self) -> &'static str {
         match self {
             Self::Block => "Block",
@@ -96,7 +97,7 @@ impl Kind {
         }
     }
 
-    /// Every kind, which `worm.d.luau` mirrors as a singleton union
+    /// Every kind. `worm.d.luau` mirrors this list as a singleton union.
     pub const ALL: &'static [Kind] = &[
         Kind::Block,
         Kind::Local,
@@ -134,7 +135,7 @@ impl Kind {
         Kind::TypeAssert,
     ];
 
-    /// Parse a name a worm declared in `filter`, so a typo is caught at load
+    /// Parse a name that a worm declared in `filter`, so larvae catches a typo at load
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|k| k.name() == name)
     }
@@ -144,11 +145,11 @@ impl Kind {
 #[derive(Debug, Clone)]
 pub struct Node {
     pub kind: Kind,
-    /// Byte range in the original source, half open
+    /// The byte range in the original source, as a half open range
     pub span: (u32, u32),
-    /// Pre-order index of the parent, absent only for the root
+    /// The pre-order index of the parent. Only the root has none.
     pub parent: Option<u32>,
-    /// Pre-order indexes of the direct children, in source order
+    /// The pre-order indexes of the direct children, in source order
     pub children: Vec<u32>,
 }
 
@@ -159,7 +160,7 @@ pub struct NodeTable {
 }
 
 impl NodeTable {
-    /// Flatten a parsed chunk, resolving spans to bytes through `bytes`
+    /// Flatten a parsed chunk. The `bytes` function resolves spans to bytes.
     pub fn build(chunk: &Chunk, bytes: &impl Fn(TokSpan) -> (u32, u32)) -> Self {
         let mut table = Self::default();
 
@@ -168,7 +169,7 @@ impl NodeTable {
         table
     }
 
-    /// How many nodes the file has
+    /// The number of nodes in the file
     pub fn len(&self) -> usize {
         self.nodes.len()
     }
@@ -182,7 +183,7 @@ impl NodeTable {
         self.nodes.get(id as usize)
     }
 
-    /// Every node, in pre-order, which is also traversal order
+    /// Every node, in pre-order. This is also the traversal order.
     pub fn iter(&self) -> impl Iterator<Item = (u32, &Node)> {
         self.nodes
             .iter()
@@ -190,14 +191,14 @@ impl NodeTable {
             .map(|(i, node)| (i as u32, node))
     }
 
-    /// The source text a node covers
+    /// The source text that a node covers
     pub fn text<'s>(&self, id: u32, src: &'s str) -> Option<&'s str> {
         let node = self.get(id)?;
 
         src.get(node.span.0 as usize..node.span.1 as usize)
     }
 
-    /// Reserve a slot, returning its id, so children can name their parent
+    /// Reserve a slot and return its id, so children can name their parent
     fn open(&mut self, kind: Kind, span: (u32, u32), parent: Option<u32>) -> u32 {
         let id = self.nodes.len() as u32;
 
@@ -250,7 +251,7 @@ impl NodeTable {
 
         let id = self.open(kind, bytes(span), Some(parent));
 
-        // children, so a worm can walk into a statement rather than only past it
+        // push the children, so a worm can walk into a statement and not only past it
         match s {
             Stmt::Local(n) => {
                 for e in &n.values {
@@ -422,7 +423,7 @@ mod tests {
     use crate::syntax::lexer;
     use crate::syntax::parser;
 
-    /// Flatten real source, the same way the pipeline will
+    /// Flatten real source, in the same way as the pipeline does
     fn table(src: &str) -> (NodeTable, String) {
         let lexed = lexer::lex(src).expect("lexes");
         let chunk = parser::parse(src, &lexed.toks).expect("parses");

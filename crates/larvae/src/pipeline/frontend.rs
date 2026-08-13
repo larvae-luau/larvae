@@ -1,15 +1,16 @@
 /*!
 The front-end pre-pass.
 
-A front-end worm turns something we cannot parse into Luau, so it has to finish
-before anything that parses Luau starts, including our own require scanning.
-That is not an ordering convention we remember to honour, it is what this stage
-being separate enforces: a claimed file's bytes are replaced here, and every
-later stage receives Luau without ever learning a worm was involved.
+A front-end worm turns text that larvae cannot parse into Luau. So the worm
+must finish before any stage that parses Luau starts, and that includes the
+require scan of larvae. This order is not a convention that developers must
+remember. The separate stage enforces it: this stage replaces the bytes of a
+claimed file, and every later stage receives Luau and never learns that a
+worm ran.
 
-It runs serially on purpose. A front-end touches the few files that use its
-syntax, not the whole tree, and keeping worms off the parallel loop means no
-worm instance is ever shared between threads.
+The stage runs serially by design. A front-end touches the few files that use
+its syntax and not the whole tree. Worms stay off the parallel loop, so no
+worm instance is shared between threads.
 */
 
 use std::path::{Path, PathBuf};
@@ -17,11 +18,11 @@ use std::path::{Path, PathBuf};
 use crate::diag::Diag;
 
 /*
-Hand one claimed file to the worm that claimed it.
+Give one claimed file to the worm that claimed it.
 
-Called from inside the per-file work rather than as a pre-pass, so a file the
-cache already covers never reaches a worm at all. That matters more than it
-sounds: without it every save in watch mode recompiles every markup file.
+The pipeline calls this inside the work for each file and not as a pre-pass.
+So a file that the cache covers never reaches a worm. This is important:
+without it, every save in watch mode compiles every markup file again.
 */
 pub fn compile(
     pool: &crate::worm::pool::Pool,
@@ -42,7 +43,7 @@ pub fn compile(
         }
     };
 
-    // the worm reported a problem, so this file is out of the build
+    // The worm reported a problem, so this file is out of the build.
     if !outcome.ok {
         diags.push(Diag::error(
             path,
@@ -53,10 +54,10 @@ pub fn compile(
     }
 
     /*
-    Line preservation composes only if every stage keeps it, so a worm changing
-    the count is worth saying. It is a warning rather than a refusal: the output
-    is still valid Luau, only the line numbers below it stop matching, and that
-    is the author's call to make.
+    Line preservation holds only if every stage keeps it. So larvae reports a
+    worm that changes the count. This is a warning and not a refusal: the
+    output is still valid Luau. Only the line numbers below it stop matching,
+    and the author makes that decision.
     */
     let (before, after) = (src.lines().count(), outcome.text.lines().count());
 

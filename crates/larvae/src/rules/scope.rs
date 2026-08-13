@@ -1,14 +1,15 @@
 /*!
-Which names are locals and which are globals
+The split of names into locals and globals
 
-A rule that rewrites a bare name has to know whether the source bound it
-first. Substituting a define into `local DEBUG = f()` would be silent
-corruption, so this walk tracks every binding a block introduces and reports
-only the name references nothing bound
+A rule that rewrites a bare name must know if the source bound the name
+first. A define substituted into `local DEBUG = f()` would corrupt the
+code without a report. For this reason, the walk tracks each binding that
+a block introduces. The walk reports only the name references that no
+binding covers.
 
-Lua's binding order matters and is followed here. `local x = x` reads the
-outer x on the right, a `local function f` can call itself, and a for
-variable only exists inside its own loop
+Lua's binding order matters, and the walk follows it. `local x = x` reads
+the outer x on the right. A `local function f` can call itself. A for
+variable exists only inside its own loop.
 */
 
 use std::collections::HashSet;
@@ -16,46 +17,46 @@ use std::collections::HashSet;
 use crate::rules::engine::RuleCtx;
 use crate::syntax::ast::*;
 
-/// One local, where it was declared and everywhere it is read
+/// One local, the point of its declaration, and each point where the code reads it.
 #[derive(Debug)]
 pub struct Binding {
-    /// Token index of the name in its declaration
+    /// The token index of the name in its declaration.
     pub declared_at: u32,
-    /// Token indexes of every reference to it, a recursive call counts
+    /// The token indexes of each reference to it. A recursive call counts.
     pub uses: Vec<u32>,
-    /// The statement kind that introduced it, deletion depends on this
+    /// The statement kind that introduced it. Deletion depends on this.
     pub origin: Origin,
 }
 
-/// What introduced a local, which decides whether it is safe to remove
+/// The construct that introduced a local. This decides if removal is safe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Origin {
     /// `local x = ...`
     Local,
     /// `local function f() end`
     LocalFunction,
-    /// A function parameter, never removable on its own
+    /// A function parameter. Larvae never removes it on its own.
     Param,
-    /// A `for` variable, never removable on its own
+    /// A `for` variable. Larvae never removes it on its own.
     Loop,
 }
 
-/// Everything the walk learned about names in one file
+/// The full set of facts that the walk learned about names in one file.
 #[derive(Debug, Default)]
 pub struct Names {
     pub bindings: Vec<Binding>,
-    /// Token indexes of references nothing in the source bound
+    /// The token indexes of references that the source did not bind.
     pub globals: HashSet<u32>,
-    /// Every name spelled anywhere, so a generated name can avoid all of them
+    /// Each name that appears anywhere. A generated name can then avoid all of them.
     pub taken: HashSet<String>,
 }
 
-/// Token indexes of every name reference that no enclosing scope bound
+/// The token indexes of each name reference that no enclosing scope bound.
 pub fn globals(ctx: &RuleCtx) -> HashSet<u32> {
     resolve(ctx).globals
 }
 
-/// Walk the file and work out what every name refers to
+/// Walk the file and find the referent of each name.
 pub fn resolve(ctx: &RuleCtx) -> Names {
     let mut b = Binder {
         ctx,
@@ -70,13 +71,13 @@ pub fn resolve(ctx: &RuleCtx) -> Names {
 
 struct Binder<'a, 'src> {
     ctx: &'a RuleCtx<'src>,
-    /// Each scope holds the names it introduced and which binding they are
+    /// Each scope holds the names that it introduced and their binding indexes.
     scopes: Vec<Vec<(&'src str, usize)>>,
     out: Names,
 }
 
 impl<'src> Binder<'_, 'src> {
-    /// Innermost binding of a name, which is the one a reference means
+    /// The innermost binding of a name. A reference means this binding.
     fn lookup(&self, name: &str) -> Option<usize> {
         self.scopes
             .iter()
@@ -100,7 +101,7 @@ impl<'src> Binder<'_, 'src> {
             .push((name, index));
     }
 
-    /// Charge a name reference to whatever bound it, or call it a global
+    /// Record a name reference against its binding, or record it as a global.
     fn reference(&mut self, span: TokSpan) {
         let name = self.ctx.tok_text(span.start);
         self.out.taken.insert(name.to_string());
@@ -132,7 +133,7 @@ impl<'src> Binder<'_, 'src> {
         self.close();
     }
 
-    /// A function body owns its parameters, so they live in the body's scope
+    /// A function body owns its parameters, so they live in the body's scope.
     fn body(&mut self, f: &FunctionBody) {
         self.open();
 
@@ -153,7 +154,7 @@ impl<'src> Binder<'_, 'src> {
         match s {
             Stmt::Empty(_) | Stmt::Break(_) | Stmt::Continue(_) | Stmt::TypeAlias(_) => {}
 
-            // values are read before the names exist, `local x = x` sees the outer x
+            // The walk reads the values before the names exist. `local x = x` sees the outer x.
             Stmt::Local(n) => {
                 for e in &n.values {
                     self.expr(e);
@@ -164,7 +165,7 @@ impl<'src> Binder<'_, 'src> {
                 }
             }
 
-            // the name comes first so the function can recurse
+            // The name binds first, so the function can call itself.
             Stmt::LocalFunction(n) => {
                 self.bind(n.name, Origin::LocalFunction);
                 self.body(&n.body);
@@ -191,7 +192,7 @@ impl<'src> Binder<'_, 'src> {
                 self.block(&n.block);
             }
 
-            // repeat sees the loop body's locals in its until condition
+            // A repeat statement sees the locals of the loop body in its until condition.
             Stmt::Repeat(n) => {
                 self.open();
 
@@ -296,7 +297,7 @@ impl<'src> Binder<'_, 'src> {
 
             Expr::Paren { inner, .. } => self.expr(inner),
 
-            // a field key is not a name reference, `t.print` says nothing about print
+            // A field key is not a name reference. `t.print` gives no fact about print.
             Expr::Index { object, key, .. } => {
                 self.expr(object);
 
@@ -344,7 +345,7 @@ mod tests {
     use super::*;
     use crate::syntax::{lexer, parser};
 
-    /// Names the walk decided were global, in source order
+    /// The names that the walk marked as global, in source order.
     fn found(src: &str) -> Vec<String> {
         let lexed = lexer::lex(src).unwrap();
         let chunk = parser::parse(src, &lexed.toks).unwrap();

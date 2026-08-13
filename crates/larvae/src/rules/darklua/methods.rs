@@ -1,9 +1,10 @@
 /*!
-Rules that reshape how a function is declared or called
+Rules that reshape function declarations and calls
 
-remove_method_definition, remove_method_call, convert_function_to_assignment
-and convert_local_function_to_assign all move the implicit `self` around, so
-they share the parameter list surgery in one place
+remove_method_definition, remove_method_call,
+convert_function_to_assignment, and convert_local_function_to_assign all
+move the implicit `self`. For this reason, they share the parameter list
+rewrite in one place.
 */
 
 use super::support::{self, insert, tok_bytes};
@@ -11,9 +12,9 @@ use crate::rules::engine::{Edit, Flow, RuleCtx, Visit, walk_block, walk_chunk};
 use crate::syntax::ast::*;
 
 /*
-Put `self` at the head of a parameter list, returns false when the `(` is
-not where the tree says it should be, the caller then leaves the whole
-definition alone rather than emitting half a rewrite
+Put `self` at the head of a parameter list. Return false when the `(` is
+not at the position that the tree gives. The caller then keeps the whole
+definition and does not emit half a rewrite.
 */
 fn insert_self(ctx: &RuleCtx, body: &FunctionBody, edits: &mut Vec<Edit>) -> bool {
     let Some(lparen) = support::params_lparen(ctx, body) else {
@@ -32,14 +33,14 @@ fn insert_self(ctx: &RuleCtx, body: &FunctionBody, edits: &mut Vec<Edit>) -> boo
     true
 }
 
-/// Token index of the `:` in front of a method name, verified against source
+/// The token index of the `:` before a method name, checked against the source.
 fn method_colon(ctx: &RuleCtx, name: TokSpan) -> Option<u32> {
     let idx = name.start.checked_sub(1)?;
 
     (ctx.tok_text(idx) == ":").then_some(idx)
 }
 
-/// remove_method_definition, `function C:m()` becomes `function C.m(self)`
+/// remove_method_definition: `function C:m()` becomes `function C.m(self)`.
 pub fn remove_method_definition(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     struct V<'a, 'b> {
         ctx: &'a RuleCtx<'b>,
@@ -63,7 +64,7 @@ pub fn remove_method_definition(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
                 return Flow::Next;
             };
 
-            // both edits or neither, a dangling `.` would not compile
+            // Apply both edits or neither. A dangling `.` would not compile.
             let mut staged = Vec::new();
 
             if !insert_self(self.ctx, &f.body, &mut staged) {
@@ -82,9 +83,10 @@ pub fn remove_method_definition(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
 }
 
 /*
-convert_function_to_assignment, `function a.b()` becomes `a.b = function()`,
-a method definition also picks up the explicit self parameter, attributes
-are left alone because `@native f = function()` is not valid Luau
+convert_function_to_assignment: `function a.b()` becomes
+`a.b = function()`. A method definition also gains the explicit self
+parameter. The rule does not change attributed functions, because
+`@native f = function()` is not valid Luau.
 */
 pub fn convert_function_to_assignment(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     struct V<'a, 'b> {
@@ -121,7 +123,7 @@ pub fn convert_function_to_assignment(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
             let from = tok_bytes(self.ctx, kw).0;
             let to = self.ctx.bytes(*f.path.last().unwrap()).1;
 
-            // the head is always one line, no newline bookkeeping needed here
+            // The head is always one line, so no newline bookkeeping is necessary here.
             self.edits.push((from, to, format!("{target} = function")));
             self.edits.append(&mut staged);
 
@@ -133,9 +135,10 @@ pub fn convert_function_to_assignment(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
 }
 
 /*
-convert_local_function_to_assign, `local function f()` becomes
-`local f = function()`, only when the body never mentions f, the local form
-is in scope inside itself and the assignment form is not
+convert_local_function_to_assign: `local function f()` becomes
+`local f = function()`. The rule applies only when the body never
+mentions f. The local form is in scope inside itself, and the assignment
+form is not.
 */
 pub fn convert_local_function_to_assign(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     struct V<'a, 'b> {
@@ -180,8 +183,9 @@ pub fn convert_local_function_to_assign(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
 }
 
 /*
-Does this block read that name anywhere, a shadowing local inside counts as
-a hit which only costs us a transform we could have done, never a wrong one
+True when this block reads the name anywhere. A shadowing local inside
+counts as a hit. That costs larvae a possible transform, but it never
+causes a wrong transform.
 */
 fn references_name(ctx: &RuleCtx, block: &Block, name: &str) -> bool {
     struct V<'a, 'b> {
@@ -214,8 +218,8 @@ fn references_name(ctx: &RuleCtx, block: &Block, name: &str) -> bool {
 }
 
 /*
-remove_method_call, `obj:m(x)` becomes `obj.m(obj, x)`, only for a plain
-identifier receiver, anything else would be evaluated twice
+remove_method_call: `obj:m(x)` becomes `obj.m(obj, x)`. The rule applies
+only to a plain identifier receiver. Each other receiver would run twice.
 */
 pub fn remove_method_call(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     struct V<'a, 'b> {
@@ -246,7 +250,7 @@ pub fn remove_method_call(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
 
             match args {
                 CallArgs::Paren(list) => {
-                    // the `(` sits right after the method name
+                    // The `(` is directly after the method name.
                     let lparen = m.end;
 
                     if self.ctx.tok_text(lparen) != "(" {
@@ -263,7 +267,7 @@ pub fn remove_method_call(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
                     insert(after, &text, &mut staged);
                 }
 
-                // a parenless call has to grow parentheses to take the receiver
+                // A parenless call must gain parentheses to accept the receiver.
                 CallArgs::Str(s) => {
                     let (a, b) = self.ctx.bytes(*s);
                     let lit = &self.ctx.src[a as usize..b as usize];
@@ -355,7 +359,7 @@ mod tests {
     fn recursive_local_function_is_left_alone() {
         let src = "local function f(n) return f(n - 1) end\n";
         assert_eq!(run(src, convert_local_function_to_assign), src);
-        // a mention that is not a call still counts
+        // A mention that is not a call also counts.
         let src = "local function f() return f end\n";
         assert_eq!(run(src, convert_local_function_to_assign), src);
     }
@@ -376,12 +380,12 @@ mod tests {
 
     #[test]
     fn non_identifier_receivers_are_left_alone() {
-        // re-emitting `a.b` or a call result would change what runs
+        // A second copy of `a.b` or a call result would change the code that runs.
         let src = "a.b:m(x)\n";
         assert_eq!(run(src, remove_method_call), src);
         let src = "f():m(x)\n";
         assert_eq!(run(src, remove_method_call), src);
-        // a plain call has no receiver to move
+        // A plain call has no receiver to move.
         let src = "m(x)\n";
         assert_eq!(run(src, remove_method_call), src);
     }

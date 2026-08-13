@@ -1,4 +1,5 @@
-//! A worm front-end through the real pipeline, not through a unit seam
+//! These tests run a worm front-end through the real pipeline, not through a
+//! unit seam.
 
 use larvae::config::Config;
 use larvae::diag::Severity;
@@ -8,7 +9,7 @@ use std::path::Path;
 mod common;
 use common::*;
 
-/// A worm claiming `.mk`, turning `<Tag/>` into a call without moving any lines
+/// A worm that claims `.mk` and turns `<Tag/>` into a call. It moves no lines.
 fn markup_worm(root: &Path) {
     write(
         root,
@@ -84,7 +85,8 @@ fn a_claimed_file_is_compiled_then_rewritten_and_renamed() {
 
     assert!(!outcome.has_errors(), "{}", errors(&outcome));
 
-    // renamed before routing, so the DataModel instance is App and not App.mk
+    // larvae renames the file before routing, so the DataModel instance is App
+    // and not App.mk.
     let out = read(root, "dist/shared/App.luau");
 
     assert!(
@@ -95,7 +97,7 @@ fn a_claimed_file_is_compiled_then_rewritten_and_renamed() {
     assert!(!root.join("dist/shared/App.mk").exists());
 }
 
-/// The whole reason a front-end is a pre-pass rather than a run_order slot
+/// This is the reason a front-end is a pre-pass and not a run_order slot.
 #[test]
 fn markup_never_reaches_the_lexer() {
     let tmp = fixture();
@@ -103,7 +105,8 @@ fn markup_never_reaches_the_lexer() {
 
     markup_worm(root);
     with_worm(root);
-    // `<Frame/>` is not Luau, so anything below the pre-pass seeing it is the bug
+    // `<Frame/>` is not Luau. When a stage below the pre-pass sees it, that is
+    // the bug.
     write(
         root,
         "src/shared/App.mk",
@@ -135,7 +138,8 @@ fn line_numbers_survive_the_whole_pipeline() {
     );
 }
 
-/// Pruning has to know about the rename, or it deletes what the build just wrote
+/// The prune step must know about the rename, or it deletes the file that the
+/// build just wrote.
 #[test]
 fn the_output_is_not_pruned_as_stale() {
     let tmp = fixture();
@@ -148,7 +152,7 @@ fn the_output_is_not_pruned_as_stale() {
     build(root);
     assert!(root.join("dist/shared/App.luau").exists());
 
-    // and again, since a stale set usually shows itself on the second run
+    // The test builds again, because a stale set usually shows on the second run.
     build(root);
     assert!(root.join("dist/shared/App.luau").exists());
 }
@@ -232,7 +236,8 @@ fn two_worms_claiming_one_extension_is_refused_at_load() {
     assert!(format!("{err:#}").contains("both claim .mk"), "{err:#}");
 }
 
-/// A worm's rules are namespaced under it, so one cannot shadow a builtin
+/// A worm's rules live in the worm's namespace, so a rule cannot shadow a
+/// builtin.
 #[test]
 fn worm_rules_live_under_the_worm_and_are_checked_against_it() {
     let tmp = fixture();
@@ -258,7 +263,8 @@ fn worm_rules_live_under_the_worm_and_are_checked_against_it() {
     let config = Config::load_or_default(root).unwrap();
     assert!(pipeline::run(root, &config, true).is_ok());
 
-    // a rule the worm does not declare is named rather than ignored
+    // larvae reports the name of a rule that the worm does not declare, and
+    // does not ignore it.
     write(
         root,
         "larvae.toml",
@@ -271,7 +277,7 @@ fn worm_rules_live_under_the_worm_and_are_checked_against_it() {
     assert!(format!("{err:#}").contains("tidyy"), "{err:#}");
 }
 
-/// A name that is ours stays ours, even if a worm declares the same one
+/// A builtin name stays with larvae, even when a worm declares the same name.
 #[test]
 fn a_worm_rule_cannot_shadow_a_builtin() {
     let tmp = fixture();
@@ -293,14 +299,14 @@ fn a_worm_rule_cannot_shadow_a_builtin() {
         "[rules]\nconst_requires = true\n\n[worms]\nr = { path = \"worms/r\", rules = { const_requires = true } }\n",
     );
 
-    // both are legal and mean different things, which is the point of the split
+    // Both are legal and have different meanings. That is the purpose of the split.
     let config = Config::load_or_default(root).unwrap();
 
     assert!(config.rules.const_requires);
     assert!(pipeline::run(root, &config, true).is_ok());
 }
 
-/// A worm that removes dprint calls, the shape a real tidy up rule has
+/// A worm that removes dprint calls. A real cleanup rule has this shape.
 fn tidy_worm(root: &Path) {
     write(
         root,
@@ -362,14 +368,14 @@ fn a_worm_rule_runs_through_process() {
     assert!(out.contains("print(\"keep\")"), "rule over reached: {out}");
 }
 
-/// An off rule must cost nothing, not merely little
+/// A rule that is off must cost nothing, not only a small amount.
 #[test]
 fn a_rule_the_user_left_off_never_runs() {
     let tmp = fixture();
     let root = tmp.path();
 
     tidy_worm(root);
-    // no rules table, so strip_debug keeps its default of false
+    // There is no rules table, so strip_debug keeps its default of false.
     write(
         root,
         "larvae.toml",
@@ -409,7 +415,8 @@ fn a_worm_rule_preserves_line_count() {
     );
 }
 
-/// Every worker builds its own instance, so this exercises more than one
+/// Every worker builds its own instance, so this test exercises more than one
+/// instance.
 #[test]
 fn many_files_across_workers_all_get_the_rule() {
     let tmp = fixture();
@@ -440,7 +447,7 @@ fn many_files_across_workers_all_get_the_rule() {
     }
 }
 
-/// One worm, both roles, and the rules must see the front-end's output
+/// One worm holds both roles, and the rules must see the front-end's output.
 #[test]
 fn a_worm_can_hold_a_frontend_and_a_rule_at_once() {
     let tmp = fixture();
@@ -501,12 +508,12 @@ return {
 
     let out = read(root, "dist/shared/App.luau");
 
-    // the front-end ran, and the rule then saw its output rather than markup
+    // The front-end ran. The rule then saw the front-end's output, not the markup.
     assert!(out.contains("make(\"Frame\")"), "{out}");
     assert!(!out.contains("dprint"), "{out}");
 }
 
-/// A worm that rewrites string literals, so we can see what it was handed
+/// A worm that rewrites string literals, so the test can see the worm's input.
 fn spy_worm(root: &Path, run_order: &str) {
     write(
         root,
@@ -546,7 +553,7 @@ end } } }
     );
 }
 
-/// The default: a worm's rules read what larvae's rules produced
+/// This is the default: a worm's rules read the output of larvae's rules.
 #[test]
 fn a_worm_runs_after_larvae_by_default() {
     let tmp = fixture();
@@ -562,7 +569,8 @@ fn a_worm_runs_after_larvae_by_default() {
     );
 }
 
-/// And "before" genuinely reads the file as written, not our output
+/// The "before" order reads the file as the author wrote it, not larvae's
+/// output.
 #[test]
 fn a_worm_asking_to_go_first_sees_the_original() {
     let tmp = fixture();
@@ -584,7 +592,7 @@ fn a_user_run_order_beats_what_the_worm_declared() {
     let root = tmp.path();
 
     spy_worm(root, "run_order = \"before\"");
-    // the worm said before, the user says after, and the user wins
+    // The worm declared "before". The user sets "after". The user wins.
     write(
         root,
         "larvae.toml",
@@ -600,7 +608,7 @@ fn a_user_run_order_beats_what_the_worm_declared() {
     );
 }
 
-/// A worm resolving its own requires means we do not look at them at all
+/// When a worm resolves its own requires, larvae does not examine them at all.
 #[test]
 fn requires_worm_leaves_them_alone() {
     let tmp = fixture();
@@ -633,7 +641,8 @@ fn requires_worm_leaves_them_alone() {
     assert!(read(root, "dist/shared/own.luau").contains("@nope/unknown"));
 }
 
-/// The default is that we own them, so an unknown alias is still an error
+/// By default, larvae owns the requires, so an unknown alias is still an
+/// error.
 #[test]
 fn requires_larvae_still_validates() {
     let tmp = fixture();
@@ -663,7 +672,7 @@ fn requires_larvae_still_validates() {
     assert!(errors(&build(root)).contains("unknown alias @nope"));
 }
 
-/// A worm changing the line count is worth saying, not worth dropping the file
+/// When a worm changes the line count, larvae reports it and keeps the file.
 #[test]
 fn a_line_count_change_warns_but_keeps_the_output() {
     let tmp = fixture();
@@ -694,8 +703,9 @@ fn a_line_count_change_warns_but_keeps_the_output() {
 }
 
 /*
-Editing a worm has to invalidate what it produced. Stale output is worse than
-slow output, and a worm is a resolution input like a .luaurc or the project file.
+An edit to a worm must invalidate the worm's output. Stale output is worse
+than slow output. A worm is a resolution input, the same as a .luaurc or the
+project file.
 */
 #[test]
 fn editing_a_worm_invalidates_its_output() {
@@ -726,7 +736,8 @@ fn editing_a_worm_invalidates_its_output() {
     build(root);
     assert!(read(root, "dist/shared/t.luau").contains("ONE"));
 
-    // same source file, different worm, so the output has to move with it
+    // The source file is the same, and the worm is different, so the output
+    // must change with the worm.
     worm("s .. \"-- TWO\"");
     build(root);
 
@@ -735,7 +746,8 @@ fn editing_a_worm_invalidates_its_output() {
     assert!(out.contains("TWO"), "stale output after a worm edit: {out}");
 }
 
-/// The same for settings, since a worm reads them and they change what it emits
+/// The same applies to settings. A worm reads them, and they change what the
+/// worm emits.
 #[test]
 fn changing_a_worms_settings_invalidates_too() {
     let tmp = fixture();

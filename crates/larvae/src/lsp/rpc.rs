@@ -1,14 +1,15 @@
 /*!
-The wire: message framing, and turning a byte offset into a position.
+The wire: message framing, and the conversion of a byte offset to a position.
 
-LSP is JSON-RPC over a stream with `Content-Length` headers, which is small
-enough to write out. Doing so keeps an async runtime and a protocol crate out
-of the binary, and this is the whole of what they would have provided.
+LSP is JSON-RPC over a stream with `Content-Length` headers, and that is
+small enough to write here. This keeps an async runtime and a protocol crate
+out of the binary, and this module is the full set of what they would
+provide.
 
-Positions are the part that repays care. LSP counts a character as a UTF-16
-code unit by default, not a byte and not a `char`, so a line holding an emoji
-disagrees with all three. Getting it wrong puts every diagnostic on that line
-in the wrong place, and only for the people whose files have non-ASCII in them.
+Positions need care. LSP counts a character as a UTF-16 code unit by default,
+not a byte and not a `char`. So a line that holds an emoji differs in all
+three counts. An incorrect count puts every diagnostic on that line in the
+wrong place, and only for users whose files hold non-ASCII text.
 */
 
 use std::io::{BufRead, Write};
@@ -20,7 +21,7 @@ use serde_json::Value;
 /// One JSON-RPC message, request or notification
 #[derive(Debug, Deserialize)]
 pub struct Message {
-    /// Absent on a notification, which expects no reply
+    /// Absent on a notification; a notification expects no reply
     pub id: Option<Value>,
     pub method: String,
     #[serde(default)]
@@ -53,8 +54,8 @@ struct Notification<'a> {
 /*
 Read one message, or `None` when the stream ends.
 
-The client closing its end is how an editor shutting down looks from here, so
-it is an ordinary end rather than an error.
+An editor that shuts down closes its end of the stream. So a closed stream
+is a normal end and not an error.
 */
 pub fn read(input: &mut impl BufRead) -> Result<Option<Message>> {
     let mut length: Option<usize> = None;
@@ -95,9 +96,9 @@ pub fn read(input: &mut impl BufRead) -> Result<Option<Message>> {
         .context("reading a message body")?;
 
     /*
-    A message we cannot parse is skipped rather than fatal. An editor sending
-    something unexpected should not take the server down mid session, and the
-    next message is very likely fine.
+    The server skips a message that it cannot parse, and does not stop. An
+    editor that sends unexpected data must not stop the server in the middle
+    of a session, and the next message is very likely good.
     */
     Ok(serde_json::from_slice(&body).ok())
 }
@@ -121,7 +122,7 @@ pub fn respond_error(out: &mut impl Write, id: &Value, message: String) -> Resul
             jsonrpc: "2.0",
             id,
             result: None,
-            // -32603, internal error, which is what an unhandled failure is
+            // -32603 is the internal error code, and an unhandled failure is one.
             error: Some(ResponseError {
                 code: -32603,
                 message,
@@ -154,9 +155,9 @@ fn send(out: &mut impl Write, value: Value) -> Result<()> {
 /*
 Byte offsets to LSP positions, for one document.
 
-Built once per analysis rather than per diagnostic, because the alternative is
-scanning from the start of the file for every span and a file with a hundred
-findings would scan it a hundred times.
+The table builds once for each analysis and not once for each diagnostic.
+The alternative is a scan from the start of the file for every span, and a
+file with a hundred findings would scan a hundred times.
 */
 pub struct Lines {
     /// Byte offset where each line starts
@@ -182,7 +183,7 @@ impl Lines {
         let line = self.starts.partition_point(|&s| s <= byte) - 1;
         let start = self.starts[line] as usize;
 
-        // UTF-16 code units, which is what the protocol means by character
+        // UTF-16 code units, the meaning of character in the protocol
         let character = src
             .get(start..byte as usize)
             .unwrap_or("")
@@ -203,7 +204,7 @@ impl Lines {
         })
     }
 
-    /// A range covering the whole document, for a full document edit
+    /// A range that covers the whole document, for a full document edit
     pub fn whole(&self, src: &str) -> Value {
         self.range(src, (0, src.len() as u32))
     }
@@ -252,7 +253,7 @@ mod tests {
         assert!(read(&mut input).unwrap().is_none());
     }
 
-    /// An editor shutting down closes the stream, which is not an error
+    /// An editor that shuts down closes the stream; that is not an error
     #[test]
     fn an_empty_stream_ends_cleanly() {
         assert!(read(&mut BufReader::new(&b""[..])).unwrap().is_none());
@@ -271,7 +272,7 @@ mod tests {
         assert_eq!(read(&mut input).unwrap().unwrap().method, "x");
     }
 
-    /// One bad message should not end the session
+    /// One bad message must not end the session
     #[test]
     fn an_unparsable_body_is_skipped_rather_than_fatal() {
         let text = format!(
@@ -320,8 +321,8 @@ mod tests {
     }
 
     /*
-    The one that matters. An emoji is four bytes, one char and two UTF-16 code
-    units, and only the last is what LSP means.
+    The important test. An emoji is four bytes, one char, and two UTF-16 code
+    units. LSP means only the last count.
     */
     #[test]
     fn a_character_is_a_utf16_code_unit() {

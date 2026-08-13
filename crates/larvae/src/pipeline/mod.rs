@@ -1,4 +1,4 @@
-//! The pipeline, discover, then parallel lex/scan/resolve/splice, then atomic writes
+//! The pipeline: discovery, then parallel lex/scan/resolve/splice, then atomic writes
 
 mod file;
 mod frontend;
@@ -31,12 +31,12 @@ pub struct Stats {
     pub files_pruned: usize,
     pub requires_rewritten: usize,
     pub requires_dynamic: usize,
-    /// Every rule that changed something anywhere in the project
+    /// Every rule that changed a file in the project
     pub rules_applied: BTreeSet<Rule>,
 }
 
 impl Stats {
-    /// How many rules in one family actually did something
+    /// The count of rules in one family that changed a file
     pub fn applied(&self, family: Family) -> usize {
         self.rules_applied
             .iter()
@@ -65,12 +65,12 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
         .with_context(|| format!("cannot resolve project root {}", root.display()))?;
     let roots = roots::resolve(&root, config)?;
     let output = root.join(&config.process.output);
-    // the first root still stands in wherever one path is all that fits
+    // The first root serves in each place where only one path fits.
     let input = roots[0].dir.clone();
 
     let mut diags: Vec<Diag> = Vec::new();
 
-    // the project file gives us auto mounts and the derived build project
+    // The project file gives larvae the auto mounts and the derived build project.
     let project = match rojo::find_project(&root, config.rojo.project.as_deref()) {
         Some(path) => match rojo::load(&path) {
             Ok(p) => Some(p),
@@ -86,25 +86,26 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
     };
 
     /*
-    Worms load before anything is discovered, because a front-end decides which
-    files are even transformable. Loading also validates the whole set: names
-    against their keys, and no two worms claiming one extension.
+    Worms load before discovery, because a front-end decides which files
+    larvae can transform. The load also validates the full set: names against
+    their keys, and no two worms with a claim on one extension.
     */
     let worms = crate::worm::registry::Registry::for_project(&root, config)?;
 
     let claimed = worms.claimed_extensions();
 
     /*
-    Instances for the parallel loop. mlua::Lua is !Send, so a worm cannot be
-    moved into a worker at all, let alone shared. The pool holds artifacts and
-    settings, which are Sync, and each worker builds its own on first use.
+    Instances for the parallel loop. mlua::Lua is !Send, so a move of a worm
+    into a worker is not possible, and shared use is also not possible. The
+    pool holds artifacts and settings, which are Sync. Each worker builds its
+    own instance on first use.
     */
     let pool = crate::worm::pool::Pool::new(worms.specs(), config.process.run_order);
 
     /*
-    Realm validation is the thing nothing else in the ecosystem has, so a worm
-    switching it off for its files is worth saying out loud once rather than
-    letting it disappear quietly.
+    Realm validation is a feature that no other tool in the ecosystem has. So
+    larvae reports once when a worm switches it off for its files, and the
+    feature does not disappear without a message.
     */
     for spec in pool.specs() {
         if spec.requires == crate::worm::RequireOwner::Worm {
@@ -122,7 +123,7 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
         }
     }
 
-    // the registry validated everything, the pool is what the loop uses
+    // The registry validated the full set; the loop uses the pool.
     drop(worms);
 
     let skip = setup::skip_dirs(&root, config);
@@ -139,7 +140,7 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
         &pool,
     );
 
-    // caching only applies when writing, check must re-report every diagnostic
+    // The cache applies only to writes; check must report every diagnostic again.
     let mut cache = Cache::load(
         &root.join(&config.process.cache_dir),
         epoch,
@@ -171,9 +172,9 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
         };
 
         /*
-        A claimed file is renamed without asking its worm, because the rename
-        follows from the extension alone. That lets the cache be consulted
-        before the front-end runs, so a warm build calls no worm at all.
+        larvae renames a claimed file without a call to its worm, because the
+        rename follows from the extension alone. So larvae can consult the
+        cache before the front-end runs, and a warm build calls no worm.
         */
         let front = pool.frontend_for(path);
 
@@ -218,9 +219,9 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
         }
 
         /*
-        The front-end, now that we know this file is not already built. Its
-        output replaces the buffer, so every stage below reads ordinary Luau and
-        none of them learn a worm was involved.
+        The front-end runs now, because this file is not already built. Its
+        output replaces the buffer. So every stage below reads plain Luau, and
+        no stage learns that a worm ran.
         */
         if let Some(index) = front {
             let mut local = Vec::new();
@@ -261,7 +262,7 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
         }
 
         drop(s);
-        // only a clean file earns a cache entry, errors must resurface
+        // Only a clean file gets a cache entry; errors must appear again.
         if rewritten.is_some()
             && !local_diags
                 .iter()
@@ -306,9 +307,9 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
         }
 
         /*
-        Keyed by where the file lands, so a claimed one has to be renamed here
-        too. Without it every cached entry for a worm's output is evicted and
-        the next build recompiles everything.
+        The key is the destination of the file, so a claimed file must get
+        the same rename here. Without it, the cache evicts every entry for
+        the output of a worm, and the next build compiles every file again.
         */
         for path in &to_process {
             if let Some(rel) = roots::dest_of(&roots, path) {
@@ -331,10 +332,11 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
             ));
         }
 
-        // --- Mirror deletions, stale output is worse than slow output --------
+        // --- Mirror deletions; stale output is worse than slow output --------
         /*
-        A claimed file lands under its renamed dest, so the set has to agree or
-        pruning deletes what the build just wrote as though it were stale.
+        A claimed file lands under its renamed destination, so the set must
+        agree. Otherwise the prune deletes the new output of the build as
+        stale.
         */
         let produced: HashSet<PathBuf> = to_process
             .iter()
@@ -352,7 +354,7 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
         stats.files_pruned = prune_output(&output, &input, &root, &produced, &mut diags);
     }
 
-    // --- Derived build project (only when writing and a place project exists)
+    // --- The derived build project (only when the run writes and a project exists)
     let mut build_project = None;
 
     if write && let Some(p) = &project {

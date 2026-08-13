@@ -1,27 +1,28 @@
-//! All theming, the brand color lives only here
+//! All the theming. The brand color is defined only here.
 
 use std::io::IsTerminal;
 
-/// larvae's brand color, #10E694
+/// The brand color of larvae, #10E694
 pub const BRAND: (u8, u8, u8) = (0x10, 0xE6, 0x94);
 
-/// ANSI truecolor foreground escape for the brand color
+/// The ANSI truecolor foreground escape for the brand color
 pub const BRAND_FG: &str = "\x1b[38;2;16;230;148m";
 pub const RESET: &str = "\x1b[0m";
 pub const BOLD: &str = "\x1b[1m";
 
-/// Dark end of the gradient (#0F9E6D), error accents use this instead of an off theme red
+/// The dark end of the gradient, #0F9E6D. Error accents use this color
+/// instead of a red that does not match the theme.
 pub const DEEP_FG: &str = "\x1b[38;2;15;158;109m";
-/// Darker steps of the same green for a diagnostic's secondary lines
+/// The darker steps of the same green, for the secondary lines of a diagnostic
 pub const DARK_FG: &str = "\x1b[38;2;11;118;81m";
 pub const DARKER_FG: &str = "\x1b[38;2;8;89;61m";
 
-/// ANSI truecolor foreground escape for an RGB triple
+/// The ANSI truecolor foreground escape for an RGB triple
 pub fn fg((r, g, b): (u8, u8, u8)) -> String {
     format!("\x1b[38;2;{r};{g};{b}m")
 }
 
-/// Paint text in the brand color (no-op when `color` is false)
+/// Paint the text in the brand color. This does nothing when `color` is false.
 pub fn accent(text: &str, color: bool) -> String {
     if color {
         format!("{BRAND_FG}{text}{RESET}")
@@ -30,17 +31,17 @@ pub fn accent(text: &str, color: bool) -> String {
     }
 }
 
-/// Color output only for a real terminal, and respect NO_COLOR
+/// Use color only for a real terminal, and obey NO_COLOR
 pub fn want_color() -> bool {
     std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal()
 }
 
-/// Diagnostics and summaries go to stderr, gate their color separately
+/// Diagnostics and summaries go to stderr, so larvae gates their color separately
 pub fn want_color_stderr() -> bool {
     std::env::var_os("NO_COLOR").is_none() && std::io::stderr().is_terminal()
 }
 
-/// clap help styling in the brand color
+/// The clap help styling, in the brand color
 pub fn help_styles() -> clap::builder::Styles {
     use clap::builder::styling::{Color, RgbColor, Style, Styles};
     let brand = Color::Rgb(RgbColor(BRAND.0, BRAND.1, BRAND.2));
@@ -51,7 +52,7 @@ pub fn help_styles() -> clap::builder::Styles {
         .placeholder(Style::new().dimmed())
 }
 
-/// Bold only styling for text something else paints
+/// The bold only styling, for text that an other function paints
 pub fn bold_styles() -> clap::builder::Styles {
     use clap::builder::styling::{Style, Styles};
     Styles::styled()
@@ -60,7 +61,8 @@ pub fn bold_styles() -> clap::builder::Styles {
         .literal(Style::new().bold())
 }
 
-/// Terminal width, explicit COLUMNS wins, then the tty, then a sane default
+/// The terminal width. An explicit COLUMNS wins, then the tty, then a
+/// reasonable default.
 pub fn term_width() -> usize {
     if let Some(cols) = std::env::var("COLUMNS").ok().and_then(|c| c.parse().ok()) {
         return cols;
@@ -71,19 +73,20 @@ pub fn term_width() -> usize {
         .unwrap_or(100)
 }
 
-/// Path shown relative to the cwd when possible, keeps output short
+/// The path relative to the working directory when that is possible. A
+/// relative path keeps the output short.
 /*
-A path shown relative to where the command was run.
+A path shown relative to the directory where the user ran the command.
 
-The working directory is resolved once for the process rather than per call.
-It used to be two syscalls every time, plus a third to canonicalise the path
-being shown, and a lint run over a large project calls this once per
-diagnostic. Measured on a corpus producing 3952 diagnostics, that was most of
-the run: 68ms to 38ms.
+Larvae resolves the working directory one time for the process, and not once
+per call. The earlier code made two syscalls every time, plus a third syscall
+to canonicalize the path it showed. A lint run over a large project calls this
+function one time per diagnostic. Measured on a corpus that produced 3952
+diagnostics, this cost was most of the run: 68ms to 38ms.
 
-Canonicalising the path is still worth doing when the plain form does not
-match, since that is how a path reached through a symlink or with `..` in it
-gets shortened, but it now happens only when it can change the answer.
+Larvae still canonicalizes the path when the plain form does not match. A
+canonical path is how a path through a symlink, or a path with `..` in it,
+becomes short. This step now runs only when it can change the answer.
 */
 pub fn rel(path: &std::path::Path) -> String {
     static CWD: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
@@ -117,7 +120,7 @@ pub fn rel(path: &std::path::Path) -> String {
     path.display().to_string()
 }
 
-/// Visible width of a line, ignoring ANSI escape sequences
+/// The visible width of a line. The count ignores ANSI escape sequences.
 pub fn visible_width(line: &str) -> usize {
     let mut width = 0;
     let mut chars = line.chars();
@@ -137,13 +140,13 @@ pub fn visible_width(line: &str) -> usize {
     width
 }
 
-/// `✓ message` in the brand color, to stderr
+/// Print `✓ message` in the brand color, to stderr
 pub fn print_success(message: &str) {
     let color = want_color_stderr();
     eprintln!("{} {message}", accent("✓", color));
 }
 
-/// `✗ message` with the dark blue error accent, to stderr
+/// Print `✗ message` with the dark error accent, to stderr
 pub fn print_error(message: &str) {
     if want_color_stderr() {
         eprintln!("{DEEP_FG}{BOLD}✗{RESET} {message}");
@@ -152,7 +155,7 @@ pub fn print_error(message: &str) {
     }
 }
 
-/// Themed y/N prompt on stderr, empty input or no tty picks the default
+/// A themed y/N prompt on stderr. Empty input, or no tty, selects the default.
 pub fn confirm(question: &str, default: bool) -> bool {
     use std::io::Write;
 

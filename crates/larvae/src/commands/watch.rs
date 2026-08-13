@@ -1,9 +1,9 @@
 /*!
-Watch mode, reprocess on change
+Watch mode: the watcher processes the tree again on each change.
 
-Errors never take the output down, a file that fails to lex keeps its last
-good output on disk so a half typed save does not cascade require failures
-through a live rojo session, the cache makes each rebuild cheap
+Errors never remove the output. A file that fails to lex keeps its last good
+output on disk. So a save of incomplete code does not spread require failures
+through a live rojo session. The cache makes each rebuild cheap.
 */
 
 use std::path::{Path, PathBuf};
@@ -21,7 +21,7 @@ use crate::pipeline;
 use crate::rules::Family;
 use crate::ui;
 
-/// Coalesce bursts of editor writes into one rebuild
+/// Merge a burst of editor writes into one rebuild
 const DEBOUNCE: Duration = Duration::from_millis(150);
 
 pub fn run(root: &Path, config: &Config, config_path: Option<PathBuf>) -> Result<ExitCode> {
@@ -31,14 +31,14 @@ pub fn run(root: &Path, config: &Config, config_path: Option<PathBuf>) -> Result
     let (tx, rx) = mpsc::channel();
     let mut debouncer = new_debouncer(DEBOUNCE, None, tx).context("could not start the watcher")?;
 
-    // every input root, a project can have more than one
+    // Watch every input root; a project can have more than one.
     for dir in config.process.inputs() {
         let input = root.join(&dir);
         debouncer
             .watch(&input, RecursiveMode::Recursive)
             .with_context(|| format!("cannot watch {}", ui::rel(&input)))?;
     }
-    // the project file and .luaurc files change resolution for every file
+    // The project file and .luaurc files change resolution for every file.
     for extra in watched_roots(root, config, config_path.as_deref()) {
         let _ = debouncer.watch(&extra, RecursiveMode::NonRecursive);
     }
@@ -62,8 +62,8 @@ pub fn run(root: &Path, config: &Config, config_path: Option<PathBuf>) -> Result
     for events in rx {
         let Ok(events) = events else { continue };
         let relevant = events.iter().any(|e| {
-            // reading the sources is not a change, without this filter our own
-            // reads would wake the watcher and it would spin forever
+            // A read of the sources is not a change. Without this filter, the reads
+            // from larvae would wake the watcher, and the watcher would loop forever.
             let interesting = matches!(
                 e.kind,
                 EventKind::Create(_)
@@ -137,7 +137,7 @@ fn build_once(root: &Path, config: &Config, color: bool) {
     }
 }
 
-/// Files outside the input tree that still invalidate a build
+/// Files outside the input tree that also invalidate a build
 fn watched_roots(root: &Path, config: &Config, config_path: Option<&Path>) -> Vec<PathBuf> {
     let mut out = Vec::new();
 

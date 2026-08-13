@@ -1,15 +1,15 @@
-//! The [process] table, where files come from and how output is written
+//! The [process] table names the source of the files and controls the output.
 
 use std::path::PathBuf;
 
 use serde::Deserialize;
 
 /*
-Where source comes from, one directory or several
+The source location: one directory or several
 
-A single root flattens into the output the way it always has. Several keep
-their own directories so two roots cannot collide, which they would the
-moment both held an init.luau
+A single root flattens into the output, as before. Several roots each keep
+their own directory, so two roots cannot collide. A collision would occur
+when both roots hold an init.luau.
 */
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
@@ -19,7 +19,7 @@ pub enum Input {
 }
 
 impl ProcessConfig {
-    /// Configured roots, always as a list
+    /// The configured roots, always as a list
     pub fn inputs(&self) -> Vec<PathBuf> {
         match &self.input {
             Input::One(p) => vec![p.clone()],
@@ -51,20 +51,22 @@ pub struct ProcessConfig {
     pub quotes: QuoteStyle,
 
     /*
-    Where our own rules sit in the sequence. A worm runs after this unless it
-    says otherwise, so an author writing "before" gets a smaller number and
-    "after" a larger one without ever needing to know what this is.
+    The position of the larvae rules in the sequence. A worm runs after this
+    value unless the worm declares a different order. An author who wants
+    "before" uses a smaller number, and "after" a larger one, and does not
+    have to know this value.
     */
     #[serde(default = "default_run_order")]
     pub run_order: i64,
 
     /*
-    Whether a flag comment survives into the output.
+    If a flag comment stays in the output.
 
-    On by default because these are instructions to larvae, and shipping them
-    is shipping the scaffolding. Set it false when the output is read by people
-    rather than by a game, ex: a library published as source, where a stripped
-    suppression would just turn back into a warning for whoever reads it next.
+    The default is on, because flag comments are instructions to larvae, and
+    output that keeps them keeps the scaffolding. Set it to false when people
+    read the output and not a game, for example a library published as
+    source. There a removed suppression would become a warning again for the
+    next reader.
     */
     #[serde(default = "default_true")]
     pub strip_flags: bool,
@@ -80,7 +82,7 @@ pub struct ProcessConfig {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum QuoteStyle {
-    /// Keep whatever the source used
+    /// Keep the quote character that the source used
     #[default]
     Preserve,
     Double,
@@ -88,7 +90,7 @@ pub enum QuoteStyle {
 }
 
 impl QuoteStyle {
-    /// The quote char to emit, preserve defaults to double for generated text
+    /// The quote character to emit; preserve defaults to double for generated text
     pub fn char(self) -> char {
         match self {
             QuoteStyle::Single => '\'',

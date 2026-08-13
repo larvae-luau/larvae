@@ -1,10 +1,11 @@
 /*!
-What a worm sees of one file, and what it hands back.
+The view a worm has of one file, and the edits the worm returns.
 
-Owned and `'static`, because both guest forms need to reach it without holding
-a reference into our tree. The epoch is the safety net: a handle carries the
-epoch it was minted under, and using it once we have moved on to another file
-fails loudly rather than silently reading the wrong file's nodes.
+The context is owned and `'static`, because both guest forms must reach it
+without a reference into the syntax tree. The epoch protects against stale
+handles. A handle carries the epoch of the file it was created for. When
+larvae moves to another file, an old handle fails with an error. Thus a stale
+handle cannot read the nodes of the wrong file.
 */
 
 use std::sync::Mutex;
@@ -14,31 +15,32 @@ use crate::rules::edits::Edit;
 
 use super::nodes::NodeTable;
 
-/// Monotonic across the process, so no two files ever share an epoch
+/// The counter only increases across the process, so no two files share an epoch
 static NEXT_EPOCH: AtomicU64 = AtomicU64::new(1);
 
 /// One file, as a worm sees it
 pub struct FileCtx {
-    /// Identifies this file's traversal, checked by every handle
+    /// The epoch identifies this file's traversal. Every handle check compares against it.
     pub epoch: u64,
     /// The flattened tree
     pub table: NodeTable,
-    /// The bytes the spans index into
+    /// The source bytes that the node spans index into
     pub src: String,
-    /// Path as the user would recognise it, for diagnostics
+    /// The path in the form the user knows, for diagnostics
     pub path: String,
-    /// This rule's resolved value, as the worm declared and the user overrode
+    /// The resolved value of this rule, from the worm's declaration and the user's override
     pub value: Option<toml::Value>,
     /*
-    Deferred, exactly like the builtin rules. A worm never sees another worm's
-    output and never mutates mid-walk, so every edit is measured against the
-    original bytes and lands in one sorted splice at the end.
+    Larvae defers these edits, in the same way as for the builtin rules. A worm
+    does not see the output of another worm and does not mutate during a walk.
+    Thus every edit refers to the original bytes, and larvae applies all edits
+    in one sorted splice at the end.
     */
     edits: Mutex<Vec<Edit>>,
 }
 
 impl FileCtx {
-    /// Take a fresh epoch and flatten nothing, the table is built by the caller
+    /// Take a new epoch. The caller builds the table and supplies it.
     pub fn new(table: NodeTable, src: String, path: String) -> Self {
         Self {
             epoch: NEXT_EPOCH.fetch_add(1, Ordering::Relaxed),
@@ -50,14 +52,14 @@ impl FileCtx {
         }
     }
 
-    /// Attach the value the rule currently running was configured with
+    /// Attach the configured value of the rule that runs now
     pub fn with_value(mut self, value: Option<toml::Value>) -> Self {
         self.value = value;
 
         self
     }
 
-    /// Queue a replacement of `id`'s byte range
+    /// Queue a replacement for the byte range of `id`
     pub fn replace(&self, id: u32, text: String) -> Result<(), EditError> {
         let node = self.table.get(id).ok_or(EditError::NoSuchNode(id))?;
 
@@ -70,9 +72,9 @@ impl FileCtx {
     }
 
     /*
-    Deleting leaves the newlines behind, the same as everywhere else in the
-    tool. Retain lines only holds if every transform preserves line count, so a
-    worm gets that for free rather than having to remember it.
+    A removal keeps the newlines, the same as in the rest of the tool. The
+    retain lines guarantee holds only if every transform keeps the line count.
+    This function keeps the line count itself, so a worm does not have to.
     */
     pub fn remove(&self, id: u32) -> Result<(), EditError> {
         let node = self.table.get(id).ok_or(EditError::NoSuchNode(id))?;
@@ -88,12 +90,12 @@ impl FileCtx {
         Ok(())
     }
 
-    /// Everything the worm queued, in the order it queued it
+    /// Return every edit the worm queued, in the order the worm queued them
     pub fn take_edits(&self) -> Vec<Edit> {
         std::mem::take(&mut self.edits.lock().expect("edits mutex"))
     }
 
-    /// Guard an accessor against a handle minted for a different file
+    /// Refuse a handle that was created for a different file
     pub fn check(&self, epoch: u64) -> Result<(), EditError> {
         if epoch == self.epoch {
             Ok(())
@@ -103,12 +105,12 @@ impl FileCtx {
     }
 }
 
-/// Why a worm's request could not be honoured
+/// The reason larvae refused a request from a worm
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditError {
-    /// A handle outlived the file it was minted for
+    /// The handle refers to a file that is no longer current
     StaleHandle,
-    /// An id that was never in this file's table
+    /// The id is not in the table of this file
     NoSuchNode(u32),
 }
 
@@ -191,7 +193,7 @@ mod tests {
         assert_eq!(c.take_edits(), [(10, 11, "2".to_owned())]);
     }
 
-    /// Deleting must not change the line count, or retain lines breaks downstream
+    /// A removal must not change the line count, because retain lines depends on it
     #[test]
     fn remove_leaves_the_newlines_behind() {
         let src = "local x = function()\n  return 1\nend\n";

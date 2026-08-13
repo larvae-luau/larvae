@@ -1,4 +1,4 @@
-//! Turning a resolved module into the configured output form
+//! Convert a resolved module into the configured output form.
 
 use std::path::Path;
 
@@ -123,7 +123,7 @@ impl<'a> Resolver<'a> {
             return Some(format!("@self/{tail}"));
         }
 
-        // relative within the same mount, absolute @game otherwise, Starter targets must be relative
+        // Relative within the same mount, absolute @game otherwise; Starter targets must be relative.
         let same_mount = req_dm.mount == target_dm.mount;
         let base = &req_dm.segments[..req_dm.segments.len() - 1];
 
@@ -172,8 +172,9 @@ impl<'a> Resolver<'a> {
         let (req_dm, target_dm) = self.check_dm(ctx, spec, node, src, offset, diags)?;
 
         /*
-        script relative chains survive Starter cloning, mandatory there and
-        preferred in the same mount, everything else goes absolute
+        Script relative chains survive Starter cloning. They are mandatory
+        there and preferred in the same mount. All other cases become
+        absolute.
         */
         let same_mount = req_dm.mount == target_dm.mount;
 
@@ -212,8 +213,9 @@ impl<'a> Resolver<'a> {
 // --- instance expression building --------------------------------------------
 
 /*
-Absolute instance path from the root, property style uses plain dots,
-method styles use GetService so service renames don't break them
+The absolute instance path from the root. The property style uses plain
+dots. The method styles use GetService, so a service rename does not break
+them.
 */
 pub(super) fn absolute_instance(style: IndexingStyle, quote: char, segments: &[String]) -> String {
     let mut expr = String::from("game");
@@ -257,7 +259,7 @@ fn push_downs(expr: &mut String, style: IndexingStyle, quote: char, segments: &[
     }
 }
 
-/// Valid Luau identifier that isn't a keyword (usable after a dot)
+/// A valid Luau identifier that is not a keyword (usable after a dot)
 pub(super) fn is_luau_ident(name: &str) -> bool {
     const KEYWORDS: [&str; 21] = [
         "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in",
@@ -273,7 +275,7 @@ pub(super) fn is_luau_ident(name: &str) -> bool {
         && !KEYWORDS.contains(&name)
 }
 
-/// A quoted Luau string literal using the chosen quote char
+/// A quoted Luau string literal with the chosen quote character
 pub fn lua_quote(name: &str, quote: char) -> String {
     let escaped = name
         .replace('\\', "\\\\")

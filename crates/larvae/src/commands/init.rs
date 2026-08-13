@@ -1,4 +1,4 @@
-//! `larvae init`, scaffold a starter larvae.toml
+//! `larvae init` writes a starter larvae.toml.
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -26,8 +26,8 @@ pub fn run(root: &Path) -> Result<ExitCode> {
 
     /*
     No schema line here. `larvae self code` decides how a project gets editor
-    support, and prefers wiring Even Better TOML in .vscode/settings.json to
-    putting a URL at the top of somebody's config.
+    support. That command prefers an Even Better TOML entry in
+    .vscode/settings.json to a URL at the top of the config of a user.
     */
     let mut template = format!(
         "# larvae configuration, run `larvae self code` for editor completion.\n\
@@ -67,21 +67,22 @@ pub fn run(root: &Path) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// The formatter and linter configs another tool may have left, read as they are
+/// The formatter and linter configs that another tool can leave; larvae reads them unchanged
 const STYLUA: [&str; 2] = ["stylua.toml", ".stylua.toml"];
 const SELENE: [&str; 1] = ["selene.toml"];
 
 /*
-The formatter's defaults, spelled out rather than left implicit.
+The defaults of the formatter, written out and not implicit.
 
-Spelled out because the config is also where somebody finds out an option
-exists: nobody goes looking for `quote_style` in a file that never mentions it.
-Only the handful people actually reach for, since a wall of defaults is a wall
-nobody reads. The rest are in the schema, which `larvae self code` wires up.
+The template writes them out because the config shows a user which options
+exist. No user searches for `quote_style` in a file that does not name it.
+The template writes only the options that users change often, because no user
+reads a long list of defaults. The schema holds the rest, and `larvae self
+code` connects the schema.
 
-Nothing is written when the project already has a stylua.toml. These keys layer
-over that file, so writing the defaults here would quietly overrule settings the
-project already made.
+The function writes nothing when the project has a stylua.toml. These keys
+layer over that file. So a write of the defaults here would override settings
+that the project made.
 */
 fn fmt_section(root: &Path) -> String {
     match existing(root, &STYLUA) {
@@ -99,7 +100,7 @@ fn fmt_section(root: &Path) -> String {
     }
 }
 
-/// The same for the linter, and for the same reasons
+/// The same behavior for the linter, for the same reasons
 fn lint_section(root: &Path) -> String {
     match existing(root, &SELENE) {
         Some(name) => format!(
@@ -117,12 +118,12 @@ fn lint_section(root: &Path) -> String {
     }
 }
 
-/// The first of these files the project has, if any
+/// The first of these files that the project has, if the project has one
 fn existing<'a>(root: &Path, names: &[&'a str]) -> Option<&'a str> {
     names.iter().copied().find(|name| root.join(name).exists())
 }
 
-/// Another tool's config being picked up is worth saying out loud
+/// Report when larvae uses the config of another tool
 fn report_existing(root: &Path) {
     for name in STYLUA.iter().chain(SELENE.iter()) {
         if root.join(name).exists() {
@@ -131,7 +132,7 @@ fn report_existing(root: &Path) {
     }
 }
 
-/// Say what was picked up, so nobody has to diff the file to find out
+/// Report the detected data, so the user does not have to diff the file
 fn report(found: &crate::commands::detect::Detected) {
     for (name, value) in &found.aliases {
         eprintln!("  found a package directory, added @{name} = {value}");
@@ -152,7 +153,7 @@ fn report(found: &crate::commands::detect::Detected) {
     }
 }
 
-/// Config paths are written with forward slashes on every platform
+/// The template writes config paths with forward slashes on every platform
 fn slashed(path: &Path) -> String {
     path.components()
         .filter_map(|c| c.as_os_str().to_str())
@@ -160,10 +161,10 @@ fn slashed(path: &Path) -> String {
         .join("/")
 }
 
-/// Entries larvae's outputs need ignored
+/// The entries that git must ignore for the outputs of larvae
 const IGNORE_ENTRIES: [&str; 2] = [".larvae/", "dist/"];
 
-/// Keep the output dirs ignored, append to an existing .gitignore or offer to create one
+/// Keep the output directories ignored: append to an existing .gitignore, or offer to create one
 fn ensure_gitignore(root: &Path) -> Result<()> {
     let path = root.join(".gitignore");
 
@@ -202,7 +203,7 @@ fn ensure_gitignore(root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// True when the content already covers entry, slashes optional
+/// True when the content covers the entry; slashes are optional
 fn ignores(content: &str, entry: &str) -> bool {
     let want = entry.trim_start_matches('/').trim_end_matches('/');
     content
@@ -214,8 +215,8 @@ fn ignores(content: &str, entry: &str) -> bool {
 mod tests {
     use super::*;
 
-    /// What init writes has to be what larvae already does, or the first run
-    /// after `larvae init` formats differently than the one before it
+    /// The defaults that init writes must equal the defaults of larvae. If not,
+    /// the first run after `larvae init` formats differently than the run before it.
     #[test]
     fn the_written_defaults_are_the_defaults() {
         let dir = tempfile::tempdir().unwrap();
@@ -239,8 +240,8 @@ mod tests {
         assert_eq!(value(&lint), value(&crate::lint::LintConfig::default()));
     }
 
-    /// A project that already formats with stylua must not have its settings
-    /// overruled by a file it just asked us to write
+    /// A project that formats with stylua keeps its settings. The file that
+    /// init writes must not override them.
     #[test]
     fn another_tools_config_is_left_in_charge() {
         let dir = tempfile::tempdir().unwrap();

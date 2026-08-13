@@ -1,15 +1,16 @@
 /*!
 darklua parity rules
 
-Every rule here matches a darklua rule name and its documented behavior, so
-a ported config does what it did before. Implementations go through the
-shared engine, walk the tree, push byte edits, keep newline counts when
-deleting multiline spans
+Each rule here matches a darklua rule name and its documented behavior.
+Thus a ported config does the same work as before. The implementations go
+through the shared engine. They walk the tree, push byte edits, and keep
+newline counts when they delete multiline spans.
 
 A rule that cannot prove a transform safe from the tree alone skips that
-instance in silence, conservative beats wrong, and rules never see each
-other's output so anything darklua reaches by chaining is done here in one
-pass instead
+instance without a report. A conservative result is better than a wrong
+result. The rules never see the output of each other. For this reason,
+each result that darklua reaches through a chain of rules happens here in
+one pass.
 */
 
 mod assign;
@@ -30,7 +31,7 @@ use crate::rules::edits::Edits;
 use crate::rules::engine::RuleCtx;
 use std::path::Path;
 
-/// True when any rule in this module is enabled, gates the parse
+/// True when one or more rules in this module are enabled. This gates the parse.
 pub fn wants(cfg: &RulesConfig) -> bool {
     cfg.remove_method_definition
         || cfg.remove_compound_assignment
@@ -67,7 +68,7 @@ pub fn wants(cfg: &RulesConfig) -> bool {
             .is_some_and(|r| r.enabled())
 }
 
-/// Run every enabled rule, push edits and diagnostics
+/// Run each enabled rule. Push edits and diagnostics.
 pub fn apply(
     cfg: &RulesConfig,
     ctx: &RuleCtx,
@@ -77,8 +78,9 @@ pub fn apply(
 ) {
     /*
     convert_function_to_assignment already rewrites a method definition
-    head and inserts the self parameter, letting remove_method_definition
-    add a second one would emit `self, self`, so the broader rule wins
+    head and inserts the self parameter. If remove_method_definition also
+    added one, the output would hold `self, self`. For this reason, the
+    broader rule wins.
     */
     if cfg.remove_method_definition && !cfg.convert_function_to_assignment {
         edits.run("remove_method_definition", |e| {
@@ -242,8 +244,9 @@ pub fn apply(
 #[cfg(test)]
 pub(crate) mod testing {
     /*
-    Rule tests all want the same thing, parse a snippet, run one rule, splice
-    the edits the way the pipeline does, compare the text
+    Each rule test needs the same steps. Parse a snippet, run one rule,
+    splice the edits in the same way as the pipeline, and compare the
+    text.
     */
     use crate::rules::edits::{Edit, Edits, splice};
     use crate::rules::engine::RuleCtx;
@@ -271,7 +274,7 @@ pub(crate) mod testing {
         splice(src, &edits, &mut Vec::new())
     }
 
-    /// Every rule must keep the line count stable for retain-lines output
+    /// Each rule must keep the line count stable for retain-lines output.
     pub fn assert_lines_kept(before: &str, after: &str) {
         assert_eq!(
             before.bytes().filter(|&b| b == b'\n').count(),

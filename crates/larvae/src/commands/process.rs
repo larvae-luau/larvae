@@ -1,4 +1,4 @@
-//! `larvae process`, rewrite requires into the output directory
+//! `larvae process` rewrites requires into the output directory.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -72,8 +72,8 @@ pub(crate) fn report(outcome: &Outcome, wrote: bool) -> Result<ExitCode> {
     );
 
     /*
-    Only the families that did something get a line, a project running no
-    rules sees the same one line summary it always did
+    Only the families with applied rules get a line. A project that runs no
+    rules sees the same one line summary as before.
     */
     for (family, label) in [
         (Family::Native, "native rules applied"),

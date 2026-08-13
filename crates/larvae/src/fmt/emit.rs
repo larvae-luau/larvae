@@ -1,17 +1,17 @@
 /*!
-The tree, turned into a layout document.
+The emitter turns the tree into a layout document.
 
-This half knows Luau and nothing about widths. Every decision about where a line
-could break is expressed as a group, and `doc::render` decides which of them
-actually do. Splitting it this way is why a nested call can stay on one line
-inside a call that broke, which is the thing hand rolled formatters get wrong.
+This module knows Luau and knows nothing about widths. The emitter expresses
+each possible line break as a group. `doc::render` decides which groups break.
+This split lets a nested call stay on one line inside a call that broke.
+Hand-written formatters usually get this wrong.
 
-Two places print source verbatim rather than rebuilding it, and both are
-deliberate. Types are stored as token spans because larvae parses types but has
-never needed to interpret them, and a long comment carries its own line breaks
-that re-indenting would corrupt. Verbatim here still means normalised: tokens
-are replayed with the whitespace between them collapsed, so a type reads the
-same however it was written.
+Two places print source verbatim instead of a rebuild, and both are
+intentional. The tree stores types as token spans, because larvae parses types
+but does not have to interpret them. A long comment carries its own line
+breaks, and new indentation would corrupt them. Verbatim output is still
+normalized: the emitter replays the tokens and collapses the whitespace
+between them. So a type reads the same in each written form.
 */
 
 use std::borrow::Cow;
@@ -45,7 +45,7 @@ impl<'a> Emitter<'a> {
     pub fn chunk(&self, chunk: &Chunk) -> Doc<'a> {
         let body = self.block_body(&chunk.block);
 
-        // exactly one newline ends the file, which render does not add itself
+        // Exactly one newline ends the file. The renderer does not add it.
         Doc::concat([body, Doc::Hard])
     }
 
@@ -55,7 +55,7 @@ impl<'a> Emitter<'a> {
         self.toks[i as usize].text(self.src)
     }
 
-    /// Text of a one token span
+    /// Returns the text of a one-token span.
     fn one(&self, span: TokSpan) -> &'a str {
         self.tok(span.start)
     }
@@ -69,16 +69,16 @@ impl<'a> Emitter<'a> {
     }
 
     /*
-    A type, rebuilt from its tokens with the spacing decided rather than copied.
+    Rebuilds a type from its tokens. The emitter decides the spacing instead
+    of a copy of it.
 
-    The tree keeps types as token spans, because larvae parses types and has
-    never needed to interpret one. That is enough to format them: spacing in a
-    type is decided entirely by which two tokens are adjacent, so a pairwise
-    rule reaches the same answer a type tree would without carrying one.
+    The tree keeps types as token spans, because larvae parses types and does
+    not have to interpret them. That is enough to format them. The two adjacent
+    tokens fully decide the spacing in a type. So a pairwise rule reaches the
+    same answer as a type tree, without the cost of one.
 
-    What it cannot do is re-wrap a type across lines, so a very long type stays
-    on one line. That is a real limit and the reason this is not simply called
-    formatting.
+    This method cannot wrap a type across lines. So a very long type stays on
+    one line. That is a real limit, and the reason this is not full formatting.
     */
     fn verbatim(&self, span: TokSpan) -> Cow<'a, str> {
         if span.is_empty() {
@@ -89,10 +89,10 @@ impl<'a> Emitter<'a> {
         let flat = &self.src[lo as usize..hi as usize];
 
         /*
-        A comment inside a type cannot survive a token replay, because comments
-        are not tokens. There is nowhere sensible to put one back either, since
-        the replay has no structure to hang it on, so the region is emitted
-        exactly as the author wrote it.
+        A comment inside a type cannot survive a token replay, because
+        comments are not tokens. The replay has no structure to attach a
+        comment to, so there is no good position to put one back. So the
+        emitter outputs the region exactly as the author wrote it.
         */
         if !self.trivia.between(lo, hi).is_empty() {
             return Cow::Borrowed(flat);
@@ -115,19 +115,19 @@ impl<'a> Emitter<'a> {
         Cow::Owned(out)
     }
 
-    /// Whether the author left a newline between two adjacent tokens
+    /// Reports if the author left a newline between two adjacent tokens.
     fn newline_between(&self, a: u32, b: u32) -> bool {
         let (lo, hi) = (self.tok_end(a) as usize, self.tok_start(b) as usize);
 
         lo < hi && self.src[lo..hi].contains('\n')
     }
 
-    /// Whether this expression prints starting with a `-`, which `-` cannot abut
+    /// Reports if this expression prints with a `-` first. A `-` cannot touch another `-`.
     fn starts_with_minus(&self, e: &Expr) -> bool {
         self.tok(e.span().start) == "-"
     }
 
-    /// The `)` closing the `(` at this token index, counting depth on the way
+    /// Finds the `)` that closes the `(` at this token index. It counts depth on the way.
     fn matching_paren(&self, open: u32) -> Option<u32> {
         if self.toks.get(open as usize).is_none() || self.tok(open) != "(" {
             return None;
@@ -154,53 +154,54 @@ impl<'a> Emitter<'a> {
         None
     }
 
-    /// Token span of one table field, which the tree does not store directly
+    /// Returns the token span of one table field. The tree does not store this span directly.
     fn field_span(&self, field: &TableField) -> TokSpan {
         match field {
             TableField::Positional(e) => e.span(),
 
-            // the key token comes first, and the value's span ends the field
+            // The key token comes first. The span of the value ends the field.
             TableField::Named { name, value } => {
                 TokSpan::new(name.start as usize, value.span().end as usize)
             }
 
             TableField::Computed { key, value } => TokSpan::new(
-                // the `[` sits one token before the key
+                // The `[` sits one token before the key.
                 key.span().start.saturating_sub(1) as usize,
                 value.span().end as usize,
             ),
         }
     }
 
-    /// Byte range covered by a token span
+    /// Returns the byte range that a token span covers.
     fn byte_span(&self, span: TokSpan) -> (u32, u32) {
         (self.tok_start(span.start), self.tok_end(span.end - 1))
     }
 
-    /// Whether a statement opens with `(`, which would continue the line above
+    /// Reports if a statement opens with `(`. Such a statement would continue the line above.
     fn starts_with_paren(&self, stmt: &Stmt) -> bool {
         self.tok(stmt.span().start) == "("
     }
 
-    /// Whether this expression prints starting with a `[`, which `[` cannot abut
+    /// Reports if this expression prints with a `[` first. A `[` cannot touch another `[`.
     fn starts_with_bracket(&self, e: &Expr) -> bool {
         self.tok(e.span().start).starts_with('[')
     }
 
-    /// Whether the token before this closing bracket is a comma
+    /// Reports if the token before this closing bracket is a comma.
     fn has_trailing_comma(&self, close: u32) -> bool {
         close > 0 && self.tok(close - 1) == ","
     }
 
     /*
-    Whether an expression absorbs a break rather than moving to its own line.
+    Reports if an expression absorbs a break instead of a move to its own
+    line.
 
-    Tables and functions hang because indenting them one extra level buys
-    nothing. A `[[ ]]` string or a multi-line interpolation hangs for a harder
-    reason: it carries its own newlines, so it forces every group around it to
-    break, and a break at the punctuation before it can never make it fit. Left
-    out, `f[[...]]` gains parentheses on one pass and then breaks at them on the
-    next, which is a formatter that never settles.
+    Tables and functions hang, because one extra indent level gives no
+    benefit. A `[[ ]]` string or a multi-line interpolation hangs for a harder
+    reason. It carries its own newlines, so it forces each group around it to
+    break. A break at the punctuation before it can never make it fit. Without
+    this rule, `f[[...]]` gains parentheses on one pass and then breaks at
+    them on the next pass. Such a formatter never reaches a stable output.
     */
     fn hangs(&self, e: &Expr) -> bool {
         match e {
@@ -228,7 +229,7 @@ impl<'a> Emitter<'a> {
 
     // --- blocks ------------------------------------------------------------
 
-    /// Byte just past whatever opened this block, `do`, `then`, `)` and so on
+    /// Returns the byte just past the opener of this block: `do`, `then`, `)` and so on.
     fn block_lo(&self, block: &Block) -> u32 {
         match block.span.start {
             0 => 0,
@@ -237,7 +238,7 @@ impl<'a> Emitter<'a> {
         }
     }
 
-    /// Byte where whatever closes this block begins, or the end of the file
+    /// Returns the byte where the closer of this block starts, or the end of the file.
     fn block_hi(&self, block: &Block) -> u32 {
         match self.toks.get(block.span.end as usize) {
             Some(t) => t.start,
@@ -247,12 +248,13 @@ impl<'a> Emitter<'a> {
     }
 
     /*
-    The statements of a block, with their comments and blank lines.
+    Emits the statements of a block, with their comments and blank lines.
 
-    A stray `;` is dropped rather than printed, since it is a statement in the
-    grammar and noise in the output, and every formatter for the language drops
-    it. Everything else keeps the shape the author gave it: one statement per
-    line, and one blank line wherever they left one or more.
+    The emitter drops a stray `;` instead of a print of it. The `;` is a
+    statement in the grammar and noise in the output. Every formatter for the
+    language drops it. All other content keeps the shape that the author gave
+    it: one statement per line, and one blank line where the author left one
+    or more.
     */
     pub(crate) fn block_body(&self, block: &Block) -> Doc<'a> {
         let (prologue, mut pieces, tail) = self.pieces(block);
@@ -272,7 +274,7 @@ impl<'a> Emitter<'a> {
             if i > 0 {
                 parts.push(self.trailing_doc(pieces[i - 1].trailing));
 
-                // a blank line is the separator, not something added to it
+                // A blank line is the separator, not an addition to it.
                 parts.push(if piece.blank_before {
                     Doc::Blank
                 } else {
@@ -286,10 +288,11 @@ impl<'a> Emitter<'a> {
             }
 
             /*
-            A statement opening with `(` continues the line above as a call,
-            which is Lua's oldest ambiguity. The author's `;` is dropped like
-            any other, so one is put back wherever it is load bearing: without
-            it `local a = b` followed by `(c)()` reads as `local a = b(c)()`.
+            A statement that opens with `(` continues the line above as a
+            call. This is the oldest ambiguity of Lua. The emitter drops the
+            `;` of the author like any other `;`. So the emitter puts one back
+            where it is necessary. Without it, `local a = b` followed by
+            `(c)()` reads as `local a = b(c)()`.
             */
             if i > 0 && self.starts_with_paren(piece.stmt) {
                 parts.push(Doc::text(";"));
@@ -302,7 +305,7 @@ impl<'a> Emitter<'a> {
             parts.push(self.trailing_doc(last.trailing));
         }
 
-        // comments between the last statement and whatever closes the block
+        // These are the comments between the last statement and the closer of the block.
         if !tail.leading.is_empty() {
             if !pieces.is_empty() {
                 parts.push(if tail.blank_before {
@@ -325,14 +328,14 @@ impl<'a> Emitter<'a> {
     }
 
     /*
-    A block split into one piece per statement, each holding the trivia that
-    belongs to it.
+    Splits a block into one piece per statement. Each piece holds the trivia
+    that belongs to it.
 
-    Emitting straight from the statement list would be shorter, and was, until
-    `sort_requires` needed to move statements. A comment is found by its
-    position in the source, so once a statement moves, a comment left behind
-    would attach to whatever landed in its place. Binding the trivia to the
-    statement first means reordering carries it along.
+    Direct emission from the statement list would be shorter, and it was, but
+    `sort_requires` must move statements. Larvae finds a comment by its
+    position in the source. So when a statement moves, a comment left behind
+    would attach to the statement that lands in its place. This method binds
+    the trivia to the statement first, so a reorder carries the trivia along.
     */
     fn pieces<'s>(&self, block: &'s Block) -> (Vec<Comment>, Vec<Piece<'s, 'a>>, Tail) {
         let mut pieces: Vec<Piece<'_, 'a>> = Vec::with_capacity(block.stmts.len());
@@ -341,9 +344,9 @@ impl<'a> Emitter<'a> {
 
         for stmt in &block.stmts {
             /*
-            A stray `;` is skipped, and the cursor moves past it so the blank
-            line check does not count the newline on either side of it as a gap
-            the author asked for.
+            The emitter skips a stray `;`, and the cursor moves past it. So
+            the blank line check does not count the newline on either side of
+            it as a gap that the author requested.
             */
             if let Stmt::Empty(span) = stmt {
                 cursor = self.tok_end(span.end - 1);
@@ -355,7 +358,7 @@ impl<'a> Emitter<'a> {
             let start = self.tok_start(span.start);
             let att = self.trivia.split(cursor, start);
 
-            // this gap's trailing comment sits on the line above, not this one
+            // The trailing comment of this gap sits on the line above, not on this line.
             if let Some(prev) = pieces.last_mut() {
                 prev.trailing = att.trailing;
             }
@@ -367,12 +370,13 @@ impl<'a> Emitter<'a> {
             };
 
             /*
-            A `--!` directive belongs to the file rather than to the statement
-            it happens to sit above, and only takes effect before any code. So
-            it is lifted out of the first statement's leading comments into a
-            prologue, which keeps it at the top whatever `sort_requires` then
-            does with the statements. Left attached, sorting could move it down
-            the file and quietly downgrade a module out of strict mode.
+            A `--!` directive belongs to the file, not to the statement below
+            it. The directive only takes effect before any code. So the
+            emitter lifts it out of the leading comments of the first
+            statement and into a prologue. The prologue keeps it at the top,
+            independent of what `sort_requires` does with the statements. If
+            the directive stays attached, a sort can move it down the file.
+            That change would silently remove strict mode from a module.
             */
             let mut leading = att.leading.to_vec();
 
@@ -419,11 +423,13 @@ impl<'a> Emitter<'a> {
     }
 
     /*
-    The path of a `local name = require("path")`, and nothing else.
+    Returns the path of a `local name = require("path")`, and nothing else.
 
-    Deliberately narrow. Anything computed, `require(base .. name)`, or bound
-    to more than one name, is not something whose order can be assumed not to
-    matter, so it is left where the author put it and breaks the run around it.
+    The match is narrow on purpose. A computed path, for example
+    `require(base .. name)`, or a bind to more than one name, can depend on
+    order. Larvae cannot assume that its order does not matter. So larvae
+    keeps such a statement where the author put it, and the statement breaks
+    the run around it.
     */
     fn require_path(&self, stmt: &Stmt) -> Option<&'a str> {
         let Stmt::Local(local) = stmt else {
@@ -470,11 +476,13 @@ impl<'a> Emitter<'a> {
     }
 
     /*
-    A comment sitting on the same line as the keyword that opened this block.
+    Emits a comment that sits on the same line as the keyword that opened
+    this block.
 
-    `block_body` cannot emit it, because it attaches to the `do` or `then` the
-    caller printed rather than to any statement. Without this it would simply
-    vanish, which is the failure mode that makes people distrust a formatter.
+    `block_body` cannot emit it. The comment attaches to the `do` or `then`
+    that the caller printed, not to any statement. Without this method the
+    comment would disappear. A lost comment is the failure that makes users
+    distrust a formatter.
     */
     fn open_comment(&self, block: &Block) -> Doc<'a> {
         let lo = self.block_lo(block);
@@ -487,7 +495,7 @@ impl<'a> Emitter<'a> {
         self.trailing(&self.trivia.split(lo, hi))
     }
 
-    /// A block indented inside its keywords, always broken
+    /// Emits a block indented inside its keywords. The block is always broken.
     fn nested(&self, block: &Block) -> Doc<'a> {
         let open = self.open_comment(block);
         let body = self.block_body(block);
@@ -502,15 +510,17 @@ impl<'a> Emitter<'a> {
     }
 
     /*
-    The breaks at the two edges of a block, which `block_newline_gaps` decides.
+    Returns the breaks at the two edges of a block. The `block_newline_gaps`
+    option decides them.
 
-    A blank line just inside `do` or just before `end` is dropped by default,
-    which is what almost everyone wants and what stylua does. `preserve` keeps
-    the author's, for the style that uses them to give a long body room to
-    breathe.
+    By default, the emitter drops a blank line just inside `do` or just
+    before `end`. Almost all users want this, and stylua does the same.
+    `preserve` keeps the blank lines of the author. That style uses them to
+    give a long body visual space.
 
-    Only the edges: blank lines between statements are kept either way, because
-    those separate ideas rather than pad a boundary.
+    This rule applies only to the edges. The emitter keeps blank lines
+    between statements in both modes, because those separate ideas. They do
+    not pad a boundary.
     */
     fn block_gaps(&self, block: &Block) -> (Doc<'a>, Doc<'a>) {
         if self.cfg.block_newline_gaps == BlockNewlineGaps::Never {
@@ -543,11 +553,12 @@ impl<'a> Emitter<'a> {
     }
 
     /*
-    A block that may collapse onto one line.
+    Emits a block that can collapse onto one line.
 
-    `collapse_simple_statement` only ever applies to a block holding exactly one
-    statement with nothing nested inside it and no comments to lose, so the
-    check is narrow on purpose: collapsing anything else hides code.
+    `collapse_simple_statement` applies only to a block that holds exactly
+    one statement. That statement must have no nested block and no comments
+    to lose. The check is narrow on purpose. A collapse of anything else
+    hides code.
     */
     fn collapsible(&self, block: &Block, allowed: bool) -> Doc<'a> {
         if !allowed || block.stmts.len() != 1 || !is_simple(&block.stmts[0]) {
@@ -557,7 +568,7 @@ impl<'a> Emitter<'a> {
         let stmt = &block.stmts[0];
         let span = stmt.span();
 
-        // a comment anywhere in the block rules it out, since it would move
+        // A comment at any position in the block prevents the collapse. The comment would move.
         if !self
             .trivia
             .between(self.block_lo(block), self.block_hi(block))
@@ -566,7 +577,7 @@ impl<'a> Emitter<'a> {
             return self.nested(block);
         }
 
-        // so does an author's blank line, which is a deliberate separation
+        // A blank line from the author also prevents it. That line is an intended separation.
         if self
             .trivia
             .blank_between(self.block_lo(block), self.tok_start(span.start))
@@ -644,15 +655,16 @@ impl<'a> Emitter<'a> {
             Stmt::Continue(_) => Doc::text("continue"),
 
             /*
-            The tree keeps only the alias's name, so the rest prints from its
-            tokens. That is fine for a type, which is punctuation the pairwise
-            spacing rules were written for, and wrong for `type function f()`,
-            whose body is arbitrary Luau: replaying it drops the newlines and
-            runs `1` into `return`, which is a malformed number.
+            The tree keeps only the name of the alias. So the rest prints
+            from its tokens. That works for a type, because a type is the
+            punctuation that the pairwise spacing rules cover. It is wrong
+            for `type function f()`, whose body is arbitrary Luau. A replay
+            drops the newlines and joins `1` with `return`, which makes a
+            malformed number.
 
-            So an alias covering more than one line is emitted exactly as the
-            author wrote it. That keeps its comments too, which a token replay
-            can never do.
+            So the emitter outputs an alias that covers more than one line
+            exactly as the author wrote it. That also keeps its comments. A
+            token replay can never keep them.
             */
             Stmt::TypeAlias(n) => {
                 let (lo, hi) = self.byte_span(n.span);
@@ -706,7 +718,7 @@ impl<'a> Emitter<'a> {
         ]))
     }
 
-    /// ` = a, b`, breaking after the `=` when the values do not fit
+    /// Emits ` = a, b`. It breaks after the `=` when the values do not fit.
     fn assigned(&self, values: &[Expr]) -> Doc<'a> {
         Doc::concat([Doc::text(" ="), self.values(values)])
     }
@@ -718,12 +730,12 @@ impl<'a> Emitter<'a> {
         );
 
         /*
-        One value hangs off the `=` rather than moving to its own line.
+        One value hangs off the `=` instead of a move to its own line.
 
-        There is nothing to gain by breaking there: a lone value that does not
-        fit does not fit one indent level further in either, and it breaks
-        inside itself instead. Two or more values are a list, and a list that
-        does not fit is worth putting on its own lines.
+        A break there gives no benefit. A lone value that does not fit also
+        does not fit one indent level deeper. The value breaks inside itself
+        instead. Two or more values are a list. A list that does not fit
+        deserves its own lines.
         */
         if values.len() == 1 {
             return Doc::concat([Doc::text(" "), list]);
@@ -834,7 +846,7 @@ impl<'a> Emitter<'a> {
         ])
     }
 
-    /// `<T>(a: A, b: B): R <block> end`, everything after the name
+    /// Emits `<T>(a: A, b: B): R <block> end`, which is everything after the name.
     fn function_body(&self, body: &FunctionBody) -> Doc<'a> {
         let mut parts = Vec::with_capacity(6);
 
@@ -867,9 +879,9 @@ impl<'a> Emitter<'a> {
 
     fn params(&self, params: &[Param], open: u32) -> Doc<'a> {
         /*
-        Same reasoning as a type: the tree has no place to hang a comment
-        written between two parameters, so a list holding one is emitted as
-        written rather than losing it.
+        The reason is the same as for a type. The tree has no place to attach
+        a comment written between two parameters. So the emitter outputs a
+        list that holds one as written, instead of a loss of the comment.
         */
         if let Some(close) = self.matching_paren(open) {
             let (lo, hi) = (self.tok_start(open), self.tok_end(close));
@@ -957,10 +969,11 @@ impl<'a> Emitter<'a> {
                 let op = self.one(*op);
 
                 /*
-                `not x` needs its space and `#x` must not have one, which is the
-                easy half. The hard half is `- -x`: two minus signs run together
-                spell a line comment, so the rest of the line disappears and the
-                file stops parsing. A space between them is not cosmetic.
+                `not x` needs its space, and `#x` must not have one. That is
+                the easy part. The hard part is `- -x`. Two minus signs
+                together spell a line comment. The rest of the line then
+                disappears, and the file stops parsing. A space between them
+                is not cosmetic.
                 */
                 let space = op == "not" || (op == "-" && self.starts_with_minus(operand));
 
@@ -988,7 +1001,7 @@ impl<'a> Emitter<'a> {
                         "[",
                         "]",
                         self.expr(k),
-                        // `[` against a `[[ ]]` string opens a long string instead
+                        // A `[` that touches a `[[ ]]` string opens a long string instead.
                         self.cfg.space_inside_brackets || self.starts_with_bracket(k),
                     ),
                 ]),
@@ -1032,12 +1045,12 @@ impl<'a> Emitter<'a> {
     }
 
     /*
-    A binary chain, flattened so `a + b + c` breaks as one list rather than
-    nesting a level per operator.
+    Emits a binary chain. The emitter flattens it, so `a + b + c` breaks as
+    one list. It does not nest one level per operator.
 
-    The operator leads its continuation line, which is what makes a broken
-    condition readable: the eye finds the `and` at a fixed column instead of
-    hunting for it at the ragged right edge.
+    The operator starts its continuation line. This position makes a broken
+    condition readable. The reader finds the `and` at a fixed column. The
+    reader does not have to search for it at the uneven right edge.
     */
     fn binary(&self, e: &Expr) -> Doc<'a> {
         let Expr::Binary { op, .. } = e else {
@@ -1083,12 +1096,14 @@ impl<'a> Emitter<'a> {
     }
 
     /*
-    A call, and the one place the `call_parentheses` option lives.
+    Emits a call. This is the one place where the `call_parentheses` option
+    applies.
 
-    `f "str"` and `f {t}` are calls without parentheses, which Luau allows and
-    the option decides about. `input` keeps whatever the author wrote, which is
-    the only setting that does not enforce consistency and exists because some
-    codebases use the bare form as a DSL and the parenthesised form for calls.
+    `f "str"` and `f {t}` are calls without parentheses. Luau allows them,
+    and the option decides about them. `input` keeps the form that the author
+    wrote. It is the only setting that does not enforce consistency. It
+    exists because some codebases use the bare form as a DSL and the
+    parenthesized form for calls.
     */
     fn call(
         &self,
@@ -1120,10 +1135,10 @@ impl<'a> Emitter<'a> {
 
     fn call_args(&self, args: &CallArgs, span: TokSpan) -> Doc<'a> {
         /*
-        The option applies to the argument, not to the syntax the author
-        happened to reach for, so `f("x")` and `f "x"` are the same call and
-        settle on the same form. Deciding from the written form instead is what
-        makes a setting look like it does nothing on half a codebase.
+        The option applies to the argument, not to the syntax that the author
+        chose. So `f("x")` and `f "x"` are the same call, and both get the
+        same form. A decision based on the written form makes a setting look
+        inactive on half a codebase.
         */
         let (single, inner) = match args {
             CallArgs::Str(s) => (Some(Single::Str), self.string(*s)),
@@ -1151,8 +1166,8 @@ impl<'a> Emitter<'a> {
 
                 CallParens::NoSingleTable => single != Single::Table,
 
-                // the author's choice stands, which is the only setting that
-                // does not make the codebase consistent, and is why it exists
+                // The choice of the author stands. This is the only setting that
+                // does not make the codebase consistent, and that is why it exists.
                 CallParens::Input => matches!(args, CallArgs::Paren(_)),
             };
 
@@ -1168,9 +1183,10 @@ impl<'a> Emitter<'a> {
         };
 
         /*
-        A comment among the arguments forces the call to expand, for the same
-        reason a table does: a line comment flat inside the parentheses would
-        comment out the closing one and everything after it.
+        A comment among the arguments forces the call to expand. The reason
+        is the same as for a table. A line comment flat inside the
+        parentheses would comment out the closing parenthesis and everything
+        after it.
         */
         if let Some(doc) = self.commented_args(list, span) {
             return doc;
@@ -1181,9 +1197,9 @@ impl<'a> Emitter<'a> {
         }
 
         /*
-        A single function argument hugs the parentheses rather than being
-        indented inside them, so a callback reads as a block and not as a list
-        of one that happens to be enormous.
+        A single function argument stays against the parentheses. The emitter
+        does not indent it inside them. So a callback reads as a block, not
+        as a very large list of one item.
         */
         if list.len() == 1 && self.hangs(&list[0]) {
             return Doc::concat([Doc::text("("), self.expr(&list[0]), Doc::text(")")]);
@@ -1198,11 +1214,13 @@ impl<'a> Emitter<'a> {
     }
 
     /*
-    An argument list holding a comment, one argument per line with its comments
-    placed. `None` when there are none, which is almost always.
+    Emits an argument list that holds a comment: one argument per line, with
+    its comments placed. It returns `None` when there are no comments, which
+    is the usual case.
 
-    Luau rejects a trailing comma in a call, so the commas go between rather
-    than after, which is the one way this differs from the table case.
+    Luau rejects a trailing comma in a call. So the commas go between the
+    arguments, not after them. This is the one difference from the table
+    case.
     */
     fn commented_args(&self, list: &[Expr], span: TokSpan) -> Option<Doc<'a>> {
         let close = span.end - 1;
@@ -1236,7 +1254,7 @@ impl<'a> Emitter<'a> {
             cursor = self.tok_end(arg.span().end - 1);
         }
 
-        // and whatever sits between the last argument and the closing paren
+        // These are the comments between the last argument and the closing parenthesis.
         let att = self.trivia.split(cursor, hi);
         parts.push(self.trailing_doc(att.trailing));
 
@@ -1253,7 +1271,7 @@ impl<'a> Emitter<'a> {
         ]))
     }
 
-    /// The `(` opening the `)` at this token index, counting depth backwards
+    /// Finds the `(` that opens the `)` at this token index. It counts depth backwards.
     fn matching_open_paren(&self, close: u32) -> Option<u32> {
         if self.tok(close) != ")" {
             return None;
@@ -1281,11 +1299,12 @@ impl<'a> Emitter<'a> {
     }
 
     /*
-    Brackets around a breakable list.
+    Emits brackets around a breakable list.
 
-    Flat, the optional inner spaces apply. Broken, the contents indent one level
-    and the brackets sit on their own lines, and the inner spaces are irrelevant
-    because a newline already separates them.
+    In flat mode, the optional inner spaces apply. In broken mode, the
+    contents indent one level, and the brackets sit on their own lines. The
+    inner spaces then do not matter, because a newline already separates
+    them.
     */
     fn bracketed(&self, open: &'a str, close: &'a str, inner: Doc<'a>, spaced: bool) -> Doc<'a> {
         let pad = if spaced { Doc::Line } else { Doc::Soft };
@@ -1299,16 +1318,17 @@ impl<'a> Emitter<'a> {
     }
 
     /*
-    A table.
+    Emits a table.
 
-    Two things force a table to stay expanded, and both come from stylua because
-    people rely on them: a newline right after the `{`, and a trailing comma on
-    the last field. Either one is the author saying this table is a list of
-    things and not an expression, and width alone should not overrule that.
+    Two things force a table to stay expanded: a newline directly after the
+    `{`, and a trailing comma on the last field. Both rules come from stylua,
+    and users rely on them. Each one is a signal from the author that this
+    table is a list of things and not an expression. Width alone must not
+    override that signal.
     */
     fn table(&self, fields: &[TableField], span: TokSpan) -> Doc<'a> {
         if fields.is_empty() {
-            // `{ -- nothing yet }` holds a comment and is not the same as `{}`
+            // `{ -- nothing yet }` holds a comment and is not the same as `{}`.
             let inside = self
                 .trivia
                 .between(self.tok_end(span.start), self.tok_start(span.end - 1));
@@ -1336,11 +1356,12 @@ impl<'a> Emitter<'a> {
         let close = span.end - 1;
 
         /*
-        A comment anywhere in the table forces it to expand.
+        A comment at any position in the table forces it to expand.
 
-        Not a style preference. A line comment flat inside braces would comment
-        out the closing brace and everything after it, so the choice is between
-        expanding and losing the comment, and the comment is the author's.
+        This is not a style preference. A line comment flat inside braces
+        would comment out the closing brace and everything after it. So the
+        choice is between an expanded table and a lost comment, and the
+        comment belongs to the author.
         */
         let commented = !self
             .trivia
@@ -1383,7 +1404,7 @@ impl<'a> Emitter<'a> {
                 let start = self.tok_start(self.field_span(field).start);
                 let att = self.trivia.split(cursor, start);
 
-                // this gap's trailing comment sits on the line above, not this one
+                // The trailing comment of this gap sits on the line above, not on this line.
                 parts.push(self.trailing_doc(att.trailing));
 
                 for c in att.leading {
@@ -1402,7 +1423,7 @@ impl<'a> Emitter<'a> {
                 parts.pop();
             }
 
-            // and whatever sits between the last field and the closing brace
+            // These are the comments between the last field and the closing brace.
             let att = self.trivia.split(cursor, self.tok_start(close));
             parts.push(self.trailing_doc(att.trailing));
 
@@ -1420,9 +1441,10 @@ impl<'a> Emitter<'a> {
         }
 
         /*
-        A table the layout engine chooses to break still needs its trailing
-        comma, or reading the output back would see an expanded table and add
-        one, and the formatter would disagree with itself about its own output.
+        A table that the layout engine breaks still needs its trailing comma.
+        Without it, a read of the output back would see an expanded table and
+        add one. The formatter would then disagree with itself about its own
+        output.
         */
         let comma = if self.cfg.trailing_comma {
             Doc::if_break(Doc::Nil, Doc::text(","))
@@ -1441,10 +1463,10 @@ impl<'a> Emitter<'a> {
     // --- strings -----------------------------------------------------------
 
     /*
-    A short string, re quoted to the configured style.
+    Emits a short string, quoted again in the configured style.
 
-    Long strings, `[[...]]`, are left exactly as written: their content is
-    literal, so there is no quote to change and nothing to escape.
+    The emitter keeps long strings, `[[...]]`, exactly as written. Their
+    content is literal, so there is no quote to change and nothing to escape.
     */
     fn string(&self, span: TokSpan) -> Doc<'a> {
         let raw = self.one(span);
@@ -1479,7 +1501,7 @@ impl<'a> Emitter<'a> {
 
             QuoteStyle::ForceSingle => b'\'',
 
-            // prefer the configured quote unless the other needs fewer escapes
+            // Use the configured quote, unless the other quote needs fewer escapes.
             QuoteStyle::AutoPreferDouble if doubles > singles => b'\'',
 
             QuoteStyle::AutoPreferDouble => b'"',
@@ -1493,7 +1515,7 @@ impl<'a> Emitter<'a> {
     }
 }
 
-/// Whether a statement has no block nested inside it
+/// Reports if a statement has no block nested inside it.
 fn is_simple(stmt: &Stmt) -> bool {
     matches!(
         stmt,
@@ -1506,40 +1528,40 @@ fn is_simple(stmt: &Stmt) -> bool {
     )
 }
 
-/// Which single argument form a call uses, for the `call_parentheses` option
+/// The single argument form that a call uses. The `call_parentheses` option needs this.
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum Single {
     Str,
     Table,
 }
 
-/// One statement with the trivia bound to it, so reordering carries both
+/// One statement with the trivia bound to it. So a reorder carries both.
 struct Piece<'s, 'a> {
     stmt: &'s Stmt,
-    /// A blank line before it, as the author left one
+    /// A blank line before it, as the author left one.
     blank_before: bool,
-    /// Comments on their own lines above it
+    /// Comments on their own lines above it.
     leading: Vec<Comment>,
-    /// A comment after it on the same line
+    /// A comment after it on the same line.
     trailing: Option<Comment>,
-    /// The require path, when this is a plain `local x = require("path")`
+    /// The require path, when this is a plain `local x = require("path")`.
     key: Option<&'a str>,
 }
 
-/// Comments after the last statement, which belong to no statement
+/// Comments after the last statement. They belong to no statement.
 struct Tail {
     leading: Vec<Comment>,
     blank_before: bool,
 }
 
-/// Where a require path points, which is what `by-kind` groups on
+/// The target kind of a require path. `by-kind` groups on this kind.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 enum PathKind {
-    /// `@pkg/thing`, a name the project configured
+    /// `@pkg/thing`, a name that the project configured.
     Alias,
-    /// `game/ReplicatedStorage/thing`, rooted somewhere known
+    /// `game/ReplicatedStorage/thing`, rooted at a known place.
     Absolute,
-    /// `./sibling`, resolved against this file
+    /// `./sibling`, resolved against this file.
     Relative,
 }
 
@@ -1556,18 +1578,19 @@ fn path_kind(path: &str) -> PathKind {
 }
 
 /*
-Sort each run of adjacent requires.
+Sorts each run of adjacent requires.
 
-A run ends at anything that is not a plain require, and at a blank line, which
-is the part worth saying: an author who separated two groups of requires with a
-blank line has already grouped them, and shuffling across that line would
-discard a decision rather than tidy one. So each run is sorted within itself
-and never merged with its neighbour.
+A run ends at each statement that is not a plain require, and at a blank
+line. The blank line rule is important. An author who separated two groups of
+requires with a blank line already grouped them. A sort across that line
+would discard a decision, not tidy one. So larvae sorts each run within
+itself and never merges it with its neighbor.
 
-Nothing here moves a require past a statement that is not one, so a module
-whose requires must run in a particular order relative to other code keeps it.
-Order between two adjacent requires is what this assumes does not matter, which
-is why the whole thing is off unless asked for.
+This function never moves a require past a statement that is not a require.
+So a module whose requires must run in a set order relative to other code
+keeps that order. The function assumes that the order between two adjacent
+requires does not matter. That assumption is the reason the feature is off
+unless the user enables it.
 */
 fn sort_requires(pieces: &mut [Piece<'_, '_>], grouping: RequireGrouping) {
     let mut start = 0;
@@ -1594,7 +1617,7 @@ fn sort_requires(pieces: &mut [Piece<'_, '_>], grouping: RequireGrouping) {
 }
 
 fn sort_run(run: &mut [Piece<'_, '_>], grouping: RequireGrouping) {
-    // the gap before the run belongs to the run's position, not to its first member
+    // The gap before the run belongs to the position of the run, not to its first member.
     let opening_gap = run[0].blank_before;
 
     run.sort_by(|a, b| {
@@ -1627,16 +1650,17 @@ fn sort_run(run: &mut [Piece<'_, '_>], grouping: RequireGrouping) {
 }
 
 /*
-Whether two adjacent tokens in a type want a space between them.
+Reports if two adjacent tokens in a type need a space between them.
 
-Read as a table rather than as logic. Types are punctuation heavy and every
-rule here is one shape someone writes: `Array<T>` closes up, `A | B` opens out,
-`{ x: number }` breathes inside its braces, and `(T) -> U` has its arrow alone
-in the middle. Nothing else in the language needs this because everything else
-is rebuilt from a tree that already knows where its spaces go.
+Read this function as a table, not as logic. Types have much punctuation, and
+each rule here is one shape that users write: `Array<T>` has no inner spaces,
+`A | B` has spaces around the bar, `{ x: number }` has spaces inside its
+braces, and `(T) -> U` has its arrow alone in the middle. No other part of
+the language needs this, because the emitter rebuilds everything else from a
+tree that already knows where its spaces go.
 */
 fn needs_space(prev: &str, next: &str) -> bool {
-    // nothing ever sits between a name and what qualifies or closes it
+    // No space ever sits between a name and the token that qualifies or closes it.
     if matches!(next, "," | ")" | "]" | ">" | "?" | ":" | ";" | ".") {
         return false;
     }
@@ -1645,7 +1669,7 @@ fn needs_space(prev: &str, next: &str) -> bool {
         return false;
     }
 
-    // an opening paren belongs to whatever precedes it unless an operator does
+    // An opening parenthesis attaches to the token before it, unless that token is an operator.
     if next == "(" {
         return matches!(prev, "," | ":" | "->" | "|" | "&" | "{" | "=");
     }
@@ -1663,12 +1687,12 @@ fn needs_space(prev: &str, next: &str) -> bool {
     }
 
     /*
-    Two atoms, where an atom is anything starting with a letter, a digit or an
-    underscore. Words are the obvious case, `typeof T`, but numbers matter for
-    a reason that is easy to miss: a type can hold an expression, through
-    `typeof(...)`, and `and 1` run together spells the identifier `and1` while
-    `2 or` spells the malformed number `2or`. Testing for words alone let both
-    through.
+    This case covers two atoms. An atom is a token that starts with a letter,
+    a digit or an underscore. Words are the clear case, for example
+    `typeof T`. Numbers matter for a reason that is easy to miss. A type can
+    hold an expression, through `typeof(...)`. `and 1` joined spells the
+    identifier `and1`, and `2 or` joined spells the malformed number `2or`.
+    A test for words alone let both through.
     */
     is_atom(prev) && is_atom(next)
 }
@@ -1678,12 +1702,13 @@ fn is_atom(tok: &str) -> bool {
 }
 
 /*
-Binding power, used only to decide what flattens into one breakable chain.
+Returns the binding power. The emitter uses it only to decide what flattens
+into one breakable chain.
 
-Output is correct at any of these values, because the tree already holds the
-right shape and replaying it infix reproduces it. What they buy is that
-`a and b or c` breaks at `or` before it breaks at `and`, rather than treating
-every operator in the expression as equally good a place to fold.
+The output is correct at any of these values. The tree already holds the
+right shape, and an infix replay reproduces it. The benefit of these values
+is that `a and b or c` breaks at `or` before it breaks at `and`. Without
+them, every operator in the expression would be an equally good fold point.
 */
 fn precedence(op: &str) -> u8 {
     match op {
@@ -1698,7 +1723,7 @@ fn precedence(op: &str) -> u8 {
     }
 }
 
-/// Unescaped quote characters of each kind
+/// Counts the unescaped quote characters of each kind.
 fn count_quotes(inner: &str) -> (usize, usize) {
     let (mut doubles, mut singles) = (0, 0);
     let mut escaped = false;
@@ -1721,11 +1746,13 @@ fn count_quotes(inner: &str) -> (usize, usize) {
 }
 
 /*
-The content of a string, wrapped in `quote` with escaping corrected.
+Returns the content of a string, wrapped in `quote`, with the escapes
+corrected.
 
-Changing which quote a literal uses is not a textual swap: the target quote has
-to become escaped and the other has to stop being, or the literal changes
-meaning. This is the whole reason `quote_style` is more than a substitution.
+A change of the quote of a literal is not a textual swap. The target quote
+must become escaped, and the other quote must lose its escape. Without these
+changes, the literal changes meaning. This is the reason `quote_style` is
+more than a substitution.
 */
 fn requote(inner: &str, quote: u8) -> String {
     let quote = quote as char;
@@ -1738,7 +1765,7 @@ fn requote(inner: &str, quote: u8) -> String {
     while let Some(c) = chars.next() {
         match c {
             '\\' => match chars.next() {
-                // the other quote no longer needs its escape
+                // The other quote no longer needs its escape.
                 Some(next) if next == other => out.push(other),
 
                 Some(next) => {

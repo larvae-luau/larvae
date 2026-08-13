@@ -1,10 +1,10 @@
-//! The `~/.larvae` home layout used by the `self` commands
+//! The `~/.larvae` home layout that the `self` commands use
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-/// `~/.larvae`, where `self install` puts things
+/// `~/.larvae`, the directory where `self install` writes files
 pub fn larvae_dir() -> Result<PathBuf> {
     Ok(dirs::home_dir()
         .context("cannot determine your home directory")?
@@ -21,7 +21,7 @@ pub fn installed_exe() -> Result<PathBuf> {
     Ok(bin_dir()?.join(format!("larvae{}", std::env::consts::EXE_SUFFIX)))
 }
 
-/// Same file check via canonicalize, false when either path is missing
+/// A same file check through canonicalize; false when either path is missing
 pub fn same_file(a: &Path, b: &Path) -> bool {
     match (a.canonicalize(), b.canonicalize()) {
         (Ok(a), Ok(b)) => a == b,
@@ -31,8 +31,8 @@ pub fn same_file(a: &Path, b: &Path) -> bool {
 }
 
 /*
-Who owns the binary we are running from, we only ever replace our own copy,
-anything a version manager pins belongs to that manager
+The tool that owns the binary in use. larvae replaces only its own copy. A
+binary that a version manager pins belongs to that manager.
 */
 pub fn managing_tool(exe: &Path) -> Option<&'static str> {
     let path = exe.to_string_lossy().to_lowercase();
@@ -52,7 +52,7 @@ pub fn managing_tool(exe: &Path) -> Option<&'static str> {
     None
 }
 
-/// True when this binary is the one `self install` put in place
+/// True when this binary is the one that `self install` wrote
 pub fn is_self_installed(exe: &Path) -> bool {
     match installed_exe() {
         Ok(target) => same_file(exe, &target),

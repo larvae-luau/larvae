@@ -1,9 +1,9 @@
 /*!
-Rules that need to know what every local is used for
+Rules that need the use of each local
 
-Both of these lean on the scope walk rather than the tree alone, which is
-why they waited on it. Conservative where it matters, a local whose value
-could do something on the way to being discarded is left where it is
+Both rules use the scope walk and not the tree alone. For this reason,
+they waited on the scope walk. The rules are conservative where it
+matters. A local whose value can have a side effect stays in place.
 */
 
 use std::collections::HashMap;
@@ -13,12 +13,12 @@ use crate::rules::scope::{self, Origin};
 use crate::syntax::ast::*;
 
 /*
-remove_unused_variable, drop locals nothing reads
+remove_unused_variable: remove locals that no code reads.
 
-Only whole statements go, a half removed `local a, b` would change how many
-values the right hand side is asked for. The declaration also has to be
-inert, `local x = f()` still has to call f even though nobody wants the
-answer
+The rule removes only whole statements. A partly removed `local a, b`
+would change the number of values that the right hand side supplies. The
+declaration must also be inert. `local x = f()` must still call f, even
+when no code reads the result.
 */
 pub fn remove_unused_variable(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     let names = scope::resolve(ctx);
@@ -72,7 +72,7 @@ impl Sweeper<'_, '_> {
                 }
             }
 
-            // defining a function does nothing on its own, so it is always safe
+            // A function definition alone has no effect, so removal is always safe.
             Stmt::LocalFunction(n) if self.unused(n.name) => {
                 self.ctx.delete_keep_lines(n.span, self.edits);
             }
@@ -83,15 +83,17 @@ impl Sweeper<'_, '_> {
 }
 
 /*
-rename_variables, give every local a short name
+rename_variables: give each local a short name.
 
-Each binding gets its own name rather than reusing one across scopes that
-do not overlap. That is a little longer than darklua manages but it needs
-no shadowing analysis to be correct, and the difference only shows up once
-the dense generator exists to make short names worth anything
+Each binding gets its own name. The rule does not reuse a name across
+scopes that do not overlap. The output is a little longer than darklua's
+output, but the rule needs no shadowing analysis to be correct. The
+difference only matters when the dense generator exists to make short
+names useful.
 
-A name that appears anywhere in a type is left alone. Types are kept as raw
-spans, so `typeof(x)` would still say the old name after the rename
+The rule does not rename a name that appears anywhere in a type. Larvae
+keeps types as raw spans, so `typeof(x)` would still hold the old name
+after the rename.
 */
 pub fn rename_variables(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     let names = scope::resolve(ctx);
@@ -101,7 +103,7 @@ pub fn rename_variables(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     for binding in &names.bindings {
         let old = ctx.tok_text(binding.declared_at);
 
-        // a vararg has no name to take, and self is passed in implicitly
+        // A vararg has no name to take, and Luau passes self implicitly.
         if old == "self" || in_types.contains(old) {
             continue;
         }
@@ -117,7 +119,7 @@ pub fn rename_variables(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     }
 }
 
-/// Short names in order, skipping anything the file already says
+/// Short names in order. The supply skips each name that the file already uses.
 struct Supply<'a> {
     taken: &'a std::collections::HashSet<String>,
     counter: usize,
@@ -131,7 +133,7 @@ impl<'a> Supply<'a> {
     fn next_name(&mut self) -> Option<String> {
         const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
-        // a few million names in, something has gone wrong, give up quietly
+        // After a few million names, the state is wrong. Stop without a report.
         while self.counter < 5_000_000 {
             let mut n = self.counter;
             self.counter += 1;
@@ -148,7 +150,7 @@ impl<'a> Supply<'a> {
                 n -= 1;
             }
 
-            // is_ident rejects the keywords, so `do` and `end` never come out
+            // is_ident rejects the keywords, so the supply never emits `do` or `end`.
             if !self.taken.contains(&name) && crate::rules::native::is_ident(&name) {
                 return Some(name);
             }
@@ -158,7 +160,7 @@ impl<'a> Supply<'a> {
     }
 }
 
-/// Every identifier that shows up inside a type annotation anywhere in the file
+/// Each identifier that appears inside a type annotation anywhere in the file.
 fn type_text<'src>(ctx: &RuleCtx<'src>) -> std::collections::HashSet<&'src str> {
     let mut found = std::collections::HashSet::new();
     let mut v = TypeScan {
@@ -208,7 +210,7 @@ impl<'b> TypeScan<'_, 'b> {
 
     fn stmt(&mut self, s: &Stmt) {
         match s {
-            // a whole alias is type text, including anything typeof reaches into
+            // A whole alias is type text. This includes each name that typeof reads.
             Stmt::TypeAlias(n) => self.span(n.span),
 
             Stmt::Local(n) => {
@@ -358,7 +360,7 @@ fn walk_types(chunk: &Chunk, v: &mut TypeScan) {
     v.block(&chunk.block);
 }
 
-/// True when evaluating the expression cannot do anything observable
+/// True when evaluation of the expression cannot have an observable effect.
 fn inert(e: &Expr) -> bool {
     match e {
         Expr::Nil(_)
@@ -386,14 +388,14 @@ fn inert(e: &Expr) -> bool {
 
         Expr::TypeAssert { expr, .. } => inert(expr),
 
-        // indexing runs __index, a call runs anything, interpolation runs tostring
+        // An index runs __index. A call runs any code. Interpolation runs tostring.
         Expr::Index { .. } | Expr::Call { .. } | Expr::InterpString(_) | Expr::IfElse { .. } => {
             false
         }
     }
 }
 
-/// Statement walk that reaches every nested block
+/// A statement walk that reaches each nested block.
 fn walk(chunk: &Chunk, v: &mut Sweeper) {
     walk_block(&chunk.block, v);
 }
@@ -459,12 +461,12 @@ mod tests {
 
     #[test]
     fn keeps_a_declaration_that_does_something() {
-        // f still has to run
+        // f must still run.
         assert_eq!(
             sweep("local x = f()\nreturn 1\n"),
             "local x = f()\nreturn 1\n"
         );
-        // so does the metatable behind an index
+        // The metatable behind an index must also run.
         assert_eq!(
             sweep("local x = t.k\nreturn 1\n"),
             "local x = t.k\nreturn 1\n"
@@ -473,7 +475,7 @@ mod tests {
 
     #[test]
     fn leaves_a_partly_used_multi_binding() {
-        // dropping half would change how many values the right side is asked for
+        // Removal of half would change the number of values that the right side supplies.
         assert_eq!(
             sweep("local a, b = 1, 2\nreturn a\n"),
             "local a, b = 1, 2\nreturn a\n"
@@ -499,7 +501,7 @@ mod tests {
 
     #[test]
     fn reaches_into_nested_blocks() {
-        // the indent stays behind, same as every other deleting rule
+        // The indent stays behind, the same as each other rule that deletes.
         assert_eq!(
             sweep("do\n    local x = 1\nend\nreturn 2\n"),
             "do\n    \nend\nreturn 2\n"
@@ -551,7 +553,7 @@ mod rename_tests {
 
     #[test]
     fn a_name_the_file_already_uses_is_not_handed_out() {
-        // `a` is a global here so no local may take it
+        // `a` is a global here, so no local can take it.
         let out = rename("local counter = a\nreturn counter\n");
         assert!(out.contains("= a\n"), "{out}");
         assert!(!out.starts_with("local a ="), "{out}");
@@ -567,7 +569,7 @@ mod rename_tests {
 
     #[test]
     fn a_name_used_in_a_type_is_left_alone() {
-        // typeof would still say the old name, types are raw spans
+        // typeof would still hold the old name, because types are raw spans.
         let src = "local config = {}\ntype T = typeof(config)\nreturn config\n";
         assert_eq!(rename(src), src);
     }

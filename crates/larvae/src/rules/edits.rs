@@ -1,55 +1,55 @@
 /*!
 The edit model
 
-Every transform in larvae says what it wants as a byte range replacement
-against the original source. Bytes nobody touched are copied straight
-through, which is what makes retain-lines free and keeps a whole file close
-to memcpy speed
+Each transform in larvae expresses its change as a byte range replacement
+against the original source. Larvae copies unchanged bytes directly to the
+output. This makes retain-lines free and keeps the speed for a whole file
+close to memcpy speed.
 
-Edits remember which rule made them. Two rules reaching for the same bytes
-is a real thing, ex: one rewriting a method head while another inserts a
-self parameter into it. Interleaving both would emit something neither rule
-meant, so the first one stands and the second is reported instead of
-vanishing
+Each edit records the rule that made it. Two rules can select the same
+bytes. For example, one rule rewrites a method head while another rule
+inserts a self parameter into it. If larvae interleaved both edits, the
+output would match the intent of neither rule. For this reason, larvae
+applies the first edit and reports the second edit.
 */
 
-/// Byte range replacement, start, end, replacement text
+/// A byte range replacement: start, end, and replacement text.
 pub type Edit = (u32, u32, String);
 
 /*
-Which bucket a rule reports under when the run finishes
+The bucket that a rule reports under when the run finishes.
 
-Native means the rule ships inside larvae, which is all of them today.
-The split that matters later is against transforms a user writes in their
-own repo, so the summary can say where a change came from once extensions
-land rather than lumping everything together
+Native means that the rule ships inside larvae. Today all rules are
+native. Later, a user can write transforms in their own repo. When
+extensions land, this split lets the summary show the source of each
+change.
 */
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Family {
-    /// The require rewriter, it gets its own line in the summary
+    /// The require rewriter. The summary gives it its own line.
     Requires,
-    /// Built into larvae, both our own rules and the darklua parity set
+    /// Rules built into larvae. This includes the larvae rules and the darklua parity set.
     Native,
-    /// A transform loaded from the user's repo, lands with extensions in M3
+    /// A transform loaded from the user's repo. This family lands with extensions in M3.
     Extension,
 }
 
-/// A rule, and the bucket it reports under
+/// A rule and the bucket that it reports under.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Rule {
     pub name: &'static str,
     pub family: Family,
 }
 
-/// Two edits wanted the same bytes, the later one never reached the output
+/// Two edits selected the same bytes. The later edit did not reach the output.
 pub struct Conflict {
-    /// Byte offset the collision starts at
+    /// The byte offset where the collision starts.
     pub at: u32,
     pub kept: &'static str,
     pub dropped: &'static str,
 }
 
-/// One file's edits, each tagged with the rule behind it
+/// The edits for one file. Each edit has a tag with the rule that made it.
 pub struct Edits {
     items: Vec<Edit>,
     owners: Vec<Rule>,
@@ -80,9 +80,9 @@ impl Edits {
     }
 
     /*
-    Everything pushed inside `f` reports under this family, so a whole
-    module's worth of rules gets bucketed at the one place that dispatches
-    them instead of every rule repeating it
+    Each edit pushed inside `f` reports under this family. The one place
+    that dispatches a module's rules sets the bucket once. The rules do
+    not repeat the bucket.
     */
     pub fn family(&mut self, family: Family, f: impl FnOnce(&mut Self)) {
         let previous = std::mem::replace(&mut self.current, family);
@@ -90,7 +90,7 @@ impl Edits {
         self.current = previous;
     }
 
-    /// Add one edit
+    /// Add one edit.
     pub fn push(&mut self, name: &'static str, edit: Edit) {
         self.items.push(edit);
         self.owners.push(Rule {
@@ -100,8 +100,8 @@ impl Edits {
     }
 
     /*
-    Run a rule against a plain vec and label whatever it pushed, rules stay
-    free of bookkeeping and still come out traceable
+    Run a rule against a plain vec, then label each edit that it pushed.
+    The rules stay free of bookkeeping, but each edit stays traceable.
     */
     pub fn run(&mut self, name: &'static str, f: impl FnOnce(&mut Vec<Edit>)) {
         f(&mut self.items);
@@ -114,7 +114,7 @@ impl Edits {
         );
     }
 
-    /// Rules that actually changed something, each listed once
+    /// The rules that changed something. Each rule appears once.
     pub fn applied(&self) -> Vec<Rule> {
         let mut out: Vec<Rule> = Vec::new();
 
@@ -129,11 +129,12 @@ impl Edits {
 }
 
 /*
-Decide the order edits apply in and drop the ones that collide
+Decide the order in which the edits apply, and drop the edits that
+collide.
 
-Sorting indexes instead of the edits themselves keeps the replacement
-strings still, a file with a few thousand edits would otherwise memmove
-every one of them
+Larvae sorts indexes and not the edits themselves. This keeps the
+replacement strings in place. A sort of the edits would memmove each
+string in a file with a few thousand edits.
 */
 fn plan(edits: &Edits, conflicts: &mut Vec<Conflict>) -> Vec<u32> {
     let mut order: Vec<u32> = (0..edits.items.len() as u32).collect();
@@ -173,17 +174,18 @@ fn plan(edits: &Edits, conflicts: &mut Vec<Conflict>) -> Vec<u32> {
 }
 
 /*
-An edit that lands inside a deletion is moot, ex: one rule dropping a whole
-unreachable statement while another wanted to fold a sum inside it. Those
-bytes are leaving either way so there is nothing to report. Anything else,
-a partial overlap or a loser buried inside a rewrite, means a rule the user
-turned on did not happen and that is worth saying out loud
+An edit that lands inside a deletion has no effect. For example, one rule
+removes a whole unreachable statement while another rule folds a sum
+inside it. The deletion removes those bytes in each case, so there is
+nothing to report. A partial overlap, or a lost edit inside a rewrite, is
+different. It means that a rule the user enabled did not run, and larvae
+must report that.
 */
 fn subsumed(winner: &Edit, loser: &Edit) -> bool {
     loser.0 >= winner.0 && loser.1 <= winner.1 && winner.2.bytes().all(|b| b == b'\n')
 }
 
-/// Which edits collided, without paying to build the output text
+/// Report the edits that collided. This does not build the output text.
 pub fn conflicts(edits: &Edits) -> Vec<Conflict> {
     let mut found = Vec::new();
     plan(edits, &mut found);
@@ -191,7 +193,7 @@ pub fn conflicts(edits: &Edits) -> Vec<Conflict> {
     found
 }
 
-/// Apply the edits to `src`, collecting anything that collided
+/// Apply the edits to `src`. Collect each edit that collided.
 pub fn splice(src: &str, edits: &Edits, conflicts: &mut Vec<Conflict>) -> String {
     if edits.is_empty() {
         return src.to_owned();
@@ -251,7 +253,7 @@ mod tests {
 
     #[test]
     fn an_edit_inside_a_deletion_stays_quiet() {
-        // the bytes rule_b wanted are being removed anyway, nothing was lost
+        // The deletion removes the bytes that rule_b selected, so no change is lost.
         let src = "local x = 2 + 3\n";
         let mut edits = Edits::new();
         edits.push("rule_a", (0, 15, String::new()));
@@ -266,7 +268,7 @@ mod tests {
 
     #[test]
     fn an_edit_inside_a_rewrite_still_warns() {
-        // rule_a replaced the span with new text, so rule_b really did not run
+        // rule_a replaced the span with new text, so rule_b did not run.
         let src = "local x = 2 + 3\n";
         let mut edits = Edits::new();
         edits.push("rule_a", (0, 15, "local x = f(2 + 3)".into()));

@@ -1,9 +1,9 @@
 /*!
-Lints selene does not have.
+Lints that selene does not have.
 
-Each one here earned its place by catching something in real Luau that no
-existing rule catches, and each is cheap enough to run on a keystroke. They are
-the reason to run larvae's linter rather than a port of somebody else's.
+Each lint here catches a problem in real Luau code that no existing rule
+catches, and each is cheap enough to run on a keystroke. These lints are the
+reason to run larvae's linter and not a port of a different linter.
 */
 
 use crate::lint::ctx::{Finding, LintCtx};
@@ -27,13 +27,13 @@ lints! {
 
 impl UnreachableCode {
     /*
-    Anything after a `return`, `break` or `continue` in the same block.
+    Any statement after a `return`, `break` or `continue` in the same block.
 
-    Luau's parser accepts a `return` only as the last statement of a block, so
-    this fires on `break` and `continue`, and on `return` in the dialects that
-    allow it. What it catches is an early exit added above code that was meant
-    to keep running, which is invisible in review because the dead lines still
-    look like the program.
+    Luau's parser accepts a `return` only as the last statement of a block.
+    Thus this lint reports `break` and `continue`, and `return` in the
+    dialects that allow it. The lint catches an early exit that an author
+    added above code that must keep running. A review does not see this,
+    because the dead lines still look like the program.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         each_block(ctx, out, |ctx, block, out| {
@@ -86,13 +86,14 @@ impl SelfAssignment {
     /*
     `x = x`, or `t.k = t.k`.
 
-    Does nothing, so it is either a leftover from an edit or a line where one
-    side was meant to be something else. The second is the reason this is worth
-    reporting rather than shrugging at.
+    This does nothing. It is a leftover from an edit, or a line where the
+    author meant one side to be different. The second case is the reason
+    that the lint reports it.
 
-    A compound operator is excluded, since `x += x` does something. So is an
-    index whose key is computed, `t[i] = t[i]`, because `i` may be a function
-    of something and the two reads need not be the same element.
+    The lint excludes a compound operator, because `x += x` does something.
+    It also excludes an index with a computed key, `t[i] = t[i]`. There,
+    `i` can depend on something, and the two reads need not be the same
+    element.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         each_stmt(ctx, out, |ctx, s, out| {
@@ -122,7 +123,7 @@ impl SelfAssignment {
     }
 }
 
-/// Whether reading this twice is certain to give the same thing both times
+/// Returns true if two reads of this expression always give the same value.
 fn is_stable(e: &Expr) -> bool {
     match e {
         Expr::Name(_) => true,
@@ -143,12 +144,13 @@ impl StringConcatInLoop {
     /*
     `s = s .. x` inside a loop.
 
-    Lua strings are immutable, so each round allocates a new one and copies
-    everything built so far. A thousand iterations is half a million character
-    copies, and the loop looks linear while being quadratic, which is why this
-    survives review and then shows up as a frame time spike.
+    Lua strings are immutable. Thus each iteration allocates a new string
+    and copies everything built so far. A thousand iterations is half a
+    million character copies. The loop looks linear but is quadratic. For
+    that reason, it survives review and then appears as a frame-time spike.
 
-    The fix is to push into a table and `table.concat` once at the end.
+    The fix is to push the pieces into a table and `table.concat` once at
+    the end.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         each_stmt(ctx, out, |ctx, s, out| {
@@ -186,17 +188,17 @@ impl StringConcatInLoop {
 }
 
 /*
-Statements in this block that append to a name declared outside the loop.
+The statements in this block that append to a name declared outside the loop.
 
-Two things have to hold, and both were learned from what happens without them.
-The target must be a bare name, because `child.Name = child.Name .. \"_old\"`
-writes a different field each iteration and is linear. And it must be declared
-before the loop, because a string built inside the body starts empty every time
-around and is linear too.
+Two conditions must hold, and each one exists because of a false report
+without it. The target must be a bare name, because
+`child.Name = child.Name .. \"_old\"` writes a different field each iteration
+and is linear. The target must be declared before the loop, because a string
+built inside the body starts empty on each iteration and is also linear.
 
-Nested `if` and `do` blocks are searched, since guarding the append behind a
-condition is the shape this appears in most often. A nested *loop* is not,
-because it is reported when that loop is visited.
+The search enters nested `if` and `do` blocks, because an append behind a
+condition is the most common shape. The search does not enter a nested loop,
+because the lint reports that loop when it visits it.
 */
 fn accumulating_concats(ctx: &LintCtx<'_>, block: &Block, loop_start: u32) -> Vec<TokSpan> {
     let mut out = Vec::new();
@@ -226,12 +228,12 @@ fn accumulating_concats(ctx: &LintCtx<'_>, block: &Block, loop_start: u32) -> Ve
             continue;
         }
 
-        // a field write lands somewhere different each iteration, so it is linear
+        // A field write lands on a different place each iteration, so it is linear.
         let Expr::Name(name) = &n.targets[0] else {
             continue;
         };
 
-        // a string declared inside the body starts empty every time around
+        // A string declared inside the body starts empty on each iteration.
         let outlives = ctx
             .names
             .read_of
@@ -257,7 +259,7 @@ fn accumulating_concats(ctx: &LintCtx<'_>, block: &Block, loop_start: u32) -> Ve
 
         let target = *name;
 
-        // `s ..= x`, the compound form, is the same cost
+        // `s ..= x`, the compound form, has the same cost.
         if ctx.text(n.op) == "..=" {
             out.push(target);
 
@@ -276,7 +278,7 @@ fn accumulating_concats(ctx: &LintCtx<'_>, block: &Block, loop_start: u32) -> Ve
     out
 }
 
-/// Whether this expression is a `..` chain with `target` somewhere in it
+/// Returns true if this expression is a `..` chain that contains `target`.
 fn concatenates(ctx: &LintCtx<'_>, e: &Expr, target: TokSpan) -> bool {
     let Expr::Binary { op, lhs, rhs, .. } = e else {
         return false;
@@ -297,15 +299,15 @@ impl ShadowedLoopWork {
     /*
     `game:GetService("Players")` inside a loop.
 
-    A service lookup returns the same object every time, so calling it per
-    iteration pays for a lookup that could have happened once above the loop.
-    The same is true of `require`, which is memoised but still costs a table
+    A service lookup returns the same object every time. Thus a call per
+    iteration pays for a lookup that can happen once above the loop. The
+    same applies to `require`, which is memoised but still costs a table
     lookup and a call.
 
-    Deliberately narrow: only calls that are known to be pure and known to be
-    constant for a fixed argument. A general purity analysis would either be
-    wrong or would need types, and a lint that guesses at this is worse than
-    one that only speaks when it is sure.
+    The lint is narrow by design. It reports only calls that are known pure
+    and known constant for a fixed argument. A general purity analysis
+    would be wrong, or would need types. A lint that guesses here is worse
+    than a lint that speaks only when it is sure.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         each_stmt(ctx, out, |ctx, s, out| {
@@ -348,7 +350,7 @@ fn collect_invariant(ctx: &LintCtx<'_>, block: &Block, out: &mut Vec<(TokSpan, S
     }
 }
 
-/// The name of the call, when it is one whose result cannot change
+/// Returns the name of the call, when its result cannot change.
 fn invariant_call(ctx: &LintCtx<'_>, e: &Expr) -> Option<String> {
     let Expr::Call {
         func, method, args, ..
@@ -385,13 +387,13 @@ fn invariant_call(ctx: &LintCtx<'_>, e: &Expr) -> Option<String> {
 }
 
 /*
-Expressions in this statement, without descending into a nested loop or
-function.
+Visit the expressions in this statement, and do not descend into a nested
+loop or function.
 
-A call inside a nested loop belongs to that loop and is reported when it is
-visited. A call inside a function literal runs when the function is called,
-which is not once per iteration of this loop, so it is not this lint's business
-at all.
+A call inside a nested loop belongs to that loop, and the lint reports it
+when it visits that loop. A call inside a function literal runs when a
+caller calls the function, and not once per iteration of this loop. Thus
+this lint does not report it.
 */
 fn walk_exprs_shallow(stmt: &Stmt, f: &mut impl FnMut(&Expr)) {
     match stmt {
@@ -445,7 +447,7 @@ fn walk_expr_shallow(e: &Expr, f: &mut impl FnMut(&Expr)) {
     f(e);
 
     match e {
-        // a function body does not run once per iteration
+        // A function body does not run once per iteration.
         Expr::Function { .. } => {}
 
         Expr::Binary { lhs, rhs, .. } => {

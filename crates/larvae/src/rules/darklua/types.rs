@@ -1,10 +1,10 @@
 /*!
-Rules that strip Luau only annotations back to plain Lua
+Rules that remove Luau only annotations for plain Lua
 
-The parser keeps types as opaque token spans, which is exactly what these
-rules need, the extent is known and the contents never have to be read. The
-one wrinkle is that a type span starts at the type itself, so the colon in
-front of it has to be picked up by hand
+The parser keeps types as opaque token spans, and these rules need
+exactly that. The extent is known, and the rules never read the contents.
+One detail remains: a type span starts at the type itself, so the rule
+must find the colon in front of it by hand.
 */
 
 use super::support::tok_bytes;
@@ -12,8 +12,9 @@ use crate::rules::engine::{Edit, Flow, RuleCtx, Visit, walk_chunk};
 use crate::syntax::ast::*;
 
 /*
-Delete a type along with the punctuation that introduces it, `lead` is the
-token expected in front, ex: `:` for an annotation and `::` for an assertion
+Delete a type together with the punctuation that introduces it. `lead` is
+the expected token in front. Example: `:` for an annotation and `::` for
+an assertion.
 */
 fn drop_type_with_lead(ctx: &RuleCtx, ty: TokSpan, lead: &str, edits: &mut Vec<Edit>) {
     let Some(idx) = ty.start.checked_sub(1) else {
@@ -25,7 +26,7 @@ fn drop_type_with_lead(ctx: &RuleCtx, ty: TokSpan, lead: &str, edits: &mut Vec<E
     }
 
     let mut from = tok_bytes(ctx, idx).0;
-    // take the space in front too, `y :: T` should not leave `y ` behind
+    // Also remove the space in front. `y :: T` must not leave `y ` behind.
     let bytes = ctx.src.as_bytes();
 
     while from > 0 && matches!(bytes[from as usize - 1], b' ' | b'\t') {
@@ -57,8 +58,9 @@ fn drop_body_types(ctx: &RuleCtx, body: &FunctionBody, edits: &mut Vec<Edit>) {
 }
 
 /*
-remove_types, take every annotation out, bindings, parameters, return
-types, generic lists, whole type aliases and the tail of a `::` assertion
+remove_types: remove each annotation. This covers bindings, parameters,
+return types, generic lists, whole type aliases, and the tail of a `::`
+assertion.
 */
 pub fn remove_types(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     struct V<'a, 'b> {
@@ -86,7 +88,7 @@ pub fn remove_types(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
                 Stmt::Function(f) => drop_body_types(self.ctx, &f.body, self.edits),
 
                 Stmt::LocalFunction(f) => drop_body_types(self.ctx, &f.body, self.edits),
-                // an alias only exists for the type checker, it goes whole
+                // An alias exists only for the type checker. The rule removes it whole.
                 Stmt::TypeAlias(t) => self.ctx.delete_keep_lines(t.span, self.edits),
                 _ => {}
             }
@@ -110,15 +112,16 @@ pub fn remove_types(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
 }
 
 /*
-remove_attribute, strip function attributes, `match` holds regexes tested
-against the attribute name without its `@`, an empty list takes them all
+remove_attribute: remove function attributes. `match` holds regexes that
+the rule tests against the attribute name without its `@`. An empty list
+removes all attributes.
 */
 pub fn remove_attribute(ctx: &RuleCtx, edits: &mut Vec<Edit>, patterns: &[String]) {
     let compiled: Vec<regex::Regex> = patterns
         .iter()
         .filter_map(|p| regex::Regex::new(p).ok())
         .collect();
-    // a pattern list that would not compile is caught at config load
+    // Config load catches a pattern list that does not compile.
     if compiled.len() != patterns.len() {
         return;
     }
@@ -140,7 +143,7 @@ pub fn remove_attribute(ctx: &RuleCtx, edits: &mut Vec<Edit>, patterns: &[String
                 }
 
                 let (from, mut to) = self.ctx.bytes(a);
-                // take the spaces after it so the line does not start blank
+                // Also remove the spaces after it, so the line does not start blank.
                 let bytes = self.ctx.src.as_bytes();
 
                 while (to as usize) < bytes.len() && matches!(bytes[to as usize], b' ' | b'\t') {
@@ -269,7 +272,7 @@ mod tests {
             run("@native @checked function f() end\n", only_native),
             "@checked function f() end\n"
         );
-        // nothing matches, nothing moves
+        // No pattern matches, so nothing changes.
         let src = "@checked function f() end\n";
         assert_eq!(run(src, only_native), src);
     }

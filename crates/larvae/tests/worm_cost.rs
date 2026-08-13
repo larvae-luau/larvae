@@ -1,4 +1,5 @@
-//! What a worm rule costs per node, which decides how it should be scheduled
+//! These tests measure the cost of a worm rule per node. The cost decides the
+//! schedule for the rule.
 //!
 //! Run with: cargo test --release --test worm_cost -- --nocapture --ignored
 
@@ -13,7 +14,7 @@ use larvae::worm::nodes::{Kind, NodeTable};
 
 const FIXTURE: &[u8] = include_bytes!("fixtures/echo_worm.wasm");
 
-/// A file of roughly the shape a real one has
+/// This function makes a file with almost the same shape as a real file.
 fn source(lines: usize) -> String {
     (0..lines)
         .map(|i| format!("local v{i} = compute({i}, \"text\")\n"))
@@ -63,7 +64,7 @@ fn what_a_rule_costs_per_node() {
 
     println!("\n{} nodes matched per file, {FILES} files\n", ids.len());
 
-    // parse alone, the cost a rule forces on a require only build
+    // Parse alone. This is the cost that a rule forces on a require-only build.
     let start = Instant::now();
     for _ in 0..FILES {
         let lexed = lexer::lex(&src).unwrap();
@@ -72,7 +73,7 @@ fn what_a_rule_costs_per_node() {
     }
     let parse = start.elapsed();
 
-    // flattening, which a rule also forces
+    // This measures flattening, which a rule also forces.
     let lexed = lexer::lex(&src).unwrap();
     let chunk = parser::parse(&src, &lexed.toks).unwrap();
     let toks = lexed.toks.clone();

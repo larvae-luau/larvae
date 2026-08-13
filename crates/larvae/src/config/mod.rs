@@ -1,4 +1,5 @@
-//! larvae.toml loading and validation, unknown keys hard error, planned keys error with their milestone
+//! The module loads and validates larvae.toml. An unknown key is a hard error.
+//! A planned key gives an error that names its milestone.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -41,27 +42,27 @@ pub struct Config {
     #[serde(default)]
     pub rules: RulesConfig,
 
-    /// Compile time constants, names replaced with literals
+    /// Compile time constants; larvae replaces the names with literals
     #[serde(default)]
     pub defines: Option<toml::Value>,
 
-    /// Formatter settings, laid over any stylua.toml the project still has
+    /// Formatter settings, layered over a stylua.toml if the project has one
     #[serde(default)]
     pub fmt: Option<toml::Value>,
 
-    /// Linter settings, laid over any selene.toml the project still has
+    /// Linter settings, layered over a selene.toml if the project has one
     #[serde(default)]
     pub lint: Option<toml::Value>,
 
-    /// Extensions the project asked for, and their settings, see [`worms`]
+    /// The extensions that the project requests, and their settings, see [`worms`]
     #[serde(default)]
     pub worms: Option<toml::Value>,
 
-    // parsed so the error can say where it went, rather than "unknown key"
+    // Parsed so the error can name the new location and not say "unknown key".
     #[serde(default)]
     config: Option<toml::Value>,
 
-    // parsed but unimplemented, so the error can name the milestone
+    // Parsed but not implemented, so the error can name the milestone.
     #[serde(default)]
     bundle: Option<toml::Value>,
 
@@ -77,7 +78,7 @@ impl Config {
         Self::load_profile(path, None)
     }
 
-    /// Load a config, merging `[profile.<name>]` over it when one is asked for
+    /// Load a config, and merge `[profile.<name>]` over it when the caller requests one
     pub fn load_profile(path: &Path, profile: Option<&str>) -> Result<Self> {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read {}", crate::ui::rel(path)))?;
@@ -89,7 +90,7 @@ impl Config {
             profile::apply(&mut raw, name)
                 .with_context(|| format!("--profile {name} in {}", crate::ui::rel(path)))?;
         } else if let Some(table) = raw.as_table_mut() {
-            // no profile asked for, so the block is just inert config
+            // The caller requested no profile, so the block is inert config.
             table.remove("profile");
         }
 
@@ -102,7 +103,7 @@ impl Config {
         Ok(config)
     }
 
-    /// Load `larvae.toml` from `dir` if present, zero config default otherwise
+    /// Load `larvae.toml` from `dir` if the file exists; use the zero config default otherwise
     pub fn load_or_default(dir: &Path) -> Result<Self> {
         Self::load_or_default_profile(dir, None)
     }
@@ -121,10 +122,10 @@ impl Config {
 
     fn validate(&self) -> Result<()> {
         /*
-        A worm's settings used to sit in a top level [config.<name>], one table
-        away from the [worms.<name>] entry naming the same worm. Everything
-        about one worm lives under one key now, so this says where it went
-        rather than calling it an unknown key.
+        The settings of a worm sat in a top level [config.<name>] before, one
+        table away from the [worms.<name>] entry for the same worm. Now all
+        data for one worm lives under one key. So this error names the new
+        location and does not report an unknown key.
         */
         if let Some(table) = &self.config {
             let name = table
@@ -150,8 +151,9 @@ impl Config {
         }
 
         /*
-        [rules] is ours alone. A worm's rules sit under [worms.<name>] rules, so
-        one cannot shadow a builtin and this check needs nothing from them.
+        [rules] belongs only to larvae. The rules of a worm sit under
+        [worms.<name>] rules. So a worm rule cannot shadow a builtin, and this
+        check needs no data from worms.
         */
         for name in self.rules.rest.keys() {
             match rule_status(name) {
@@ -251,7 +253,7 @@ impl Config {
         Ok(())
     }
 
-    /// Alias map with RFC case insensitive names (lowercased keys)
+    /// The alias map with RFC case insensitive names (lowercase keys)
     pub fn alias_map(&self) -> HashMap<String, String> {
         self.aliases
             .iter()
@@ -310,7 +312,7 @@ mod tests {
         let calls = c.rules.remove_calls.as_ref().unwrap();
         assert_eq!(calls.functions().len(), 2);
         assert!(!calls.preserve_arguments_side_effects());
-        // the list form keeps the safe default
+        // The list form keeps the safe default.
         let c: Config = toml::from_str("[rules]\nremove_calls = [\"print\"]").unwrap();
         c.validate().unwrap();
         assert!(
@@ -336,7 +338,7 @@ mod tests {
         assert!(toml::from_str::<Config>("[process]\ninpt = \"x\"").is_err());
     }
 
-    /// The old spelling says where it went, an unknown key would not
+    /// The old spelling names the new location; an unknown key error would not
     #[test]
     fn a_top_level_config_table_points_at_the_worm() {
         let c: Config = toml::from_str("[config.xml]\npretty = true").unwrap();

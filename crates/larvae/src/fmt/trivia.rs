@@ -1,18 +1,20 @@
 /*!
-Comments and blank lines, which the parser deliberately does not carry.
+Comments and blank lines. The parser intentionally does not carry them.
 
-The lexer keeps comments in a list beside the tokens rather than inside the
-tree, because everything larvae did before this formatter spliced byte ranges
-and never needed them. A formatter rebuilds the file from the tree, so anything
-not in the tree is lost unless something puts it back. That is this file.
+The lexer keeps comments in a list beside the tokens, not inside the tree.
+Everything larvae did before this formatter spliced byte ranges and never
+needed them. A formatter rebuilds the file from the tree. So content that is
+not in the tree is lost, unless some code puts it back. This module is that
+code.
 
-The rule is the one every formatter converges on: a comment on the same line as
-the code before it belongs to that code and trails it, otherwise it leads
-whatever comes next. Blank lines are kept but collapsed, since one blank line
-separates two ideas and four is just scrolling.
+The rule is the one that every formatter converges on. A comment on the same
+line as the code before it belongs to that code and trails it. In all other
+cases it leads the code that comes next. The formatter keeps blank lines but
+collapses them. One blank line separates two ideas. Four blank lines only add
+scroll distance.
 */
 
-/// One comment, as written
+/// One comment, as written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Comment {
     pub start: u32,
@@ -21,21 +23,21 @@ pub struct Comment {
 
 impl Comment {
     pub fn text<'s>(&self, src: &'s str) -> &'s str {
-        // a line comment runs to the newline, which is not part of it
+        // A line comment runs to the newline. The newline is not part of it.
         src[self.start as usize..self.end as usize].trim_end()
     }
 
-    /// Whether this is a `--[[ ]]` form, which may span lines
+    /// Reports if this is a `--[[ ]]` form. That form can span lines.
     pub fn is_long(&self, src: &str) -> bool {
         self.text(src).contains('\n')
     }
 }
 
-/// Comment and blank line lookup over one file
+/// Looks up comments and blank lines in one file.
 pub struct Trivia<'a> {
     src: &'a str,
     comments: Vec<Comment>,
-    /// Byte offset of the first character of each line
+    /// The byte offset of the first character of each line.
     line_starts: Vec<u32>,
 }
 
@@ -59,16 +61,17 @@ impl<'a> Trivia<'a> {
         }
     }
 
-    /// Zero based line holding this byte
+    /// Returns the zero-based line that holds this byte.
     pub fn line(&self, byte: u32) -> usize {
         self.line_starts.partition_point(|&s| s <= byte) - 1
     }
 
     /*
-    Every comment starting in `[lo, hi)`.
+    Returns every comment that starts in `[lo, hi)`.
 
-    Comments are sorted and never overlap a token, so a byte range is enough to
-    find the ones sitting in a gap, and no per token index has to be built.
+    The comments are sorted, and a comment never overlaps a token. So a byte
+    range is enough to find the comments that sit in a gap. No per-token
+    index is necessary.
     */
     pub fn between(&self, lo: u32, hi: u32) -> &[Comment] {
         let start = self.comments.partition_point(|c| c.start < lo);
@@ -77,7 +80,7 @@ impl<'a> Trivia<'a> {
         &self.comments[start..end.max(start)]
     }
 
-    /// Whether an author left at least one blank line in this range
+    /// Reports if an author left at least one blank line in this range.
     pub fn blank_between(&self, lo: u32, hi: u32) -> bool {
         if lo >= hi {
             return false;
@@ -91,12 +94,12 @@ impl<'a> Trivia<'a> {
     }
 
     /*
-    The comments in a gap, split into the one trailing the code before it and
-    the ones leading the code after.
+    Splits the comments in a gap into two sets: the one comment that trails
+    the code before the gap, and the comments that lead the code after it.
 
-    `lo` is the byte just past the previous token, `hi` the start of the next.
-    A comment trails only when it begins on the same line the previous token
-    ended on, which is the whole of the rule.
+    `lo` is the byte just past the previous token. `hi` is the start of the
+    next token. A comment trails only when it starts on the same line where
+    the previous token ended. That is the whole rule.
     */
     pub fn split(&self, lo: u32, hi: u32) -> Attached<'_> {
         let all = self.between(lo, hi);
@@ -119,12 +122,12 @@ impl<'a> Trivia<'a> {
         }
     }
 
-    /// Whether a blank line separates the code ending at `lo` from the code at `hi`,
-    /// looking past any comments in between so a commented statement keeps its gap
+    /// Reports if a blank line separates the code that ends at `lo` from the code at `hi`.
+    /// It looks past the comments in between, so a commented statement keeps its gap.
     pub fn blank_before_code(&self, lo: u32, hi: u32) -> bool {
         let all = self.between(lo, hi);
 
-        // the gap that matters is the one before the first thing in it
+        // The gap that matters is the gap before the first item in the range.
         let first = all.first().map_or(hi, |c| c.start);
         let trailing_same_line = all
             .first()
@@ -141,14 +144,14 @@ impl<'a> Trivia<'a> {
     }
 }
 
-/// The comments sitting in one gap, sorted into where they belong
+/// The comments that sit in one gap, sorted into the places where they belong.
 #[derive(Debug)]
 pub struct Attached<'t> {
-    /// A comment on the same line as the code before it
+    /// A comment on the same line as the code before it.
     pub trailing: Option<Comment>,
-    /// Comments on their own lines, belonging to whatever follows
+    /// Comments on their own lines. They belong to the code that follows.
     pub leading: &'t [Comment],
-    /// Whether a blank line precedes those leading comments
+    /// Reports if a blank line comes before those leading comments.
     pub blank_before_leading: bool,
 }
 
@@ -212,7 +215,7 @@ mod tests {
         );
     }
 
-    /// Both at once is the common case and the one that is easy to get wrong
+    /// Both at once is the common case, and it is the case that is easy to get wrong.
     #[test]
     fn a_gap_can_hold_a_trailing_and_a_leading_comment() {
         let src = "local a = 1 -- trails\n-- leads\nlocal b = 2\n";
@@ -253,7 +256,7 @@ mod tests {
         assert!(!t.blank_between(1, 2));
     }
 
-    /// A blank line before a commented statement belongs to the statement
+    /// A blank line before a commented statement belongs to the statement.
     #[test]
     fn the_gap_before_a_leading_comment_is_reported() {
         let src = "local a = 1\n\n-- section\nlocal b = 2\n";
@@ -278,7 +281,7 @@ mod tests {
         assert!(!t.blank_before_code(lo, hi));
     }
 
-    /// A trailing comment must not hide the blank line after it
+    /// A trailing comment must not hide the blank line after it.
     #[test]
     fn a_blank_after_a_trailing_comment_still_counts() {
         let src = "local a = 1 -- trails\n\nlocal b = 2\n";
@@ -321,7 +324,7 @@ mod tests {
         assert!(!t.blank_between(5, 5));
     }
 
-    /// A file that is only a comment still has to round trip
+    /// A file that is only a comment must still round-trip.
     #[test]
     fn a_file_of_only_comments_is_all_leading() {
         let src = "-- one\n-- two\n";

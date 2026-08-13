@@ -1,4 +1,4 @@
-//! `larvae lint`, and what its exit code means
+//! These tests cover `larvae lint` and the meaning of its exit code.
 
 use std::io::Write;
 use std::path::Path;
@@ -49,7 +49,7 @@ fn a_clean_file_reports_nothing_and_succeeds() {
     assert!(out.contains("nothing to report"), "{out}");
 }
 
-/// A warning is worth saying and not worth failing over
+/// The command reports a warning, but a warning does not fail the run.
 #[test]
 fn warnings_alone_still_exit_zero() {
     let dir = tempfile::tempdir().unwrap();
@@ -72,7 +72,7 @@ fn an_error_fails_the_run() {
     assert!(out.contains("undefined_variable"), "{out}");
 }
 
-/// Raising a lint to deny is how a project decides what fails CI
+/// A project sets a lint to deny to select what fails CI.
 #[test]
 fn a_warning_raised_to_deny_fails_the_run() {
     let dir = tempfile::tempdir().unwrap();
@@ -104,7 +104,8 @@ fn a_lint_set_to_allow_says_nothing() {
     assert!(out.contains("nothing to report"), "{out}");
 }
 
-/// A project already linting with selene should not have to rewrite its config
+/// A project that already lints with selene does not have to rewrite its
+/// config.
 #[test]
 fn an_existing_selene_config_is_honoured() {
     let dir = tempfile::tempdir().unwrap();
@@ -147,7 +148,7 @@ fn a_file_that_does_not_parse_is_reported_rather_than_crashing() {
     assert!(out.contains("syntax error"), "{out}");
 }
 
-/// One unparsable file must not stop the rest being linted
+/// One unparsable file must not stop the lint of the other files.
 #[test]
 fn a_broken_file_does_not_block_its_neighbours() {
     let dir = tempfile::tempdir().unwrap();
@@ -219,7 +220,7 @@ fn a_suppression_comment_is_honoured_end_to_end() {
     assert!(out.contains("nothing to report"), "{out}");
 }
 
-/// selene's own exclude list is honoured, and [lint] adds to it
+/// larvae obeys selene's own exclude list, and [lint] adds to it.
 #[test]
 fn excluded_paths_are_walked_past() {
     let dir = tempfile::tempdir().unwrap();
@@ -246,7 +247,7 @@ fn excluded_paths_are_walked_past() {
     );
 }
 
-/// Naming the file is saying you meant it, exclude or no exclude
+/// A named file is an explicit request, so the exclude list does not apply.
 #[test]
 fn an_excluded_file_is_still_linted_when_named() {
     let dir = tempfile::tempdir().unwrap();

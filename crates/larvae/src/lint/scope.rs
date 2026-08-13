@@ -1,24 +1,25 @@
 /*!
-What every name in a file refers to.
+The target of every name in a file.
 
-There is already a scope walk under `rules`, built for the transformer, which
+A scope walk already exists under `rules`, built for the transformer. It
 answers one question: is this name a local. The lints need more than that.
-`unused_variable` needs to know whether a binding was ever read, `shadowing`
-needs to know what a binding hides, and `unscoped_variables` needs to tell a
-write that lands on a local from one that quietly creates a global. Rather than
-widen the transformer's walk and make every rule pay for it, this is a second
-one that answers all of them at once.
 
-Lua's binding order is the part worth getting right, and it is not obvious:
+`unused_variable` must know if a binding was read. `shadowing` must know what
+a binding hides. `unscoped_variables` must separate a write to a local from a
+write that silently creates a global. To widen the transformer's walk would
+make every rule pay the cost. Thus this module is a second walk, and it
+answers all these questions at once.
 
-- `local x = x` reads the *outer* `x`, because the right side is evaluated
+Lua's binding order is the part that must be correct, and it is not obvious:
+
+- `local x = x` reads the *outer* `x`, because Lua evaluates the right side
   before the name exists.
 - `local function f` binds `f` before its own body, so it can call itself.
   `local f = function()` does not.
-- a `for` variable exists only inside its loop.
-- `repeat ... until c` evaluates `c` inside the block's scope, so it can see
-  locals the block declared. It is the only place in the language where a
-  scope outlives its block.
+- A `for` variable exists only inside its loop.
+- `repeat ... until c` evaluates `c` inside the block's scope, so `c` can see
+  the locals that the block declared. This is the only place in the language
+  where a scope outlives its block.
 */
 
 use std::collections::HashMap;
@@ -26,7 +27,7 @@ use std::collections::HashMap;
 use crate::syntax::ast::*;
 use crate::syntax::lexer::Tok;
 
-/// What introduced a binding
+/// The construct that introduced a binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Origin {
     /// `local x = ...`
@@ -39,63 +40,63 @@ pub enum Origin {
     Loop,
 }
 
-/// One local, and everything that happened to it
+/// One local, and every read and write of it.
 #[derive(Debug)]
 pub struct Binding<'a> {
     pub name: &'a str,
-    /// Token index of the name where it was declared
+    /// The token index of the name at its declaration.
     pub declared_at: u32,
-    /// Token indexes of every place it is read
+    /// The token indexes of every place that reads it.
     pub reads: Vec<u32>,
-    /// Token indexes of every place it is assigned after declaration
+    /// The token indexes of every place that assigns it after the declaration.
     pub writes: Vec<u32>,
     pub origin: Origin,
-    /// The binding in an enclosing scope this one hides, if any
+    /// The binding in an enclosing scope that this one hides, if any.
     pub shadows: Option<usize>,
     /*
-    The statement that declared it.
+    The statement that declared the binding.
 
-    Kept so `shadowing` can tell `local x = x + 1` from `local x = 2`: the
-    first reads the outer binding inside its own declaration, which is the
-    deliberate form, and the difference is exactly whether the outer read
-    falls inside this span.
+    This span lets `shadowing` separate `local x = x + 1` from
+    `local x = 2`. The first form reads the outer binding inside its own
+    declaration, and is intentional. The test is if the outer read falls
+    inside this span.
     */
     pub declared_in: TokSpan,
 }
 
 impl Names<'_> {
-    /// Whether this name reference is a global, meaning nothing in the file bound it
+    /// Returns true if this name reference is a global. Nothing in the file bound it.
     pub fn is_global(&self, token: u32) -> bool {
         self.undefined_set.contains(&token)
     }
 }
 
 impl Binding<'_> {
-    /// Whether a name starting with `_` is deliberately unused, by convention
+    /// Returns true if the name starts with `_`, which marks it as unused by convention.
     pub fn is_ignored(&self) -> bool {
         self.name.starts_with('_')
     }
 }
 
-/// Everything the walk learned
+/// Everything that the walk learned.
 #[derive(Debug, Default)]
 pub struct Names<'a> {
     pub bindings: Vec<Binding<'a>>,
-    /// Token indexes of reads that no binding in the file explains
+    /// The token indexes of reads that no binding in the file explains.
     pub undefined: Vec<u32>,
     /*
-    The same set, for lookup.
+    The same set, kept for fast lookup.
 
-    Several lints ask "is this name a global" once per expression, and a
-    linear scan of `undefined` makes that quadratic in a file with many
-    globals, which describes every Roblox script.
+    Several lints ask once per expression if a name is a global. With a
+    linear scan of `undefined`, that cost is quadratic in a file with many
+    globals. Every Roblox script is such a file.
     */
     undefined_set: std::collections::HashSet<u32>,
-    /// Token indexes of writes that create a global rather than set a local
+    /// The token indexes of writes that create a global and do not set a local.
     pub global_writes: Vec<u32>,
-    /// Binding index for each declaration token, for a lint given a token
+    /// The binding index for each declaration token, for a lint that holds a token.
     pub by_token: HashMap<u32, usize>,
-    /// Binding index for each read token, so a call site can find its callee
+    /// The binding index for each read token, so a call site can find its callee.
     pub read_of: HashMap<u32, usize>,
 }
 
@@ -112,14 +113,14 @@ pub fn resolve<'a>(src: &'a str, toks: &'a [Tok], chunk: &'a Chunk) -> Names<'a>
     binder.pop_scope();
 
     /*
-    A name the file assigns as a global is defined for the whole file.
+    A name that the file assigns as a global is defined for the whole file.
 
-    The walk cannot know this as it goes, because `function onTouch()` at the
-    top and `Connect(onTouch)` at the bottom are resolved in that order and the
-    binding is never entered into a scope. Reading a global before the line
-    that sets it is nil at runtime, but it is also how every Roblox script is
-    written, so the lenient answer is the right one: collect what the file
-    defines, then stop calling those undefined.
+    The walk cannot know this while it runs. It resolves `function onTouch()`
+    at the top and `Connect(onTouch)` at the bottom in that order, and the
+    binding never enters a scope. To read a global before the line that sets
+    it gives nil at runtime. But authors write every Roblox script this way,
+    so the lenient answer is correct. The walk collects what the file
+    defines, then stops reporting those names as undefined.
     */
     let defined: std::collections::HashSet<&str> = binder
         .out
@@ -146,9 +147,9 @@ pub fn resolve<'a>(src: &'a str, toks: &'a [Tok], chunk: &'a Chunk) -> Names<'a>
 struct Binder<'a> {
     src: &'a str,
     toks: &'a [Tok],
-    /// Each scope holds the names it introduced and which binding they are
+    /// Each scope holds the names that it introduced, and their binding indexes.
     scopes: Vec<Vec<(&'a str, usize)>>,
-    /// The statement being walked, which is what any new binding belongs to
+    /// The statement that the walk is in. A new binding belongs to it.
     current: TokSpan,
     out: Names<'a>,
 }
@@ -170,7 +171,7 @@ impl<'a> Binder<'a> {
         self.scopes.pop();
     }
 
-    /// Innermost binding of a name, which is the one a reference means
+    /// Returns the innermost binding of a name. A reference means that binding.
     fn lookup(&self, name: &str) -> Option<usize> {
         self.scopes
             .iter()
@@ -218,11 +219,11 @@ impl<'a> Binder<'a> {
     }
 
     /*
-    A bare name on the left of an assignment.
+    Record a bare name on the left of an assignment.
 
-    If nothing bound it, this statement is what creates it, and it creates a
-    global. That is the whole of `unscoped_variables`: in Lua the difference
-    between a local and a global is one keyword, and leaving it out is silent.
+    If nothing bound the name, this statement creates it, and it creates a
+    global. That is the full basis of `unscoped_variables`. In Lua, one
+    keyword separates a local from a global, and to omit it causes no error.
     */
     fn write(&mut self, span: TokSpan) {
         let name = self.name_of(span);
@@ -242,7 +243,7 @@ impl<'a> Binder<'a> {
         }
     }
 
-    /// A block with its own scope, which is every block except a repeat's
+    /// A block with its own scope. Every block has one, except a repeat's block.
     fn scoped_block(&mut self, block: &'a Block) {
         self.push_scope();
         self.block(block);
@@ -260,11 +261,11 @@ impl<'a> Binder<'a> {
         match stmt {
             Stmt::Empty(_) | Stmt::Break(_) | Stmt::Continue(_) => {}
 
-            // `type Foo = Types.Foo` is a use of the local `Types`
+            // `type Foo = Types.Foo` is a use of the local `Types`.
             Stmt::TypeAlias(n) => self.type_reads(n.span),
 
-            // the values are evaluated before the names exist, so `local x = x`
-            // reads whatever `x` already meant
+            // Lua evaluates the values before the names exist, so `local x = x`
+            // reads the previous meaning of `x`.
             Stmt::Local(n) => {
                 for value in &n.values {
                     self.expr(value);
@@ -288,7 +289,7 @@ impl<'a> Binder<'a> {
                     match target {
                         Expr::Name(span) => self.write(*span),
 
-                        // `t.k = v` reads `t`, it does not bind anything
+                        // `t.k = v` reads `t`. It does not bind anything.
                         other => self.expr(other),
                     }
                 }
@@ -304,8 +305,8 @@ impl<'a> Binder<'a> {
             }
 
             /*
-            `until` is evaluated inside the block's scope, so the scope is
-            popped after the condition rather than before it. This is the only
+            Lua evaluates `until` inside the block's scope, so the walk pops
+            the scope after the condition and not before it. This is the only
             construct in the language that works this way.
             */
             Stmt::Repeat(n) => {
@@ -356,9 +357,9 @@ impl<'a> Binder<'a> {
             }
 
             /*
-            `function a.b.c()` does not bind anything, it reads `a` and writes
-            through it. `function f()` with a bare name writes a global unless
-            something already bound `f`.
+            `function a.b.c()` does not bind anything. It reads `a` and
+            writes through it. `function f()` with a bare name writes a
+            global, unless something already bound `f`.
             */
             Stmt::Function(n) => {
                 if let Some(first) = n.path.first() {
@@ -372,7 +373,7 @@ impl<'a> Binder<'a> {
                 self.function_body(&n.body, n.is_method);
             }
 
-            // bound before its own body, so it can call itself
+            // The walk binds the name before the body, so the function can call itself.
             Stmt::LocalFunction(n) => {
                 self.declare(n.name, Origin::LocalFunction);
                 self.function_body(&n.body, false);
@@ -390,10 +391,10 @@ impl<'a> Binder<'a> {
         self.push_scope();
 
         /*
-        A method's implicit `self` is a real binding, so `function t:m()` can
-        use it without being told it is undefined. It is declared at the body's
-        first token because it has no name token of its own, and marked as a
-        parameter so nothing reports it unused.
+        A method's implicit `self` is a real binding, so `function t:m()`
+        can use it without an undefined report. The walk declares it at the
+        body's first token, because it has no name token of its own. The
+        walk marks it as a parameter, so no lint reports it as unused.
         */
         if is_method {
             let index = self.out.bindings.len();
@@ -448,11 +449,11 @@ impl<'a> Binder<'a> {
             | Expr::String(_) => {}
 
             /*
-            An interpolated string holds expressions, but the lexer keeps it as
-            one opaque token, so the names inside it are invisible here. The
-            consequence is that a local used only inside a backtick string
-            looks unused, so those reads are recovered by scanning the token's
-            text for identifiers rather than by parsing it.
+            An interpolated string holds expressions, but the lexer keeps it
+            as one opaque token, so the names inside it are not visible
+            here. As a result, a local that appears only inside a backtick
+            string looks unused. Thus the walk recovers those reads: it
+            scans the token's text for identifiers, and does not parse it.
             */
             Expr::InterpString(span) => self.interp_reads(*span),
 
@@ -465,7 +466,7 @@ impl<'a> Binder<'a> {
                     match field {
                         TableField::Positional(v) => self.expr(v),
 
-                        // the key is a name, not a reference to one
+                        // The key is a name, not a reference to one.
                         TableField::Named { value, .. } => self.expr(value),
 
                         TableField::Computed { key, value } => {
@@ -539,16 +540,18 @@ impl<'a> Binder<'a> {
     }
 
     /*
-    Names referenced from inside a type.
+    Record the names that a type references.
 
-    The tree keeps types as token spans and never interprets them, so a local
-    used only from a type, `local T = require(...)` then `type Foo = T.Foo`,
-    would otherwise look unused. Walking the tokens recovers it.
+    The tree keeps types as token spans and never interprets them. Thus a
+    local that only a type uses, `local T = require(...)` then
+    `type Foo = T.Foo`, would look unused. A walk over the tokens recovers
+    the read.
 
-    Approximate in the same direction as the interpolated string scan: a name
-    matching a local counts as a read even when it was really a type of the
-    same name. Over counting keeps a lint quiet where it might have spoken,
-    which is far better than reporting a live variable as unused.
+    The scan is approximate in the same direction as the interpolated
+    string scan. A name that matches a local counts as a read, even when it
+    was really a type of the same name. To count too much keeps a lint
+    quiet where it could speak. That is far better than to report a live
+    variable as unused.
     */
     fn type_reads(&mut self, span: TokSpan) {
         for i in span.start..span.end {
@@ -559,7 +562,7 @@ impl<'a> Binder<'a> {
                 continue;
             }
 
-            // a name after a dot or a colon is a field, not a reference
+            // A name after a dot or a colon is a field, not a reference.
             if i > span.start && matches!(self.tok(i - 1), "." | ":") {
                 continue;
             }
@@ -573,13 +576,13 @@ impl<'a> Binder<'a> {
     }
 
     /*
-    Identifiers inside a `{...}` hole of an interpolated string.
+    Record the identifiers inside a `{...}` hole of an interpolated string.
 
-    Approximate on purpose. A name here is counted as a read of whatever it
-    resolves to, which can over count if the same word appears as a table key
-    inside the hole. Over counting means a lint stays quiet where it might have
-    spoken; under counting would mean reporting a live variable as unused,
-    which is the error people actually notice.
+    The scan is approximate by design. The walk counts a name here as a
+    read of its resolved binding. This can count too much if the same word
+    appears as a table key inside the hole. To count too much keeps a lint
+    quiet where it could speak. To count too little would report a live
+    variable as unused, and users notice that error.
     */
     fn interp_reads(&mut self, span: TokSpan) {
         let tok = &self.toks[span.start as usize];
@@ -612,7 +615,7 @@ impl<'a> Binder<'a> {
                         i += 1;
                     }
 
-                    // a name straight after a dot is a field, not a reference
+                    // A name directly after a dot is a field, not a reference.
                     if start > 0 && bytes[start - 1] == b'.' {
                         continue;
                     }
@@ -684,7 +687,7 @@ mod tests {
         assert_eq!(names.bindings[0].writes.len(), 1);
     }
 
-    /// The rule everyone gets wrong, the right side is evaluated first
+    /// The rule that users often get wrong: Lua evaluates the right side first.
     #[test]
     fn local_x_equals_x_reads_the_outer_x() {
         let r = parse("local x = 1\ndo\n\tlocal x = x\nend\n");
@@ -705,7 +708,7 @@ mod tests {
         assert!(names.undefined.is_empty());
     }
 
-    /// Unlike a local function, which is the difference worth having a test for
+    /// This differs from a local function, and the difference deserves a test.
     #[test]
     fn a_local_assigned_a_function_cannot() {
         let r = parse("local f = function(n)\n\treturn f(n)\nend\n");
@@ -713,7 +716,7 @@ mod tests {
         assert_eq!(r.names().undefined.len(), 1, "f is not bound yet");
     }
 
-    /// `undefined` holds every unbound name, globals included, so count only `i`
+    /// `undefined` holds every unbound name, globals included, so the test counts only `i`.
     #[test]
     fn a_loop_variable_does_not_escape_its_loop() {
         let r = parse("for i = 1, 10 do\n\tprint(i)\nend\nprint(i)\n");
@@ -743,7 +746,7 @@ mod tests {
         assert!(names.bindings.iter().all(|b| b.reads.len() == 1));
     }
 
-    /// The one place a scope outlives its block
+    /// The one place where a scope outlives its block.
     #[test]
     fn an_until_condition_sees_the_blocks_locals() {
         let r = parse("repeat\n\tlocal done = check()\nuntil done\n");
@@ -850,7 +853,7 @@ mod tests {
         assert!(r.names().bindings[0].reads.is_empty());
     }
 
-    /// The lexer keeps an interpolated string whole, so its reads are recovered
+    /// The lexer keeps an interpolated string whole, so the walk recovers its reads.
     #[test]
     fn a_name_used_only_inside_an_interpolation_still_counts_as_read() {
         let r = parse("local who = \"world\"\nprint(`hello {who}`)\n");

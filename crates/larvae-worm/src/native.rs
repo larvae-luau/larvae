@@ -1,12 +1,12 @@
 /*!
-The native transport: everything a worm shipped as an executable needs.
+The native transport: all the parts that a worm shipped as an executable needs.
 
-A native worm is an ordinary program larvae spawns and keeps alive, speaking
-a 4 byte little endian length then that many bytes of JSON, in both
-directions, over stdin and stdout. This module owns that dance the way
-[`frontend!`](crate::frontend) owns the wasm one: implement [`Handler`] for
-your worm's state and hand it to [`serve`], which loops until larvae closes
-the pipe.
+A native worm is an ordinary program that larvae starts and keeps alive. Each
+message is a 4 byte little endian length, then that many bytes of JSON, in
+both directions, over stdin and stdout. This module owns that protocol, in the
+same way as [`frontend!`](crate::frontend) owns the wasm one. Implement
+[`Handler`] for the state of your worm and give it to [`serve`]. The function
+loops until larvae closes the pipe.
 
 ```no_run
 use larvae_worm::native::{serve, Doc, Format, Handler};
@@ -35,7 +35,7 @@ fn main() {
 }
 ```
 
-# The requests larvae sends
+# The requests that larvae sends
 
 ```jsonc
 {"op": "init", "config": "pretty = true\n", "rules": "", "doc_version": 1}
@@ -44,8 +44,8 @@ fn main() {
 {"op": "lint", "source": "..."}        // reply below
 ```
 
-A format reply carries a layout document larvae renders with the project's
-own width and indentation, so no worm reimplements the printer:
+A format reply carries a layout document. larvae renders it with the width
+and indentation of the project, so no worm reimplements the printer:
 
 ```jsonc
 { "ok": true, "doc": 1,
@@ -53,8 +53,8 @@ own width and indentation, so no worm reimplements the printer:
   "comments": [[0, 10]] }
 ```
 
-A lint reply carries findings without a severity, because the host owns
-levels, suppression and exit codes:
+A lint reply carries findings without a severity, because the host owns the
+levels, the suppression, and the exit codes:
 
 ```jsonc
 { "ok": true,
@@ -62,103 +62,103 @@ levels, suppression and exit codes:
   "comments": [[0, 10]] }
 ```
 
-Errors reply `{"ok": false, "error": "why"}` and the worm keeps serving; one
-bad file must not end a watch session.
+An error replies `{"ok": false, "error": "why"}`, and the worm continues to
+serve. One bad file must not stop a watch session.
 */
 
 use std::io::{Read, Write};
 
 use serde::{Deserialize, Serialize};
 
-/// The layout contract revision this module speaks, `doc` in a format reply
+/// The layout contract revision this module speaks. It is `doc` in a format reply.
 pub const DOC_VERSION: u32 = 1;
 
 /**
-One piece of layout, exactly the shape larvae deserializes.
+One piece of layout, in exactly the shape that larvae deserializes.
 
-Source text crosses as a `Src` span rather than a copy, and `Lit` is reserved
-for text the worm generated. `Host` marks a span of ordinary Luau larvae
-formats itself and splices in, which is what lets a worm own its markup and
-no Luau at all.
+Source text crosses as a `Src` span and not as a copy. `Lit` is reserved for
+text that the worm generated. `Host` marks a span of ordinary Luau that
+larvae formats itself and splices in. This lets a worm own its markup and no
+Luau at all.
 */
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Doc {
-    /// Nothing at all
+    /// No output at all
     Nil,
-    /// A verbatim slice of the source, by byte range
+    /// An exact slice of the source, by byte range
     Src(u32, u32),
-    /// Text the worm generated
+    /// Text that the worm generated
     Lit(String),
     /// A space when flat, a newline when broken
     Line,
     /// Nothing when flat, a newline when broken
     Soft,
-    /// A newline either way, which forces every enclosing group to break
+    /// A newline in both modes. It forces every enclosing group to break.
     Hard,
-    /// A blank line the author wrote, kept because it separates ideas
+    /// A blank line that the author wrote. It is kept because it separates ideas.
     Blank,
-    /// One thing when the enclosing group is flat, another when it breaks
+    /// One value when the enclosing group is flat, an other value when it breaks
     IfBreak(Box<Doc>, Box<Doc>),
-    /// Flat if it fits the line, broken if it does not
+    /// Flat when it fits the line, broken when it does not fit
     Group(Box<Doc>),
-    /// One more level of indentation for anything inside
+    /// One more level of indentation for the content inside
     Indent(Box<Doc>),
-    /// In order
+    /// The parts, in order
     Concat(Vec<Doc>),
     /// A span of ordinary Luau for larvae to format and splice in
     Host {
-        /// Byte offset the span starts at
+        /// The byte offset where the span starts
         start: u32,
-        /// Byte offset one past its end
+        /// The byte offset one past its end
         end: u32,
-        /// How larvae parses it
+        /// The mode in which larvae parses it
         parse: HostParse,
     },
 }
 
-/// How a [`Doc::Host`] span parses
+/// The parse mode of a [`Doc::Host`] span
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HostParse {
-    /// Statements, the shape between markup regions
+    /// Statements, which is the shape between markup regions
     Block,
     /// One expression, a `{expr}` hole or attribute value
     Expr,
 }
 
 impl Doc {
-    /// A verbatim slice of the source
+    /// An exact slice of the source
     pub fn src(start: u32, end: u32) -> Self {
         Self::Src(start, end)
     }
 
-    /// Text the worm generated
+    /// Text that the worm generated
     pub fn lit(s: impl Into<String>) -> Self {
         Self::Lit(s.into())
     }
 
-    /// Flat if it fits, broken if it does not
+    /// Flat when it fits, broken when it does not fit
     pub fn group(inner: Doc) -> Self {
         Self::Group(Box::new(inner))
     }
 
-    /// One more level of indentation for anything inside
+    /// One more level of indentation for the content inside
     pub fn indent(inner: Doc) -> Self {
         Self::Indent(Box::new(inner))
     }
 
-    /// `broken` only when the enclosing group breaks, `flat` otherwise
+    /// `broken` only when the enclosing group breaks, and `flat` in the other case
     pub fn if_break(flat: Doc, broken: Doc) -> Self {
         Self::IfBreak(Box::new(flat), Box::new(broken))
     }
 
-    /// The parts in order
+    /// The parts, in order
     pub fn concat(parts: impl IntoIterator<Item = Doc>) -> Self {
         Self::Concat(parts.into_iter().collect())
     }
 
-    /// `parts` separated by `sep`, which is the shape most lists take
+    /// `parts` separated by `sep`, which is the shape that most lists take
     pub fn join(sep: Doc, parts: impl IntoIterator<Item = Doc>) -> Self {
         let mut out = Vec::new();
 
@@ -182,7 +182,7 @@ impl Doc {
         }
     }
 
-    /// A span holding one Luau expression for larvae to format
+    /// A span that holds one Luau expression for larvae to format
     pub fn host_expr(start: u32, end: u32) -> Self {
         Self::Host {
             start,
@@ -192,22 +192,22 @@ impl Doc {
     }
 }
 
-/// One problem found, severity deliberately absent since the host owns it
+/// One problem found. The severity is absent by intent, because the host owns it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Finding {
-    /// Byte range in the source
+    /// The byte range in the source
     pub span: (u32, u32),
-    /// The lint's name, which must be declared in your `worm.toml` `[lints]`
+    /// The name of the lint. You must declare it in `[lints]` in your `worm.toml`.
     pub lint: String,
-    /// What is wrong
+    /// The description of the problem
     pub message: String,
-    /// How to fix it, when there is something short to say
+    /// The fix, when there is a short fix to state
     #[serde(skip_serializing_if = "Option::is_none")]
     pub help: Option<String>,
 }
 
 impl Finding {
-    /// A finding, help added with [`with_help`](Self::with_help)
+    /// A new finding. Add help with [`with_help`](Self::with_help).
     pub fn new(lint: impl Into<String>, span: (u32, u32), message: impl Into<String>) -> Self {
         Self {
             span,
@@ -225,35 +225,35 @@ impl Finding {
     }
 }
 
-/// What [`Handler::format`] returns
+/// The value that [`Handler::format`] returns
 #[derive(Debug, Clone, PartialEq)]
 pub struct Format {
     /// The layout for the whole file
     pub document: Doc,
-    /// Every comment's span, so larvae can refuse a layout that lost one
+    /// The span of every comment, so larvae can refuse a layout that lost one
     pub comments: Vec<(u32, u32)>,
 }
 
-/// What [`Handler::lint`] returns
+/// The value that [`Handler::lint`] returns
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Lint {
     /// The problems found
     pub findings: Vec<Finding>,
-    /// Comment spans, so `-- larvae: allow(...)` works in a claimed file.
-    /// Leave empty to opt out of suppression.
+    /// The comment spans, so `-- larvae: allow(...)` works in a claimed file.
+    /// Leave the list empty to remove your findings from suppression.
     pub comments: Vec<(u32, u32)>,
 }
 
 /**
-A worm's operations, each defaulting to a refusal.
+The operations of a worm. Each default is a refusal.
 
-Implement the ones your worm.toml declares: `transform` for a `[frontend]`,
-`format` when it says `fmt = true`, `lint` when it declares `[lints]`. An op
-larvae never sends is never called, so the defaults only speak when a
-manifest and its worm disagree.
+Implement the operations that your worm.toml declares: `transform` for a
+`[frontend]`, `format` when it sets `fmt = true`, and `lint` when it declares
+`[lints]`. larvae does not call an op that it does not send. Thus the defaults
+answer only when a manifest and its worm disagree.
 */
 pub trait Handler {
-    /// Settings and enabled rules, once, before any file
+    /// The settings and enabled rules, sent once before the first file
     fn init(&mut self, config: &str, rules: &str) -> Result<(), String> {
         let _ = (config, rules);
 
@@ -267,14 +267,14 @@ pub trait Handler {
         Err("this worm does not transform".into())
     }
 
-    /// Lay a claimed file out for larvae to render
+    /// Format a claimed file for larvae to render
     fn format(&mut self, source: &str) -> Result<Format, String> {
         let _ = source;
 
         Err("this worm does not format".into())
     }
 
-    /// Report a claimed file's problems
+    /// Report the problems of a claimed file
     fn lint(&mut self, source: &str) -> Result<Lint, String> {
         let _ = source;
 
@@ -290,7 +290,7 @@ enum Request {
         config: String,
         #[serde(default)]
         rules: String,
-        /// Absent from hosts older than the format op, which never send it
+        /// A host older than the format op does not send this field
         #[serde(default)]
         doc_version: u32,
     },
@@ -308,11 +308,11 @@ enum Request {
 /**
 Serve larvae until it closes the pipe.
 
-Handler errors become `{"ok": false, "error": ...}` replies rather than ending
-the process, matching how larvae treats them: an error against one file, never
-the end of a run. The function only returns when stdin reaches end of file,
-which is larvae dropping the worm, so returning `()` from `main` right after
-is the clean shutdown.
+A handler error becomes an `{"ok": false, "error": ...}` reply and does not
+stop the process. This matches the treatment on the larvae side: an error
+counts against one file and does not stop a run. The function returns only
+when stdin reaches end of file, which means larvae dropped the worm. Thus a
+return of `()` from `main` directly after is the clean shutdown.
 */
 pub fn serve(mut handler: impl Handler) {
     let stdin = std::io::stdin();
@@ -342,8 +342,8 @@ fn answer(handler: &mut impl Handler, request: Request) -> Vec<u8> {
             rules,
             doc_version,
         } => {
-            // 0 is a host from before the format op existed, which will never
-            // send one, so only an actual mismatch is worth refusing over
+            // 0 means a host from before the format op existed. Such a host
+            // does not send one, so only a real mismatch is a reason to refuse.
             if doc_version != 0 && doc_version != DOC_VERSION {
                 return error_reply(format!(
                     "this worm speaks doc v{DOC_VERSION}, larvae speaks v{doc_version}"
@@ -389,7 +389,7 @@ fn error_reply(why: String) -> Vec<u8> {
         .expect("a reply always serialises")
 }
 
-/// One length prefixed frame, or `None` at end of file
+/// Read one length prefixed frame, or `None` at end of file
 fn read_frame(input: &mut impl Read) -> Option<Vec<u8>> {
     let mut len = [0u8; 4];
     input.read_exact(&mut len).ok()?;
@@ -403,7 +403,7 @@ fn read_frame(input: &mut impl Read) -> Option<Vec<u8>> {
 fn write_frame(output: &mut impl Write, body: &[u8]) {
     let len = u32::try_from(body.len()).expect("a reply under 4GB");
 
-    // a write failing means larvae is gone, and there is nobody left to tell
+    // a failed write means larvae is gone, and there is no receiver left to tell
     let _ = output.write_all(&len.to_le_bytes());
     let _ = output.write_all(body);
     let _ = output.flush();
@@ -413,7 +413,7 @@ fn write_frame(output: &mut impl Write, body: &[u8]) {
 mod tests {
     use super::*;
 
-    /// The exact JSON larvae's own shape tests pin, from the guest side
+    /// The exact JSON that the shape tests of larvae pin, from the guest side
     #[test]
     fn the_wire_doc_shape_matches_the_host() {
         let doc = Doc::concat([

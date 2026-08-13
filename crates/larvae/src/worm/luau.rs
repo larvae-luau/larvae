@@ -1,10 +1,10 @@
 /*!
 The Luau guest form, over `mlua`.
 
-Nothing crosses a memory boundary here. mlua marshals strings natively, so a
-Luau worm is an ordinary function and the whole ptr/len dance in [`super::host`]
-has no equivalent. That is the point of offering the form: a transform somebody
-writes in an afternoon should not need a toolchain or a `wasm32` target.
+No data crosses a memory boundary here. mlua marshals strings natively. Thus a
+Luau worm is an ordinary function, and the ptr/len protocol in [`super::host`]
+has no equivalent. This is the purpose of the form: a small transform that an
+author writes quickly must not need a toolchain or a `wasm32` target.
 
 ```lua
 return {
@@ -27,24 +27,26 @@ use super::Outcome;
 use super::ctx::FileCtx;
 use crate::rules::edits::Edit;
 
-/// A runaway worm dies instead of hanging the build, checked every N VM instructions
+/// Larvae checks every N VM instructions and stops a worm that runs too long. Thus a
+/// worm that does not stop cannot hang the build.
 const INTERRUPT_EVERY: u32 = 1_000_000;
 
-/// Ceiling on one worm's VM, generous for a transform and fatal for a leak
+/// The memory limit for one worm VM. It is large for a transform and stops a leak.
 const MEMORY_LIMIT: usize = 256 * 1024 * 1024;
 
 /// A loaded Luau worm
 pub struct LuauWorm {
-    /// Owns the VM `compile` came out of, so the worm outlives nothing it needs
+    /// The worm owns the VM that `compile` came from, so each item the worm needs stays alive
     #[allow(dead_code)]
     lua: mlua::Lua,
-    /// The front-end entry point, absent when the worm only ships rules
+    /// The front-end entry point. It is absent when the worm supplies only rules.
     compile: Option<mlua::Function>,
-    /// `visit` per rule the worm declared, by rule name
+    /// The `visit` function for each rule the worm declared, keyed by rule name
     rules: BTreeMap<String, mlua::Function>,
-    /// Optional, called once with settings before any file is seen
+    /// Optional. Larvae calls it once with the settings before the worm sees a file.
     init: Option<mlua::Function>,
-    /// Interrupt budget, reset per call so the cap is per file and not per build
+    /// The interrupt budget. A reset before each call makes the limit apply
+    /// per file, not per build.
     budget: Arc<AtomicU32>,
 }
 
@@ -57,10 +59,10 @@ impl LuauWorm {
             .context("could not bound the worm's memory")?;
 
         /*
-        Luau's own sandbox, which freezes the globals and gives each chunk a
-        fresh environment. It is what makes "purity is enforced, not requested"
-        true rather than aspirational, and it is the reason the Luau form does
-        not need the import-table argument the wasm form leans on.
+        This is the sandbox of Luau itself. It freezes the globals and gives
+        each chunk a new environment. The sandbox enforces purity and does not
+        only request it. For this reason the Luau form does not need the
+        import-table argument that the wasm form uses.
         */
         lua.sandbox(true).context("could not sandbox the worm")?;
 
@@ -101,9 +103,10 @@ impl LuauWorm {
         }
 
         /*
-        A worm that loops forever would otherwise hang the build with no way
-        out, so the VM is interrupted periodically and asked to stop. Armed
-        once here, and the budget is reset per call so the cap is per file.
+        A worm that loops forever would hang the build with no escape. Thus
+        larvae interrupts the VM at intervals and stops the worm. Larvae arms
+        the interrupt once here. A reset of the budget before each call makes
+        the limit apply per file.
         */
         let budget = Arc::new(AtomicU32::new(0));
         let counter = Arc::clone(&budget);
@@ -125,11 +128,11 @@ impl LuauWorm {
         })
     }
 
-    /// Hand over settings once, before any file is seen
+    /// Give the settings to the worm once, before the worm sees a file
     ///
-    /// A Luau worm gets real tables rather than a TOML string, because mlua
-    /// marshals them natively and making an author parse TOML in Luau would be
-    /// hostile. The wasm form gets the string, since that is what is natural there.
+    /// A Luau worm gets real tables and not a TOML string. mlua marshals the
+    /// tables natively, and an author must not have to parse TOML in Luau. The
+    /// wasm form gets the string, because the string is the natural shape there.
     pub fn init(
         &mut self,
         config: &toml::Value,
@@ -152,15 +155,15 @@ impl LuauWorm {
         Ok(())
     }
 
-    /// Rule names this worm actually implements
+    /// The rule names this worm implements
     pub fn rule_names(&self) -> impl Iterator<Item = &str> {
         self.rules.keys().map(String::as_str)
     }
 
     /*
-    Run one rule over every node its filter matched. The tree, the source and
-    the edit queue live in Lua app data for the duration, so a handle is only
-    ever a pair of integers and never a pointer into anything of ours.
+    Run one rule over every node that its filter matched. The tree, the source,
+    and the edit queue live in the Lua app data while the rule runs. Thus a
+    handle is only a pair of integers and never a pointer into host data.
     */
     pub fn run_rule(
         &mut self,
@@ -214,7 +217,7 @@ impl LuauWorm {
                 ok: true,
             }),
 
-            // a worm reporting a problem rather than producing output
+            // the worm reports a problem and does not produce output
             Ok(mlua::Value::Nil) => bail!("worm returned nothing"),
 
             Ok(other) => bail!("worm returned {}, expected a string", other.type_name()),
@@ -228,9 +231,10 @@ impl LuauWorm {
 }
 
 /*
-A handle is two integers and nothing else. It deliberately does not hold the
-file it came from, so that stashing one in a global and using it on the next
-file is caught by the epoch rather than silently reading the wrong tree.
+A handle is two integers and nothing else. By intent, it does not hold the
+file it came from. If a worm stores a handle in a global and uses it on the
+next file, the epoch check catches this. Thus the handle does not read the
+wrong tree silently.
 */
 #[derive(Clone, Copy)]
 struct NodeRef {
@@ -244,7 +248,7 @@ impl NodeRef {
     }
 }
 
-// Needed to take a NodeRef as a function argument rather than an AnyUserData
+// This impl lets a function take a NodeRef argument and not an AnyUserData
 impl mlua::FromLua for NodeRef {
     fn from_lua(value: mlua::Value, _: &mlua::Lua) -> mlua::Result<Self> {
         match value {
@@ -258,7 +262,7 @@ impl mlua::FromLua for NodeRef {
     }
 }
 
-/// The file currently being walked, or an error if a worm called us outside one
+/// The file that larvae walks now, or an error if a worm calls this outside a walk
 fn current(lua: &mlua::Lua) -> mlua::Result<Arc<FileCtx>> {
     lua.app_data_ref::<Arc<FileCtx>>()
         .map(|file| Arc::clone(&file))
@@ -292,7 +296,7 @@ impl mlua::UserData for NodeRef {
             Ok(file.table.text(this.id, &file.src).unwrap_or("").to_owned())
         });
 
-        // byte offsets into the original source, half open
+        // byte offsets into the original source, as a half open range
         methods.add_method("span", |lua, this, ()| {
             let file = checked(lua, this)?;
             let node = file
@@ -348,7 +352,7 @@ fn edit_remove(lua: &mlua::Lua, (_ctx, node): (mlua::Value, NodeRef)) -> mlua::R
         .map_err(|e| mlua::Error::runtime(e.to_string()))
 }
 
-/// TOML to a Luau value, so a Luau worm reads a table rather than a string
+/// Convert TOML to a Luau value, so a Luau worm reads a table and not a string
 fn to_lua(lua: &mlua::Lua, value: &toml::Value) -> mlua::Result<mlua::Value> {
     Ok(match value {
         toml::Value::String(s) => mlua::Value::String(lua.create_string(s)?),
@@ -392,9 +396,9 @@ fn to_lua_opt(lua: &mlua::Lua, value: Option<&toml::Value>) -> mlua::Result<mlua
 }
 
 /*
-A Luau error arrives with the chunk name and line glued to the front and a
-traceback glued to the back. Neither helps a user who wants to know what the
-worm objected to, so take the message the worm actually wrote.
+A Luau error arrives with the chunk name and line at the front and a traceback
+at the back. These parts do not help a user who wants the reason from the
+worm. Thus this function extracts the message that the worm wrote.
 */
 fn worm_message(e: &mlua::Error) -> String {
     let full = match e {
@@ -684,7 +688,7 @@ return {
         );
     }
 
-    /// The whole reason handles carry an epoch
+    /// This test shows the reason a handle carries an epoch
     #[test]
     fn a_handle_stashed_across_files_is_caught() {
         let mut w = LuauWorm::load(
@@ -712,7 +716,7 @@ return {
         let ids = matching(&first, Kind::Number);
         w.run_rule("stash", Arc::clone(&first), &ids).unwrap();
 
-        // second file, and the worm reaches for the handle it kept
+        // on the second file, the worm uses the handle it kept
         let second = file("local b = 2\n");
         let ids = matching(&second, Kind::Number);
         let err = w.run_rule("stash", Arc::clone(&second), &ids).unwrap_err();

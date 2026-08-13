@@ -1,14 +1,14 @@
 /*!
-`[lint]`, and the `selene.toml` a project probably already has.
+The `[lint]` configuration, and the `selene.toml` file that a project can already have.
 
-Same bargain as the formatter's config: a project already linting with selene
-should be able to point larvae at it and get its own settings, so `selene.toml`
-is read directly and `[lint]` in `larvae.toml` layers over it. selene's names
-work in `[lint]` too, `config` for the per lint table and its `std` spellings,
-so the file can move over whole rather than key by key.
+This follows the same rule as the formatter's config. A project that already
+lints with selene can point larvae at its settings. Thus larvae reads
+`selene.toml` directly, and `[lint]` in `larvae.toml` overrides it. selene's
+names also work in `[lint]`: `config` for the per-lint table, and selene's
+`std` spellings. This lets the user move the file as one unit, not key by key.
 
-A key we do not know is ignored in `selene.toml`, which is selene's file, and
-still an error in `larvae.toml`, where it is a typo.
+larvae ignores an unknown key in `selene.toml`, because that file belongs to
+selene. An unknown key in `larvae.toml` is an error, because there it is a typo.
 */
 
 use std::collections::BTreeMap;
@@ -19,40 +19,40 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::config::Excludes;
 
-/// How loudly a lint speaks, spelled as selene spells it
+/// The report level of a lint. larvae uses the same spellings as selene.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Level {
-    /// Off
+    /// The lint is off.
     Allow,
-    /// Reported, exit code unaffected
+    /// larvae reports the finding. The exit code does not change.
     #[default]
     Warn,
-    /// Reported, and the run fails
+    /// larvae reports the finding, and the run fails.
     Deny,
 }
 
-/// Which set of globals a bare name is checked against
+/// The set of globals that larvae checks a bare name against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StdLib {
-    /// Luau's own globals only
+    /// Only the globals that Luau itself defines.
     Luau,
-    /// Luau plus the Roblox API surface
+    /// The Luau globals plus the Roblox API surface.
     #[default]
     Roblox,
-    /// Nothing, so every bare name is undefined
+    /// No globals, so every bare name is undefined.
     None,
 }
 
 impl StdLib {
     /*
-    The set a name asks for, selene's spellings included.
+    Parse a `std` name into a set of globals. selene's spellings are accepted.
 
-    selene's `std` names a library file and can chain them with `+`, as in
-    `roblox+testez`, so only the first name decides. The Lua dialects all land
-    on Luau, which is a superset of every one of them for the purpose this
-    serves: knowing whether a bare name exists.
+    selene's `std` names a library file, and can chain files with `+`, as in
+    `roblox+testez`. Thus only the first name decides the set. Every Lua
+    dialect maps to Luau. For this purpose, to know if a bare name exists,
+    Luau is a superset of each dialect.
     */
     pub fn parse(name: &str) -> Option<Self> {
         match name.split('+').next()?.trim() {
@@ -67,7 +67,7 @@ impl StdLib {
     }
 }
 
-/// Written by hand so `[lint]` takes the same `std` strings selene's file does
+/// This manual impl makes sure that `[lint]` accepts the same `std` strings as selene's file.
 impl<'de> Deserialize<'de> for StdLib {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
@@ -83,42 +83,42 @@ impl<'de> Deserialize<'de> for StdLib {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct LintConfig {
-    /// Per lint level, keyed by the lint's name
+    /// The level for each lint, keyed by the lint's name.
     #[serde(default)]
     pub rules: BTreeMap<String, Level>,
 
-    /// Per lint settings, handed to the lint that asked for them. `config` is
-    /// what selene calls the same table.
+    /// The settings for each lint. larvae gives them to the lint that
+    /// requests them. selene calls the same table `config`.
     #[serde(default, alias = "config")]
     pub options: BTreeMap<String, toml::Value>,
 
-    /// Which globals exist before this file runs
+    /// The globals that exist before this file runs.
     #[serde(default)]
     pub std: StdLib,
 
-    /// Extra globals the project defines, beyond the standard library
+    /// The extra globals that the project defines beyond the standard library.
     #[serde(default)]
     pub globals: Vec<String>,
 
-    /// Globs a walk passes over, relative to the project root, spelled the way
-    /// selene spells it. A file named on the command line is still linted, see
-    /// [`Excludes`].
+    /// The globs that a walk skips, relative to the project root. The key
+    /// uses selene's spelling. larvae still lints a file named on the
+    /// command line, see [`Excludes`].
     #[serde(default)]
     pub exclude: Vec<String>,
 }
 
 impl LintConfig {
-    /// The level for one lint, its own default unless the project says otherwise
+    /// Returns the level for one lint. The lint's own default applies unless the project sets one.
     pub fn level_for(&self, name: &str, default: Level) -> Level {
         self.rules.get(name).copied().unwrap_or(default)
     }
 
-    /// The paths this config asked `larvae lint` to leave alone
+    /// Returns the paths that this config tells `larvae lint` to skip.
     pub fn excludes(&self, root: &Path) -> Result<Excludes> {
         Excludes::new(root, &self.exclude).context("[lint]")
     }
 
-    /// One lint's settings, deserialised into whatever shape it asked for
+    /// Returns the settings for one lint, deserialised into the shape that the lint requests.
     pub fn options_for<T: for<'de> Deserialize<'de> + Default>(&self, name: &str) -> T {
         self.options
             .get(name)
@@ -127,11 +127,11 @@ impl LintConfig {
     }
 
     /*
-    Read `selene.toml` if there is one, then lay `[lint]` over it.
+    Read `selene.toml` if it exists, then apply `[lint]` over it.
 
-    selene puts levels under `[rules]` and per lint settings under `[config]`,
-    which is the same information under different names, so the file is
-    translated rather than parsed into a second type.
+    selene puts levels under `[rules]` and per-lint settings under
+    `[config]`. This is the same information under different names. Thus
+    larvae translates the file instead of parsing it into a second type.
     */
     pub fn discover(root: &Path, larvae: Option<&toml::Value>) -> Result<Self> {
         let mut config = selene_file(root)?.unwrap_or_default();
@@ -154,11 +154,12 @@ impl LintConfig {
 }
 
 /*
-The keys of selene's file we have something to do with.
+The keys of selene's file that larvae uses.
 
-Deliberately not `deny_unknown_fields`: this is selene's file, so anything a
-later selene adds is simply not ours to refuse, and reading the rules out of a
-file we could not fully parse is better than reading none.
+This struct does not use `deny_unknown_fields`, and that is intentional. The
+file belongs to selene, so larvae must not refuse a key that a later selene
+adds. Also, to read the rules from a partly unknown file is better than to
+read none.
 */
 #[derive(Deserialize)]
 struct SeleneFile {
@@ -185,9 +186,10 @@ fn selene_file(root: &Path) -> Result<Option<LintConfig>> {
     let file: SeleneFile = toml::from_str(&text).context("in selene.toml")?;
 
     /*
-    A name we do not recognise falls back rather than failing, because a chain
-    naming a library file we do not have would otherwise silently mean "no
-    globals at all" and bury the file in undefined_variable.
+    An unknown name falls back to the default instead of failing. Without
+    this, a chain that names a library file larvae does not have would
+    silently mean "no globals at all". Then undefined_variable findings
+    would flood the file.
     */
     let std = file
         .std
@@ -249,7 +251,7 @@ mod tests {
         assert!(cfg.options.contains_key("high_cyclomatic_complexity"));
     }
 
-    /// A chained std naming a library we do not ship must not mean "no globals"
+    /// A chained std that names a library larvae does not ship must not mean "no globals".
     #[test]
     fn an_unknown_std_falls_back_rather_than_emptying_the_globals() {
         let dir = tempfile::tempdir().unwrap();
@@ -288,7 +290,7 @@ mod tests {
         );
     }
 
-    /// selene's file, so keys we have nothing to do with cost nothing
+    /// The file belongs to selene, so a key that larvae does not use causes no error.
     #[test]
     fn unknown_keys_in_the_selene_file_are_ignored() {
         let dir = tempfile::tempdir().unwrap();
@@ -304,7 +306,7 @@ mod tests {
         assert_eq!(cfg.rules["shadowing"], Level::Deny);
     }
 
-    /// A selene.toml can be pasted into [lint] under selene's own names
+    /// The user can paste a selene.toml into [lint] with selene's own names.
     #[test]
     fn selene_names_work_in_larvae_toml_too() {
         let over = toml::from_str::<toml::Value>(
@@ -318,7 +320,7 @@ mod tests {
         assert!(cfg.options.contains_key("high_cyclomatic_complexity"));
     }
 
-    /// Our file, where an unknown key is a typo and worth saying so
+    /// larvae.toml belongs to larvae, so an unknown key is a typo and larvae reports it.
     #[test]
     fn an_unknown_key_in_larvae_toml_is_still_refused() {
         let over = toml::from_str::<toml::Value>("[rulez]\nshadowing = \"deny\"").unwrap();
@@ -345,7 +347,7 @@ mod tests {
 
         assert_eq!(cfg.options_for::<Opts>("thing"), Opts { maximum: 7 });
 
-        // an absent or malformed table falls back rather than failing the run
+        // An absent or malformed table falls back to the default. The run does not fail.
         assert_eq!(cfg.options_for::<Opts>("missing"), Opts::default());
     }
 }

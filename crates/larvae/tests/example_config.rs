@@ -1,14 +1,14 @@
 /*!
-`larvae.example.toml` against the code it documents.
+These tests compare `larvae.example.toml` with the code it documents.
 
-The file claims to list every key larvae reads, with its default. Both halves
-drift silently: a renamed key leaves the example wrong, and a changed default
-leaves it lying. It was duplicated end to end at one point, so it did not even
-parse, and nothing noticed.
+The file claims to list every key that larvae reads, with its default value.
+Each half can drift without a signal. A renamed key makes the example wrong.
+A changed default makes the example incorrect. At one point, the file contained
+a full duplicate of itself, so it did not parse, and no test found the problem.
 
-Every config type has `deny_unknown_fields`, so loading the file through the
-real parsers is a complete check that its keys exist. The defaults are then
-compared one by one.
+Every config type has `deny_unknown_fields`. Thus, when the real parsers load
+the file, the load is a complete check that its keys exist. The tests then
+compare the defaults one by one.
 */
 
 use std::path::Path;
@@ -27,7 +27,8 @@ fn example() -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {}, {e}", path.display()))
 }
 
-/// Written into a directory of its own, since discovery reads from the root
+/// The test writes the file into its own directory, because discovery reads
+/// from the root.
 fn loaded() -> (tempfile::TempDir, Config) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("larvae.toml");
@@ -43,7 +44,7 @@ fn the_example_is_valid_toml() {
     toml::from_str::<toml::Value>(&example()).expect("valid TOML");
 }
 
-/// It was duplicated verbatim once, which TOML rejects for the second table
+/// The file once contained a verbatim duplicate. TOML rejects the second table.
 #[test]
 fn the_example_is_not_duplicated() {
     let text = example();
@@ -65,7 +66,8 @@ fn the_example_is_not_duplicated() {
     );
 }
 
-/// `deny_unknown_fields` means loading it proves every key it names is real
+/// Because of `deny_unknown_fields`, a correct load proves that every named
+/// key exists.
 #[test]
 fn every_key_in_the_example_is_one_larvae_reads() {
     let (_dir, _config) = loaded();
@@ -88,7 +90,7 @@ fn every_profile_in_the_example_applies() {
     Config::load_profile(&path, Some("release")).expect("--profile release should apply");
 }
 
-// --- the values it calls defaults really are ---------------------------------
+// --- the values that the example calls defaults match the code ---------------
 
 #[test]
 fn the_documented_process_defaults_match() {
@@ -165,7 +167,7 @@ fn the_documented_fmt_defaults_match() {
     );
 }
 
-/// Each level the example prints must be the lint's own default
+/// Each level that the example prints must equal the lint's own default.
 #[test]
 fn the_documented_lint_levels_match_each_lint() {
     let (dir, config) = loaded();
@@ -185,12 +187,12 @@ fn the_documented_lint_levels_match_each_lint() {
 }
 
 /*
-`[rojo]` is commented out on purpose and has to stay that way.
+The example keeps `[rojo]` commented out, and it must stay commented out.
 
-Writing `project` changes what it means: unset it is "use default.project.json
-if it is there", set it is "this file is required", so a project without one
-would stop building. Uncommenting it in the example would hand every reader
-that regression.
+A written `project` key changes the meaning. When the key is unset, larvae uses
+default.project.json if the file exists. When the key is set, the file is
+required, so a project without the file would stop building. An uncommented key
+in the example would give every reader that regression.
 */
 #[test]
 fn the_rojo_defaults_are_not_written_out() {

@@ -1,15 +1,15 @@
 /*!
 Lints for Roblox's own data types.
 
-Every one of these catches the same shape of mistake: a constructor that takes
-numbers, where the numbers mean something the signature does not say. `Color3`
-is on a zero to one scale and everyone thinks in 0 to 255; `UDim2` interleaves
-scale and offset and nobody remembers the order. Neither is a Luau error, and
-both produce something that renders wrong rather than throwing.
+Each of these lints catches the same kind of mistake: a constructor takes
+numbers, and the numbers mean something that the signature does not say.
+`Color3` uses a scale from 0 to 1, but users think in 0 to 255. `UDim2`
+interleaves scale and offset, and users forget the order. Neither is a Luau
+error. Both produce a result that renders wrong and does not throw.
 
-Off entirely when `std` is not `roblox`, since none of these names mean
-anything in plain Luau and a project that defined its own `Color3` should not
-be told about Roblox's.
+These lints are off when `std` is not `roblox`. None of these names mean
+anything in plain Luau. A project that defined its own `Color3` must not get
+reports about Roblox's `Color3`.
 */
 
 use crate::lint::config::StdLib;
@@ -34,9 +34,9 @@ impl RobloxIncorrectColor3NewBounds {
     /*
     `Color3.new(255, 0, 0)`.
 
-    Reads as red and renders as white, because `Color3.new` is on a zero to
-    one scale and clamps. `Color3.fromRGB` is the one that takes 0 to 255, and
-    the two are one word apart.
+    This reads as red and renders as white, because `Color3.new` uses a
+    scale from 0 to 1 and clamps the values. `Color3.fromRGB` is the
+    constructor that takes 0 to 255, and the two names differ by one word.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         if ctx.cfg.std != StdLib::Roblox {
@@ -76,10 +76,10 @@ impl RobloxSuspiciousUdim2New {
     /*
     `UDim2.new(0.5, 0.5)`.
 
-    `UDim2.new` takes four numbers, scale and offset for each axis, so two
-    arguments sets the X scale and the X offset and leaves Y at zero. The
-    author meant `UDim2.fromScale(0.5, 0.5)`, which is the constructor that
-    takes two.
+    `UDim2.new` takes four numbers: a scale and an offset for each axis.
+    Thus two arguments set the X scale and the X offset, and leave Y at
+    zero. The author meant `UDim2.fromScale(0.5, 0.5)`, which is the
+    constructor that takes two arguments.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         if ctx.cfg.std != StdLib::Roblox {
@@ -96,9 +96,9 @@ impl RobloxSuspiciousUdim2New {
             }
 
             /*
-            Which one they meant is decided by whether the numbers are
-            fractions. Two values under one are scales, whole numbers are
-            pixels, and anything else is left unguessed.
+            The numbers decide which constructor the author meant. Two
+            values with a magnitude of 1 or less are scales. Whole numbers
+            are pixels. For any other case, the lint does not guess.
             */
             let suggestion = match args
                 .iter()
@@ -132,9 +132,10 @@ impl RobloxManualFromScaleOrOffset {
     /*
     `UDim2.new(a, 0, b, 0)`.
 
-    Correct, and says the wrong thing: the two zeros are the offsets, and a
-    reader has to count positions to see that. `UDim2.fromScale(a, b)` says it
-    outright. The same in reverse for `UDim2.new(0, a, 0, b)`.
+    This is correct, but it states the intent badly. The two zeros are the
+    offsets, and a reader must count positions to see that.
+    `UDim2.fromScale(a, b)` states it directly. The reverse applies to
+    `UDim2.new(0, a, 0, b)`.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         if ctx.cfg.std != StdLib::Roblox {
@@ -164,7 +165,7 @@ impl RobloxManualFromScaleOrOffset {
                 return;
             };
 
-            // all four zero is UDim2.new(), which needs no advice
+            // All four values at zero is UDim2.new(), which needs no advice.
             if zero(kept.0) && zero(kept.1) {
                 return;
             }
@@ -188,10 +189,10 @@ impl RobloxManualFromScaleOrOffset {
 // --- shared ----------------------------------------------------------------
 
 /*
-A call of the form `Type.name(...)` where `Type` is a global.
+A call of the form `Type.name(...)`, where `Type` is a global.
 
-Rooted at a global for the same reason as everywhere else: a local named
-`Color3` is somebody's own, and this has nothing to say about it.
+The check requires a global for the same reason as everywhere else. A local
+named `Color3` belongs to the author, and these lints say nothing about it.
 */
 fn constructor<'e>(ctx: &LintCtx<'_>, e: &'e Expr) -> Option<(String, &'e [Expr], TokSpan)> {
     let Expr::Call {

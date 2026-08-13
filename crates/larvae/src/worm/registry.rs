@@ -1,10 +1,9 @@
 /*!
-Turning `[worms]` into loaded worms.
+This module turns `[worms]` into loaded worms.
 
-This is where a project's config meets the manifests, so it is where the checks
-that span more than one worm live: names have to agree, two worms cannot claim
-the same extension, and a rule the user switched on has to be one some worm
-actually declares.
+Here the config of a project meets the manifests. Thus the checks that span
+more than one worm live here. The names must agree. Two worms cannot claim the
+same extension. A rule the user switched on must be one that a worm declares.
 */
 
 use std::collections::BTreeMap;
@@ -18,34 +17,35 @@ use super::manifest::{RuleDecl, Stage};
 
 use super::{RequireOwner, Worm};
 
-/// A worm plus what the project configured it with
+/// A worm plus the configuration the project gave it
 pub struct Loaded {
     pub worm: Worm,
-    /// Kept so a worker can build its own instance without touching the disk
+    /// Kept so a worker can build its own instance without disk access
     pub artifact: Vec<u8>,
-    /// Where it was unpacked, which only a native worm needs, to exec from
+    /// The unpack directory. Only a native worm needs it, to execute from.
     pub dir: std::path::PathBuf,
-    /// `[worms.<name>.config]`, untouched, handed over at init
+    /// `[worms.<name>.config]`, unchanged, given to the worm at init
     pub config: toml::Value,
-    /// Rules that are on, by name, with the value each resolved to
+    /// The rules that are on, by name, with the resolved value of each
     pub rules: BTreeMap<String, toml::Value>,
-    /// What the user asked for in `[worms.<name>] run_order`
+    /// The order the user requested in `[worms.<name>] run_order`
     pub run_order: Option<Stage>,
 }
 
 impl Loaded {
-    /// Who owns requires in this worm's output
+    /// The owner of the requires in the output of this worm
     pub fn requires(&self) -> RequireOwner {
         self.worm.manifest.requires
     }
 
     /*
-    Where this worm's rules sit in the sequence. Highest wins: the user's word
-    in [worms.<name>], then what the worm declared, then after larvae.
+    The position of the rules of this worm in the sequence. The highest source
+    wins: the user's value in [worms.<name>], then the declaration of the
+    worm, then the slot after the rules of larvae.
     */
 }
 
-/// Every worm a build will use
+/// Every worm that a build uses
 #[derive(Default)]
 pub struct Registry {
     worms: Vec<Loaded>,
@@ -56,10 +56,10 @@ impl Registry {
     /*
     The worms a project asks for, or an empty set when it asks for none.
 
-    Every command that touches a project's files needs this, not just the
-    pipeline: a front-end decides which files exist as far as larvae is
-    concerned, so `fmt` and `lint` walking a tree without asking would miss the
-    claimed ones and format the wrong set.
+    Every command that touches the files of a project needs this, not only the
+    pipeline. A front-end decides which files exist from the view of larvae.
+    Thus `fmt` and `lint` that walk a tree without this check would miss the
+    claimed files and format the wrong set.
     */
     pub fn for_project(root: &Path, config: &crate::config::Config) -> Result<Self> {
         let Some(value) = config.worms.as_ref() else {
@@ -79,9 +79,10 @@ impl Registry {
                 Source::Local { path } => root.join(path),
 
                 /*
-                Fetched once and kept in the cache, so a later build does no
-                network. The pin decides the version and the recorded hash
-                decides whether the bytes are still the ones we installed.
+                Larvae fetches the worm once and keeps it in the cache, so a
+                later build uses no network. The pin decides the version. The
+                recorded hash decides if the bytes are still the installed
+                bytes.
                 */
                 source @ Source::Release { .. } => super::fetch::ensure(cache, name, source)?,
             };
@@ -93,9 +94,9 @@ impl Registry {
                 .with_context(|| format!("loading worm `{name}`"))?;
 
             /*
-            One identity. The key namespaces the worm's rules and its settings,
-            so a manifest disagreeing with it would leave a user configuring
-            something that never reads what they wrote.
+            One identity. The key namespaces the rules and the settings of the
+            worm. With a manifest that disagrees, the user would configure a
+            name that does not read the values they wrote.
             */
             if worm.name() != name {
                 bail!(
@@ -136,15 +137,15 @@ impl Registry {
         self.worms.iter_mut()
     }
 
-    /// The worm whose front-end claims this file, if any
+    /// The worm whose front-end claims this file, if one exists
     pub fn frontend_for(&mut self, path: &Path) -> Option<&mut Loaded> {
         self.worms.iter_mut().find(|l| l.worm.claims(path))
     }
 
     /*
-    Extensions any front-end claimed, without the dot. Discovery needs these or
-    a claimed file is copied through untouched, which looks like it worked until
-    Studio tries to run markup.
+    The extensions that a front-end claimed, without the dot. Discovery needs
+    these. Without them, a claimed file is copied through unchanged. That
+    looks correct until Studio tries to run markup.
     */
     pub fn claimed_extensions(&self) -> Vec<String> {
         self.worms
@@ -156,8 +157,8 @@ impl Registry {
     }
 
     /*
-    Hand the artifacts and settings to a pool, which is what the parallel loop
-    uses. The registry keeps its own instances for the serial front-end pass.
+    Give the artifacts and settings to a pool. The parallel loop uses the
+    pool. The registry keeps its own instances for the serial front-end pass.
     */
     pub fn specs(&self) -> Vec<std::sync::Arc<super::pool::Spec>> {
         self.worms
@@ -183,14 +184,14 @@ impl Registry {
             .collect()
     }
 
-    /// Rule names every worm declared, so config validation can accept them
+    /// The rule names that every worm declared, so config validation can accept them
     pub fn declared_rules(&self) -> impl Iterator<Item = &str> {
         self.worms
             .iter()
             .flat_map(|l| l.worm.manifest.rules.keys().map(String::as_str))
     }
 
-    /// Lint names every worm declared, with the defaults each asked for
+    /// The lint names that every worm declared, with the default of each
     pub fn declared_lints(&self) -> impl Iterator<Item = (&str, &super::manifest::LintDecl)> {
         self.worms.iter().flat_map(|l| {
             l.worm
@@ -202,9 +203,9 @@ impl Registry {
     }
 
     /*
-    A claim is exclusive. Two front-ends over one extension is a config error
-    rather than a merge, because there is no sensible order to run them in and
-    picking one silently would be worse than saying so.
+    A claim is exclusive. Two front-ends over one extension are a config error
+    and not a merge. There is no correct order to run them in, and a silent
+    choice of one would be worse than a clear error.
     */
     fn check_claims(&self) -> Result<()> {
         let mut seen: BTreeMap<&str, &str> = BTreeMap::new();
@@ -228,10 +229,11 @@ impl Registry {
     }
 
     /*
-    Worm lints share `[lint.rules]` with the builtins, which is what lets
-    `luaux_unclosed_element = "deny"` just work. Shared names need guarding:
-    a collision would make one `[lint.rules]` line level two different lints,
-    so both directions are refused with the parties named.
+    Worm lints share `[lint.rules]` with the builtins. This is what makes
+    `luaux_unclosed_element = "deny"` work with no extra steps. Shared names
+    need a guard. With a collision, one `[lint.rules]` line would set the
+    level of two different lints. Thus larvae refuses both directions and
+    names the two parties.
     */
     fn check_lints(&self) -> Result<()> {
         let mut seen: BTreeMap<&str, &str> = BTreeMap::new();
@@ -259,9 +261,10 @@ impl Registry {
 }
 
 /*
-The user's value beats the manifest default, and an off rule is simply absent
-so a worm never sees one it should not run. A rule the worm did not declare is
-an error, because otherwise a typo in [rules] is a setting that does nothing.
+The value of the user wins over the manifest default. An off rule is absent,
+so a worm does not see a rule it must not run. A rule the worm did not declare
+is an error. Without the error, a typo in [rules] is a setting that does
+nothing.
 */
 fn resolve_rules(
     name: &str,
@@ -271,8 +274,9 @@ fn resolve_rules(
     let mut out = BTreeMap::new();
 
     /*
-    A rule the user switched on that this worm does not declare would be a
-    setting that silently does nothing, so it is named rather than ignored.
+    A rule the user switched on, which this worm does not declare, would be a
+    setting that silently does nothing. Thus larvae names it and does not
+    ignore it.
     */
     for key in rules.keys() {
         if !worm.manifest.rules.contains_key(key) {
@@ -382,8 +386,8 @@ mod tests {
     }
 
     /*
-    A pin resolves through the cache, so an already unpacked worm needs no
-    network at all. Fetching itself is covered offline in fetch.rs.
+    A pin resolves through the cache, so a worm that is already unpacked needs
+    no network at all. The tests in fetch.rs cover the fetch itself offline.
     */
     #[test]
     fn a_pinned_worm_is_taken_from_the_cache_when_it_is_there() {
@@ -452,7 +456,7 @@ mod tests {
         );
     }
 
-    /// Three levels, and the user is the top one
+    /// There are three levels, and the user is the top one
     #[test]
     fn a_users_run_order_overrides_the_worms() {
         let root = tempfile::tempdir().unwrap();

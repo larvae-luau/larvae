@@ -1,10 +1,10 @@
 /*!
-Onboarding a project from each package manager
+These tests onboard a project from each package manager.
 
-All four put dependencies outside `[process].input`, which is the case most
-likely to break quietly. What these assert is mostly that larvae leaves
-things alone, package files are never read, rewritten or copied, and the
-derived project keeps pointing rojo at the real directory
+All four managers put dependencies outside `[process].input`. This case can
+break without a signal. The tests mostly assert that larvae changes nothing:
+larvae never reads, rewrites, or copies package files, and the derived project
+still points rojo at the real directory.
 */
 
 use larvae::config::Config;
@@ -13,7 +13,7 @@ use larvae::pipeline;
 mod common;
 use common::*;
 
-/// Every `$path` the derived build project came out with
+/// This function returns every `$path` in the derived build project.
 fn build_paths(root: &std::path::Path) -> String {
     read(root, ".larvae/build.project.json")
 }
@@ -56,7 +56,7 @@ fn wally() {
         ),
     );
 
-    // a link module and the versioned tree it points into
+    // The fixture has a link module and the versioned tree that it points into.
     write(
         root,
         "Packages/Signal.luau",
@@ -92,10 +92,10 @@ fn wally() {
             .contains("require(\"@game/ServerScriptService/ServerPackages/Net\")")
     );
 
-    // packages were never processed, never copied
+    // larvae did not process or copy the packages.
     assert!(!root.join("dist/Packages").exists());
     assert!(!root.join("dist/ServerPackages").exists());
-    // and the derived project still points rojo at the real ones
+    // The derived project still points rojo at the real directories.
     let derived = build_paths(root);
     assert!(derived.contains("../Packages"), "{derived}");
     assert!(derived.contains("../ServerPackages"), "{derived}");
@@ -149,7 +149,7 @@ fn pesde() {
         got.contains("require(\"@game/ReplicatedStorage/roblox_packages/signal\")"),
         "{got}"
     );
-    // @self passes straight through, it already means the right thing
+    // @self passes through unchanged, because it already has the correct meaning.
     assert!(got.contains("require(\"@self/helper\")"), "{got}");
     assert!(build_paths(root).contains("../roblox_packages"));
 }
@@ -194,12 +194,12 @@ fn npmluau() {
     assert!(!out.has_errors(), "{:?}", out.diags);
 
     let got = read(root, "dist/main.luau");
-    // relative to dist, where the output actually runs from
+    // The path is relative to dist, because the output runs from there.
     assert!(
         got.contains("require(\"../node_modules/@acme/signal\")"),
         "{got}"
     );
-    // a scoped name deep in the tree, the @acme segment is a directory not an alias
+    // A scoped name deep in the tree. The @acme segment is a directory, not an alias.
     assert!(
         got.contains("require(\"../node_modules/@acme/signal/lib/conn\")"),
         "{got}"
@@ -211,7 +211,8 @@ fn npmluau() {
     assert!(!root.join("dist/node_modules").exists());
 }
 
-/// pnpm links packages into a store, the emitted path must not follow the link
+/// pnpm links packages into a store. The emitted path must not follow the
+/// link.
 #[test]
 fn npmluau_with_a_symlinked_package() {
     let dir = tempfile::tempdir().unwrap();
@@ -253,7 +254,7 @@ fn npmluau_with_a_symlinked_package() {
 
     let got = read(root, "dist/main.luau");
     assert!(got.contains("require(\"../node_modules/signal\")"), "{got}");
-    // following the link would bake the store path into the output
+    // A followed link would put the store path into the output.
     assert!(!got.contains(".store"), "{got}");
 }
 
@@ -309,7 +310,7 @@ fn lpm() {
     assert!(build_paths(root).contains("../packages"));
 }
 
-/// The misconfiguration these tests exist to catch
+/// This is the incorrect configuration that these tests exist to catch.
 #[test]
 fn a_package_directory_nobody_mounted_is_reported() {
     let dir = tempfile::tempdir().unwrap();

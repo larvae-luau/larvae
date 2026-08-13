@@ -1,11 +1,11 @@
 /*!
-The formatter.
+These tests cover the formatter.
 
-Three kinds of test here. Most are a source and its expected output, which is
-the readable kind. A few are properties asserted over every sample at once,
-which is the kind that catches what nobody thought to write a case for: output
-must parse, formatting it again must change nothing, no line may end in
-whitespace, and every comment must survive.
+Most tests pair a source with its expected output, and this kind is easy to
+read. A few tests assert properties over every sample at once. This kind finds
+the failures that no person wrote a case for. The properties are: the output
+must parse, a second format must change nothing, no line can end in
+whitespace, and every comment must stay.
 */
 
 use larvae::fmt::config::{
@@ -29,7 +29,8 @@ fn narrow(width: usize) -> FmtConfig {
     }
 }
 
-/// Every construct that has to survive a round trip, used by the property tests
+/// This list holds each construct that must survive a round trip. The
+/// property tests use it.
 const SAMPLES: &[&str] = &[
     "local a = 1\n",
     "local a, b: number = 1, 2\n",
@@ -71,7 +72,7 @@ fn formatting_is_idempotent() {
     }
 }
 
-/// The output has to be the same language as the input
+/// The output must be in the same language as the input.
 #[test]
 fn output_always_parses() {
     for src in SAMPLES {
@@ -94,8 +95,8 @@ fn no_output_line_ends_in_whitespace() {
 }
 
 /*
-Losing a comment is the failure that makes people stop trusting a formatter,
-and it is invisible in a case by case test because the output still looks fine.
+A lost comment causes users to stop trusting a formatter. A case-by-case test
+does not show this failure, because the output still looks correct.
 */
 #[test]
 fn every_comment_survives() {
@@ -111,7 +112,7 @@ fn every_comment_survives() {
     }
 }
 
-/// A file already in the target style must come out byte identical
+/// A file that is already in the target style must stay byte-identical.
 #[test]
 fn formatted_input_is_left_alone() {
     let already = "local Players = game:GetService(\"Players\")\n\nlocal function greet(name: string): string\n\treturn \"hi \" .. name\nend\n\nreturn greet\n";
@@ -148,7 +149,8 @@ fn a_call_that_does_not_fit_breaks_one_argument_per_line() {
     );
 }
 
-/// The whole point of a group based layout, an outer break is not an inner one
+/// This is the purpose of a group-based layout: an outer break is not an
+/// inner break.
 #[test]
 fn an_inner_call_stays_on_one_line_when_the_outer_one_breaks() {
     let out = fmt_with("outer(inner(a), someVeryLongArgumentName)", narrow(30));
@@ -167,7 +169,7 @@ fn a_long_binary_chain_breaks_with_the_operator_leading() {
     assert_eq!(out, "local ok = first\n\tand second\n\tand third\n");
 }
 
-/// Different precedences should not fold at the same place
+/// Operators with different precedences must not break at the same place.
 #[test]
 fn a_chain_breaks_at_the_loosest_operator_first() {
     let out = fmt_with("local x = aaaa and bbbb or cccc and dddd", narrow(24));
@@ -220,9 +222,9 @@ fn a_table_written_on_one_line_stays_on_one_line() {
 }
 
 /*
-The magic trailing comma. An author's comma after the last argument is a
-request to stay expanded, which stops a call reflowing every time an argument
-is renamed.
+This is the magic trailing comma. An author's comma after the last argument is
+a request to stay expanded. This prevents a reflow of the call each time an
+argument name changes.
 */
 #[test]
 fn a_trailing_comma_keeps_a_one_line_table_expanded() {
@@ -244,7 +246,8 @@ fn magic_trailing_comma_can_be_turned_off() {
     assert_eq!(fmt_with("local t = { a, b, }", cfg), "local t = { a, b }\n");
 }
 
-/// Luau rejects a trailing comma in a call, so width is all a call has to go on
+/// Luau rejects a trailing comma in a call, so the width is the only layout
+/// input for a call.
 #[test]
 fn a_call_is_laid_out_by_width_alone() {
     assert_eq!(fmt("f(\n\ta,\n\tb\n)"), "f(a, b)\n");
@@ -314,7 +317,8 @@ fn quotes_normalise_to_double_by_default() {
     assert_eq!(fmt("local s = 'hi'"), "local s = \"hi\"\n");
 }
 
-/// Switching quote is not a swap, the escaping has to change with it
+/// A quote change is not a simple swap. The escapes must change with the
+/// quotes.
 #[test]
 fn requoting_fixes_the_escapes() {
     assert_eq!(fmt(r#"local s = 'it\'s'"#), "local s = \"it's\"\n");
@@ -332,7 +336,8 @@ fn requoting_fixes_the_escapes() {
 
 #[test]
 fn the_quote_needing_fewer_escapes_wins() {
-    // a double inside means single quotes cost nothing, so keep them
+    // A double quote inside means single quotes need no escapes, so the
+    // formatter keeps them.
     assert_eq!(fmt(r#"local s = 'say "hi"'"#), "local s = 'say \"hi\"'\n");
 }
 
@@ -385,7 +390,7 @@ fn windows_line_endings_apply_everywhere() {
     assert_eq!(fmt_with("do\nx()\nend", cfg), "do\r\n\tx()\r\nend\r\n");
 }
 
-/// The option the user asked for by name, a space before the parentheses
+/// The user asked for this option by name: a space before the parentheses.
 #[test]
 fn space_after_function_names_targets_definitions_and_calls_separately() {
     let defs = FmtConfig {
@@ -524,7 +529,7 @@ fn generics_and_return_types_come_through() {
     assert_eq!(fmt(src), src);
 }
 
-/// The turbofish, which took a parser fix to accept in the first place
+/// This is the turbofish syntax. The parser needed a fix to accept it.
 #[test]
 fn explicit_type_instantiation_survives() {
     assert_eq!(
@@ -578,7 +583,7 @@ fn a_run_of_requires_sorts() {
     );
 }
 
-/// Sorting must never move a require past code that is not one
+/// The sort must never move a require past code that is not a require.
 #[test]
 fn a_statement_between_two_requires_breaks_the_run() {
     let src = "local c = require(\"c\")\nsideEffect()\nlocal a = require(\"a\")\n";
@@ -586,7 +591,8 @@ fn a_statement_between_two_requires_breaks_the_run() {
     assert_eq!(fmt_with(src, sorting(RequireGrouping::Flat)), src);
 }
 
-/// A blank line is the author grouping them, and grouping is a decision
+/// A blank line shows that the author groups the requires. The sort keeps
+/// that decision.
 #[test]
 fn a_blank_line_separates_two_runs_that_sort_independently() {
     let out = fmt_with(
@@ -600,7 +606,8 @@ fn a_blank_line_separates_two_runs_that_sort_independently() {
     );
 }
 
-/// The reason statements had to stop being emitted straight from the list
+/// This test shows why the emitter cannot write statements directly from the
+/// list.
 #[test]
 fn a_comment_moves_with_the_require_it_describes() {
     let out = fmt_with(
@@ -640,7 +647,7 @@ fn by_kind_groups_aliases_then_absolute_then_relative() {
     );
 }
 
-/// A computed require has no order that can be assumed safe to change
+/// A computed require has no order that is safe to change.
 #[test]
 fn a_computed_require_is_not_sorted_and_breaks_the_run() {
     let src =
@@ -665,7 +672,7 @@ fn sorting_is_idempotent_and_keeps_every_comment() {
 
 // --- regressions found by review -------------------------------------------
 
-/// Two minus signs run together spell a line comment
+/// Two adjacent minus signs make a line comment.
 #[test]
 fn nested_unary_minus_keeps_its_space() {
     assert_eq!(fmt("local y = - -x"), "local y = - -x\n");
@@ -677,14 +684,14 @@ fn nested_unary_minus_keeps_its_space() {
     );
 }
 
-/// A statement opening with `(` continues the line above as a call
+/// A statement that starts with `(` continues the line above as a call.
 #[test]
 fn a_dropped_semicolon_is_put_back_where_it_is_load_bearing() {
     assert_eq!(fmt("local a = b\n;(c)()\n"), "local a = b\n;(c)()\n");
     assert_eq!(fmt("local x = a;\n(f)()\n"), "local x = a\n;(f)()\n");
 }
 
-/// `[` against a `[[ ]]` string opens a long string instead
+/// A `[` directly before a `[[ ]]` string opens a long string instead.
 #[test]
 fn a_bracket_index_of_a_long_string_keeps_its_space() {
     assert_eq!(fmt("local x = t[ [[k]] ]"), "local x = t[ [[k]] ]\n");
@@ -701,7 +708,8 @@ fn const_function_stays_const() {
     assert_eq!(fmt("local function f() end"), "local function f()\nend\n");
 }
 
-/// A type can hold an expression through typeof, where `and 1` must not merge
+/// A type can hold an expression through typeof. There, the tokens in `and 1`
+/// must keep their space.
 #[test]
 fn a_word_and_a_number_in_a_type_keep_their_space() {
     assert_eq!(
@@ -715,7 +723,7 @@ fn a_word_and_a_number_in_a_type_keep_their_space() {
     assert_eq!(fmt("type T = typeof(1 .. 2)"), "type T = typeof(1 .. 2)\n");
 }
 
-/// Its body is arbitrary Luau, which a token replay mangles
+/// A type function body is arbitrary Luau code, and a token replay damages it.
 #[test]
 fn a_type_function_body_is_emitted_as_written() {
     let src = "type function K(t)\n\tlocal a = 1\n\treturn t\nend\n";
@@ -723,7 +731,7 @@ fn a_type_function_body_is_emitted_as_written() {
     assert_eq!(fmt(src), src);
 }
 
-/// A `--!` directive is file scoped and only works above every statement
+/// A `--!` directive has file scope, and it works only above every statement.
 #[test]
 fn sorting_requires_leaves_the_strict_directive_at_the_top() {
     let out = fmt_with(
@@ -753,7 +761,7 @@ fn a_comment_after_a_table_field_is_kept() {
     assert_eq!(fmt(src), src);
 }
 
-/// A table holding only a comment is not the same as an empty one
+/// A table that holds only a comment is not the same as an empty table.
 #[test]
 fn a_table_of_only_a_comment_keeps_it() {
     let src = "local t = {\n\t-- nothing yet\n}\n";
@@ -762,7 +770,8 @@ fn a_table_of_only_a_comment_keeps_it() {
     assert_eq!(fmt("local t = {}"), "local t = {}\n");
 }
 
-/// A line comment flat inside braces would comment out the closing brace
+/// A line comment kept on one line inside braces would comment out the
+/// closing brace.
 #[test]
 fn a_comment_forces_a_table_to_expand() {
     assert_eq!(
@@ -814,21 +823,21 @@ fn call_argument_comments_survive_a_second_pass() {
     assert_eq!(fmt(&fmt(src)), fmt(src));
 }
 
-/// A call with no comments is laid out by width, exactly as before
+/// The formatter lays out a call with no comments by width, exactly as before.
 #[test]
 fn placing_argument_comments_does_not_change_a_call_without_any() {
     assert_eq!(fmt("f(\n\ta,\n\tb\n)\n"), "f(a, b)\n");
 }
 
 /*
-The backstop, which is what makes losing a comment impossible rather than
-merely unlikely. `larvae fmt` writes to disk, so a position the emitter cannot
-place is refused rather than silently dropped, and every position it catches is
-one the emitter should learn.
+This is the backstop. It makes a lost comment impossible, not only unlikely.
+`larvae fmt` writes to disk. Thus, when the emitter cannot place a comment,
+larvae refuses the file and does not drop the comment without a message. Each
+position that the backstop catches is one the emitter must learn.
 
-Asserted here over every construct in SAMPLES with a comment threaded into it,
-so a future emitter change that stops placing one is caught as a test failure
-rather than by somebody losing a comment.
+The test asserts this over every construct in SAMPLES with a comment added to
+it. Thus, when a future emitter change stops placement of a comment, the test
+fails, and no user loses a comment.
 */
 #[test]
 fn a_comment_is_placed_or_the_file_is_refused_never_dropped() {
@@ -856,7 +865,7 @@ fn a_comment_is_placed_or_the_file_is_refused_never_dropped() {
                 }
             }
 
-            // refusing is the acceptable outcome, dropping is not
+            // A refusal is the acceptable outcome. A drop is not.
             Err(e) => assert!(
                 format!("{e:#}").contains("would drop the comment"),
                 "{src:?} failed for an unrelated reason, {e:#}"
@@ -874,7 +883,7 @@ fn gaps(mode: larvae::fmt::config::BlockNewlineGaps) -> FmtConfig {
     }
 }
 
-/// The default, and what stylua does
+/// This is the default, and stylua does the same.
 #[test]
 fn a_blank_at_the_edge_of_a_block_is_dropped_by_default() {
     let src = "local function f()\n\n\tbody()\n\nend\n";
@@ -903,7 +912,8 @@ fn preserve_keeps_one_edge_when_only_one_has_a_blank() {
     assert_eq!(fmt_with("do\n\tx()\n\nend\n", cfg), "do\n\tx()\n\nend\n");
 }
 
-/// Blanks between statements separate ideas and are kept either way
+/// Blank lines between statements separate ideas, so the formatter keeps them
+/// in each mode.
 #[test]
 fn a_blank_between_statements_is_not_an_edge_gap() {
     let src = "do\n\ta()\n\n\tb()\nend\n";

@@ -1,4 +1,4 @@
-//! Fixture builders shared by the end to end suites
+//! The end-to-end suites share these fixture builders.
 
 #![allow(dead_code)]
 
@@ -15,7 +15,8 @@ pub fn read(root: &Path, rel: &str) -> String {
     fs::read_to_string(root.join(rel)).unwrap()
 }
 
-/// A Rojo shaped project, shared + server code, packages outside src
+/// This function builds a Rojo-style project. It has shared and server code, and
+/// packages outside src.
 pub fn fixture() -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
@@ -61,20 +62,20 @@ pub fn fixture() -> tempfile::TempDir {
             "print(Signal, math)\n",
         ),
     );
-    // A directory module with an init and a child
+    // The fixture adds a directory module with an init file and a child module.
     write(
         root,
         "src/shared/pkg/init.luau",
         "local sub = require(\"@self/sub\")\nreturn sub\n",
     );
     write(root, "src/shared/pkg/sub.luau", "return 1\n");
-    // Consumer of the directory module, sibling file
+    // This sibling file consumes the directory module.
     write(
         root,
         "src/shared/consumer.luau",
         "return require(\"./pkg\")\n",
     );
-    // Non code asset that must be copied through
+    // The pipeline must copy this non-code asset to the output.
     write(root, "src/shared/data.json", "{\"k\":1}\n");
 
     tmp

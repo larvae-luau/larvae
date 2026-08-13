@@ -1,4 +1,4 @@
-//! Statements, blocks, and the declaration forms
+//! Statements, blocks, and the declaration forms.
 
 use crate::syntax::lexer::TokKind;
 
@@ -22,7 +22,7 @@ impl<'a> Parser<'a> {
             stmts.push(self.stmt()?);
 
             if is_return {
-                // a return ends its block, only `;` may follow
+                // A return ends its block. Only a `;` can follow.
                 if self.at(";") {
                     let i = self.bump();
                     stmts.push(Stmt::Empty(TokSpan::new(i, i + 1)));
@@ -147,8 +147,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `continue` is contextual, it is only the keyword when nothing that
-    /// would continue an expression follows
+    /// `continue` is contextual. It is the keyword only when no token that
+    /// would continue an expression follows it.
     pub(super) fn continue_is_keyword(&self) -> bool {
         !matches!(
             self.text_at(1),
@@ -156,7 +156,7 @@ impl<'a> Parser<'a> {
         )
     }
 
-    /// `type` is contextual too, `type X =`, `type X<`, `type function f`
+    /// `type` is also contextual: `type X =`, `type X<`, `type function f`.
     pub(super) fn type_is_alias(&self) -> bool {
         if self.text_at(1) == "function" {
             return true;
@@ -422,7 +422,7 @@ impl<'a> Parser<'a> {
         self.expect("type")?;
 
         if self.at("function") {
-            // `type function f() ... end`, a user defined type function
+            // `type function f() ... end` is a user-defined type function.
             self.bump();
             let name = self.expect_name()?;
             self.function_body()?;
@@ -451,7 +451,7 @@ impl<'a> Parser<'a> {
 
     pub(super) fn expr_stmt(&mut self, start: usize) -> Result<Stmt, ParseError> {
         let first = self.suffixed_expr()?;
-        // assignment, plain or compound
+        // This is an assignment, in the plain or the compound form.
         if self.at("=") || self.at(",") || is_compound_op(self.text()) {
             let mut targets = vec![first];
 

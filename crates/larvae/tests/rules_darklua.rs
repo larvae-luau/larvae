@@ -1,4 +1,5 @@
-//! Pipeline tests for the darklua parity rules, before and after on a real project
+//! These pipeline tests run the darklua parity rules on a real project, with a
+//! before source and an after source.
 
 use std::fs;
 use std::path::Path;
@@ -16,7 +17,7 @@ fn read(root: &Path, rel: &str) -> String {
     fs::read_to_string(root.join(rel)).unwrap()
 }
 
-/// A minimal project with only the rules under test switched on
+/// A minimal project with only the rules under test set to on.
 fn project(rules: &str) -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
     write(tmp.path(), "larvae.toml", &format!("[rules]\n{rules}\n"));
@@ -35,7 +36,7 @@ fn build(root: &Path) {
     assert!(!outcome.has_errors(), "unexpected errors");
 }
 
-/// Output lines must line up with input lines, that is the retain-lines promise
+/// Output lines must align with input lines. That is the retain-lines promise.
 fn same_line_count(before: &str, after: &str) {
     assert_eq!(
         before.lines().count(),
@@ -45,8 +46,8 @@ fn same_line_count(before: &str, after: &str) {
 }
 
 /*
-Run one source file through the pipeline with `rules` enabled and hand back
-what came out the other side
+This function runs one source file through the pipeline with `rules` on, and
+returns the output.
 */
 fn transform(rules: &str, before: &str) -> String {
     let tmp = project(rules);
@@ -60,7 +61,7 @@ fn transform(rules: &str, before: &str) -> String {
     after
 }
 
-/// The rule changes nothing on this input
+/// The rule changes nothing on this input.
 fn unchanged(rules: &str, src: &str) {
     assert_eq!(transform(rules, src), src);
 }
@@ -91,7 +92,7 @@ fn remove_compound_assignment() {
         ),
         "local x = 1\nx = x + 2\nx = x .. \"a\"\nreturn x\n"
     );
-    // a call in the key would run twice, so it stays
+    // A call in the key would run two times, so the statement stays.
     unchanged(
         "remove_compound_assignment = true",
         "local t = {}\nt[f()] += 1\nreturn t\n",
@@ -122,7 +123,7 @@ fn remove_if_expression() {
         ),
         "local c = true\nlocal x = c and 1 or 2\nreturn x\n"
     );
-    // a then value that could be nil would break the and/or form
+    // A then-value that can be nil would break the and/or form.
     unchanged(
         "remove_if_expression = true",
         "local c, a, b = true, 1, 2\nlocal x = if c then a else b\nreturn x\n",
@@ -138,7 +139,7 @@ fn remove_method_call() {
         ),
         "local obj = {}\nobj.go(obj, 1)\nreturn obj\n"
     );
-    // a dotted receiver would be evaluated twice
+    // The rule would evaluate a dotted receiver two times.
     unchanged(
         "remove_method_call = true",
         "local a = {}\na.b:go(1)\nreturn a\n",
@@ -154,7 +155,7 @@ fn convert_index_to_field() {
         ),
         "local t = { a = 1 }\nreturn t.a\n"
     );
-    // a reserved word cannot follow a dot
+    // A reserved word cannot follow a dot.
     unchanged(
         "convert_index_to_field = true",
         "local t = {}\nreturn t[\"end\"]\n",
@@ -224,7 +225,7 @@ fn remove_attribute() {
         ),
         "function f()\n    return 1\nend\nreturn f\n"
     );
-    // match picks which ones go
+    // The match option selects which attributes the rule removes.
     assert_eq!(
         transform(
             "remove_attribute = { match = [\"^native$\"] }",
@@ -279,7 +280,7 @@ fn remove_interpolated_string() {
         ),
         "local n = \"world\"\nreturn string.format(\"hello %s\", tostring(n))\n"
     );
-    // the tostring strategy leans on Luau's %* instead
+    // The tostring strategy uses Luau's %* instead.
     assert_eq!(
         transform(
             "remove_interpolated_string = { strategy = \"tostring\" }",
@@ -302,7 +303,7 @@ fn remove_continue() {
     assert!(after.contains("do repeat"), "{after}");
     assert!(after.contains("until true end"), "{after}");
     assert!(!after.contains("continue"), "{after}");
-    // a loop that also breaks would have the inner repeat swallow the break
+    // In a loop that also breaks, the inner repeat would capture the break.
     unchanged(
         "remove_continue = true",
         "for i = 1, 3 do\n    if i == 2 then continue end\n    if i == 3 then break end\nend\nreturn 1\n",
@@ -320,7 +321,7 @@ fn compute_expression() {
         ),
         "local day = 86400\nreturn day\n"
     );
-    // a fraction has no printed form the rule will commit to
+    // A fraction has no printed form that the rule commits to.
     unchanged("compute_expression = true", "local x = 10 / 4\nreturn x\n");
 }
 
@@ -345,7 +346,7 @@ fn remove_unused_while() {
         "while false do\n    print(1)\nend\nreturn 1\n",
     );
     assert!(!after.contains("print(1)"), "{after}");
-    // zero is truthy in Lua, that loop runs
+    // Zero is truthy in Lua, so that loop runs.
     unchanged(
         "remove_unused_while = true",
         "while 0 do\n    print(1)\nend\nreturn 1\n",
@@ -361,7 +362,7 @@ fn remove_nil_declaration() {
         ),
         "local a\nlocal b, c = 1\nreturn a, b, c\n"
     );
-    // a leading nil is positional and has to stay
+    // A leading nil is positional and must stay.
     unchanged(
         "remove_nil_declaration = true",
         "local a, b = nil, 1\nreturn a, b\n",
@@ -375,7 +376,7 @@ fn group_local_assignment() {
         "local a = 1\nlocal b = 2\nreturn a + b\n",
     );
     assert!(after.starts_with("local a, b = 1, 2\n"), "{after}");
-    // b reads a, merging would make it read the outer binding
+    // b reads a. A merge would make b read the outer binding.
     unchanged(
         "group_local_assignment = true",
         "local a = 1\nlocal b = a\nreturn b\n",
@@ -391,7 +392,8 @@ fn convert_local_function_to_assign() {
         ),
         "local f = function(a)\n    return a\nend\nreturn f\n"
     );
-    // recursive, the local form is in scope inside itself and the other is not
+    // The function is recursive. The local form is in scope inside itself, and
+    // the assignment form is not.
     unchanged(
         "convert_local_function_to_assign = true",
         "local function f(n)\n    return f(n - 1)\nend\nreturn f\n",
@@ -420,12 +422,12 @@ fn remove_assertions() {
         "local x = 1\nassert(x == 1)\nreturn x\n",
     );
     assert!(!after.contains("assert"), "{after}");
-    // an argument that calls something may be the point of the line
+    // An argument that calls a function can be the purpose of the line.
     unchanged(
         "remove_assertions = true",
         "local x = 1\nassert(check(x))\nreturn x\n",
     );
-    // unless the option says otherwise
+    // The option can turn this protection off.
     let after = transform(
         "remove_assertions = { preserve_arguments_side_effects = false }",
         "local x = 1\nassert(check(x))\nreturn x\n",
@@ -473,7 +475,7 @@ fn several_rules_compose_in_one_pass() {
 
 #[test]
 fn method_definitions_never_gain_two_self_parameters() {
-    // both rules want to insert self, the broader one has to win
+    // Both rules try to insert self. The broader rule must win.
     let after = transform(
         "remove_method_definition = true\nconvert_function_to_assignment = true",
         "local C = {}\nfunction C:go()\n    return 1\nend\nreturn C\n",

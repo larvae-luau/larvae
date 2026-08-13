@@ -1,7 +1,8 @@
 /*!
-Rojo project integration, derives the mount table from default.project.json
-and writes the derived build project, $paths under input remapped to output
-and rerelativized since Rojo resolves them from the project file's own dir
+Rojo project integration. The module derives the mount table from
+default.project.json and writes the derived build project. It remaps $paths
+under the input to the output and makes them relative again, because Rojo
+resolves them from the directory of the project file.
 */
 
 use std::path::{Path, PathBuf};
@@ -13,10 +14,10 @@ use crate::requires::datamodel::Mount;
 
 pub struct Project {
     pub path: PathBuf,
-    /// Directory the project file lives in (base for its relative $paths)
+    /// The directory that holds the project file (the base for its relative $paths)
     pub dir: PathBuf,
     pub json: Value,
-    /// False for model tree projects, @game output means nothing there
+    /// False for model tree projects; @game output has no meaning there
     pub is_datamodel: bool,
 }
 
@@ -42,7 +43,8 @@ pub fn load(path: &Path) -> Result<Project> {
         .get("$className")
         .and_then(Value::as_str)
         .map(|c| c == "DataModel")
-        // service children with no $className acts as a DataModel, a root $path means model project
+        // A tree with service children and no $className acts as a DataModel;
+        // a root $path means a model project.
         .unwrap_or_else(|| tree.get("$path").is_none());
     let dir = path.parent().unwrap_or(Path::new("")).to_owned();
     Ok(Project {
@@ -90,7 +92,7 @@ fn walk_mounts(
 
         if let (Some(fs_rel), false) = (fs_rel, dm_path.is_empty() && is_datamodel) {
             let fs = normalize(&project_dir.join(fs_rel));
-            // nested project files are skipped as mounts, copied verbatim with a warning
+            // Nested project files are not mounts; larvae copies them verbatim with a warning.
             if !fs_rel.ends_with(".project.json") {
                 out.push(Mount {
                     fs,
@@ -111,7 +113,7 @@ fn walk_mounts(
     }
 }
 
-/// Build the derived project JSON, paths rerelativized against build_dir
+/// Build the derived project JSON; paths become relative to build_dir
 pub fn derive_build_project(
     project: &Project,
     input: &Path,
@@ -125,7 +127,7 @@ pub fn derive_build_project(
         .get_mut("name")
         .and_then(|v| v.as_str().map(str::to_owned))
     {
-        json["name"] = Value::String(name); // keep name as is
+        json["name"] = Value::String(name); // Keep the name unchanged.
     }
 
     if let Some(tree) = json.get_mut("tree") {
@@ -232,7 +234,7 @@ fn relative_to(from_dir: &Path, to: &Path) -> String {
     }
 }
 
-/// Write the derived project, returns its path
+/// Write the derived project; returns its path
 pub fn write_build_project(
     project: &Project,
     input: &Path,
@@ -315,13 +317,13 @@ mod tests {
             &mut warnings,
         );
         let tree = &out["tree"];
-        // src/** remapped to dist/** and rerelativized against .larvae/
+        // src/** maps to dist/** and becomes relative to .larvae/.
         assert_eq!(
             tree["ReplicatedStorage"]["shared"]["$path"],
             "../dist/shared"
         );
         assert_eq!(tree["ServerScriptService"]["$path"], "../dist/server");
-        // Outside the input root, untouched source location, rerelativized
+        // Outside the input root: the source location is unchanged and becomes relative.
         assert_eq!(
             tree["ReplicatedStorage"]["Packages"]["$path"],
             "../Packages"

@@ -1,25 +1,25 @@
 /*!
 remove_interpolated_string
 
-The lexer keeps a backtick string as one opaque token, so the pieces have to
-be split out here. The result is a string.format call, `string` strategy
-wraps every value in tostring and formats with `%s`, `tostring` strategy
-leans on Luau's `%*` instead
+The lexer keeps a backtick string as one opaque token, so this rule
+splits out the pieces. The result is a string.format call. The `string`
+strategy wraps each value in tostring and formats with `%s`. The
+`tostring` strategy uses Luau's `%*` instead.
 
-Anything the split cannot account for is left alone, that covers a raw
-newline in the literal, which no quoted string could hold without moving
-line numbers, and a nested backtick string, which this single pass would
-never get back to
+The rule keeps each string that the split cannot handle. This covers a
+raw newline in the literal, because no quoted string can hold one without
+a shift in line numbers. It also covers a nested backtick string, because
+this single pass would never visit it again.
 */
 
 use crate::rules::engine::{Edit, Flow, RuleCtx, Visit, walk_chunk};
 use crate::syntax::ast::*;
 
-/// One piece of a split backtick string
+/// One piece of a split backtick string.
 enum Piece {
-    /// Literal text, already escaped for a quoted string
+    /// Literal text, already escaped for a quoted string.
     Text(String),
-    /// Source text of an interpolated expression
+    /// The source text of an interpolated expression.
     Value(String),
 }
 
@@ -61,12 +61,12 @@ pub fn remove_interpolated_string(ctx: &RuleCtx, edits: &mut Vec<Edit>, strategy
 }
 
 /*
-Split `\`a {x} b\`` into literal and value pieces
+Split `\`a {x} b\`` into literal and value pieces.
 
-Literal bytes come out ready to sit inside a quoted string, the escape that
-Luau only allows in a backtick string is unwrapped and the quote character
-we are about to use is escaped. Returns None whenever the transform would
-not be safe
+The literal bytes come out ready for a quoted string. The function
+unwraps the escape that Luau permits only in a backtick string. It also
+escapes the quote character that the output will use. It returns None
+when the transform would not be safe.
 */
 fn split(raw: &str, quote: char) -> Option<Vec<Piece>> {
     let body = raw.strip_prefix('`')?.strip_suffix('`')?;
@@ -81,7 +81,7 @@ fn split(raw: &str, quote: char) -> Option<Vec<Piece>> {
                 let next = *bytes.get(i + 1)?;
 
                 match next {
-                    // only meaningful inside backticks, a quoted string takes it plain
+                    // The escape has meaning only in backticks. A quoted string takes it plain.
                     b'{' => text.push('{'),
 
                     b'`' => text.push('`'),
@@ -100,7 +100,7 @@ fn split(raw: &str, quote: char) -> Option<Vec<Piece>> {
 
             b'{' => {
                 let (expr, next) = scan_expr(body, i)?;
-                // a nested backtick string would never be visited again
+                // The pass would never visit a nested backtick string again.
                 if expr.contains('`') || expr.trim().is_empty() {
                     return None;
                 }
@@ -110,7 +110,7 @@ fn split(raw: &str, quote: char) -> Option<Vec<Piece>> {
                 i = next;
             }
 
-            // a quoted string cannot hold a raw newline without shifting lines
+            // A quoted string cannot hold a raw newline without a shift in lines.
             b'\n' => return None,
 
             b'%' => {
@@ -137,7 +137,7 @@ fn split(raw: &str, quote: char) -> Option<Vec<Piece>> {
     Some(pieces)
 }
 
-/// Find the expression inside `{...}`, returns its text and the offset past `}`
+/// Find the expression inside `{...}`. Return its text and the offset after `}`.
 fn scan_expr(body: &str, open: usize) -> Option<(&str, usize)> {
     let bytes = body.as_bytes();
     let mut depth = 0usize;
@@ -159,7 +159,7 @@ fn scan_expr(body: &str, open: usize) -> Option<(&str, usize)> {
                 }
             }
 
-            // a string inside the braces must not unbalance the scan
+            // A string inside the braces must not unbalance the scan.
             q @ (b'"' | b'\'') => {
                 i += 1;
 
@@ -203,9 +203,9 @@ fn render(pieces: &[Piece], quote: char, tostring_strategy: bool) -> String {
         }
     }
 
-    // nothing to interpolate, it was only ever a string
+    // There are no values to interpolate. The input was only a string.
     if values.is_empty() {
-        // the doubled percents were for a format string we are not emitting
+        // The doubled percents were for a format string that larvae does not emit here.
         return format!("{quote}{}{quote}", format.replace("%%", "%"));
     }
 
@@ -269,7 +269,7 @@ mod tests {
             run("local s = `hello`\n", as_string),
             "local s = \"hello\"\n"
         );
-        // the percent needs no doubling when there is no format call
+        // The percent needs no doubled form when there is no format call.
         assert_eq!(run("local s = `50%`\n", as_string), "local s = \"50%\"\n");
     }
 
@@ -279,7 +279,7 @@ mod tests {
             run("local s = `a\\nb {x}`\n", as_string),
             "local s = string.format(\"a\\nb %s\", tostring(x))\n"
         );
-        // an escaped brace is just a brace once the backticks are gone
+        // An escaped brace is a plain brace after the backticks go away.
         assert_eq!(run("local s = `a\\{b`\n", as_string), "local s = \"a{b\"\n");
     }
 
@@ -305,7 +305,7 @@ mod tests {
 
     #[test]
     fn nested_backticks_are_left_alone() {
-        // one pass could never reach the inner string again
+        // One pass can never reach the inner string again.
         let src = "local s = `outer {`inner {x}`}`\n";
         assert_eq!(run(src, as_string), src);
     }

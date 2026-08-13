@@ -1,4 +1,4 @@
-//! Spec string and filesystem helpers shared by the resolver
+//! Spec string and filesystem helpers that the resolver shares
 
 use std::path::{Path, PathBuf};
 
@@ -44,7 +44,7 @@ pub(super) fn has_module_extension(spec: &str) -> bool {
     spec.ends_with(".luau") || spec.ends_with(".lua")
 }
 
-/// Join a spec onto a base dir resolving dots, None when it escapes the root
+/// Join a spec onto a base directory and resolve dots; None when it escapes the root
 pub(super) fn normalize_join(base: &Path, spec: &str) -> Option<PathBuf> {
     let mut out = base.to_owned();
 
@@ -64,7 +64,7 @@ pub(super) fn normalize_join(base: &Path, spec: &str) -> Option<PathBuf> {
     Some(out)
 }
 
-/// RFC module resolution, file or dir with init, more than one match is ambiguous
+/// RFC module resolution: a file, or a directory with init; more than one match is ambiguous
 pub(super) fn resolve_module(base: &Path) -> Result<Option<ModuleNode>, String> {
     let mut found: Vec<ModuleNode> = Vec::new();
 
@@ -92,7 +92,7 @@ pub(super) fn resolve_module(base: &Path) -> Result<Option<ModuleNode>, String> 
     }
 }
 
-/// Relative path in require syntax, ./x/y or ../../x
+/// A relative path in require syntax, ./x/y or ../../x
 pub(super) fn fs_relative(from_dir: &Path, to: &Path) -> String {
     let from: Vec<_> = from_dir.components().collect();
     let to_comps: Vec<_> = to.components().collect();

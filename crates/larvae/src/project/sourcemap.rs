@@ -1,14 +1,14 @@
 /*!
 Rojo sourcemaps
 
-A sourcemap is rojo's own answer to which file is which instance, so it
-settles the cases a static read of the project file cannot: a `$path`
-pointing at another project file, a model file that brings its own subtree,
-globs, anything rojo computes rather than states
+A sourcemap is the answer from rojo about which file is which instance. So
+it settles the cases that a static read of the project file cannot: a
+`$path` that points at another project file, a model file that brings its
+own subtree, globs, and all data that rojo computes and does not state.
 
-It is a generated artifact, so it is a fallback rather than the normal path.
-Auto mounts from the project file cover most projects and need nothing kept
-in sync
+A sourcemap is a generated artifact, so it is a fallback and not the normal
+path. Auto mounts from the project file cover most projects, and they need
+no synchronization.
 */
 
 use std::collections::HashMap;
@@ -27,11 +27,11 @@ struct Node {
     children: Vec<Node>,
 }
 
-/// Both directions of the file to instance mapping, looked up in constant time
+/// Both directions of the file to instance mapping, with constant time lookup
 #[derive(Debug, Default)]
 pub struct SourceMap {
     by_fs: HashMap<PathBuf, Vec<String>>,
-    /// Instance path to the extensionless base a require should resolve from
+    /// Instance path to the extensionless base that a require must resolve from
     by_dm: HashMap<Vec<String>, PathBuf>,
 }
 
@@ -43,7 +43,7 @@ pub fn load(path: &Path, project_root: &Path) -> Result<SourceMap> {
 
     let mut map = SourceMap::default();
 
-    // the root node is the DataModel itself, segments start below it
+    // The root node is the DataModel; segments start below it.
     for child in &root.children {
         walk(child, &mut Vec::new(), project_root, &mut map);
     }
@@ -55,8 +55,8 @@ fn walk(node: &Node, segments: &mut Vec<String>, project_root: &Path, map: &mut 
     segments.push(node.name.clone());
 
     /*
-    A node can list several paths, ex: a script next to its meta.json. The
-    script is the one a require can reach, so anything else is skipped
+    A node can list several paths, ex: a script next to its meta.json. A
+    require can reach only the script, so the walk skips the other paths.
     */
     if let Some(file) = node.file_paths.iter().find(|p| is_module(p)) {
         let abs = project_root.join(file);
@@ -82,9 +82,9 @@ fn is_module(path: &Path) -> bool {
 }
 
 /*
-The extensionless path a require resolves from, which is what the rest of
-the resolver already works in. An init file stands for its directory, so
-that is the base rather than the file itself
+The extensionless path that a require resolves from; the rest of the
+resolver works in this form. An init file stands for its directory, so the
+directory is the base and not the file.
 */
 fn base_of(file: &Path) -> PathBuf {
     let stem = file
@@ -104,12 +104,12 @@ impl SourceMap {
         self.by_fs.is_empty()
     }
 
-    /// Instance path of a file, when the sourcemap knows it
+    /// The instance path of a file, when the sourcemap knows it
     pub fn dm_of(&self, path: &Path) -> Option<&[String]> {
         self.by_fs.get(path).map(|v| v.as_slice())
     }
 
-    /// Extensionless base an instance path resolves from
+    /// The extensionless base that an instance path resolves from
     pub fn fs_of(&self, segments: &[String]) -> Option<&Path> {
         self.by_dm.get(segments).map(|p| p.as_path())
     }

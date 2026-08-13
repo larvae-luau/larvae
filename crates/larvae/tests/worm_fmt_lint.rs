@@ -1,4 +1,5 @@
-//! `larvae fmt` and `larvae lint` over files a native worm claims
+//! These tests run `larvae fmt` and `larvae lint` on files that a native worm
+//! claims.
 
 #![cfg(unix)]
 
@@ -38,12 +39,13 @@ fn run(dir: &Path, args: &[&str]) -> (bool, String) {
 }
 
 /*
-A whole native worm in a few lines of python.
+This is a full native worm in a few lines of python.
 
-Its format op hands the entire file back as one `host` span, so larvae lays
-it out as Luau — enough to prove the document crosses, splices and renders.
-Its lint op reports one finding when the file contains "bad", and returns the
-span of a leading comment so `-- larvae: allow(...)` works.
+Its format op returns the entire file as one `host` span, so larvae lays the
+file out as Luau. This is enough to prove that the document crosses, splices,
+and renders. Its lint op reports one finding when the file contains "bad".
+The op also returns the span of a leading comment, so `-- larvae: allow(...)`
+works.
 */
 fn install_worm(root: &Path) {
     write(
@@ -146,10 +148,10 @@ fn fmt_formats_a_claimed_file_through_its_worm() {
 
     assert!(ok, "{text}");
 
-    // the worm's host span was rendered by larvae's own emitter
+    // larvae's own emitter rendered the worm's host span.
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "local x = 1\n");
 
-    // and the ordinary file went down the ordinary path
+    // The ordinary file went through the ordinary path.
     assert_eq!(
         std::fs::read_to_string(root.path().join("src/plain.luau")).unwrap(),
         "local y = 2\n"
@@ -199,7 +201,7 @@ fn lint_reports_a_worm_finding_and_the_level_lever_works() {
     assert!(ok, "a warning alone exits zero: {text}");
     assert!(text.contains("markup_bad_word"), "{text}");
 
-    // raising it to deny in [lint.rules] fails the run, like a builtin
+    // A deny level in [lint.rules] fails the run, the same as a builtin lint.
     let config = std::fs::read_to_string(root.path().join("larvae.toml")).unwrap();
     write(
         root.path(),

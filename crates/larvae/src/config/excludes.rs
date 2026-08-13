@@ -1,18 +1,18 @@
 /*!
-The paths a config asked us to leave alone.
+The paths that a config tells larvae to skip.
 
-`[fmt]`, `[lint]` and selene's own file all spell this the same way, a list of
-globs relative to the project root, so the matching lives here once rather than
-three times over.
+`[fmt]`, `[lint]`, and the file of selene all use the same form: a list of
+globs relative to the project root. So the match logic lives here once and
+not three times.
 
-A match on any directory along the way counts, so naming a directory excludes
-what is under it whether or not the pattern ends in a wildcard. Nobody should
-have to remember which spelling this tool wanted.
+A match on any directory in the path counts. So a directory name excludes the
+content under it, with or without a wildcard at the end of the pattern. The
+user does not have to remember one specific spelling.
 
-What this does not cover is a file somebody named on the command line. Naming a
-file is saying you meant it, and a formatter that silently does nothing to a
-file you pointed it at is worse than one that formats a file you had excluded.
-Excludes are for what a walk finds on its own.
+Excludes do not cover a file that the user named on the command line. A name
+is an instruction from the user. A formatter that does nothing to a named
+file, without a message, is worse than one that formats an excluded file.
+Excludes apply only to the files that a walk finds.
 */
 
 use std::path::{Path, PathBuf};
@@ -23,7 +23,7 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 #[derive(Debug, Clone, Default)]
 pub struct Excludes {
     root: PathBuf,
-    /// None when nothing was excluded, which is the usual case and skips the work
+    /// None when the config excludes nothing; this is the usual case and skips the work
     set: Option<GlobSet>,
 }
 
@@ -48,7 +48,7 @@ impl Excludes {
         })
     }
 
-    /// Whether this path is one the project asked us to pass over
+    /// True when the project tells larvae to skip this path
     pub fn skips(&self, path: &Path) -> bool {
         let Some(set) = &self.set else {
             return false;
@@ -87,7 +87,7 @@ mod tests {
         assert!(!e.skips(Path::new("/project/src/thing.luau")));
     }
 
-    /// Naming the directory has to be enough, the /** is the part people forget
+    /// A directory name must be enough; users forget the /** part.
     #[test]
     fn naming_a_directory_excludes_what_is_under_it() {
         let e = excludes(&["Packages", "src/vendor"]);
@@ -97,8 +97,8 @@ mod tests {
         assert!(!e.skips(Path::new("/project/src/vendored.luau")));
     }
 
-    /// A path from somewhere else entirely is matched as written rather than
-    /// silently passing, since the alternative is formatting what was excluded
+    /// A path outside the root matches as written and does not pass without a
+    /// check. The alternative is a format of an excluded file.
     #[test]
     fn a_path_outside_the_root_still_matches_on_its_own_terms() {
         assert!(excludes(&["**/vendor/**"]).skips(Path::new("/elsewhere/vendor/a.luau")));

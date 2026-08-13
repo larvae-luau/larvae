@@ -1,4 +1,4 @@
-//! Type syntax, consumed for its extent and never interpreted
+//! Type syntax. The parser consumes it for its extent and never interprets it.
 
 use crate::syntax::lexer::TokKind;
 
@@ -7,7 +7,7 @@ use super::*;
 impl<'a> Parser<'a> {
     // --- types, extent only ------------------------------------------------
 
-    /// Consume a balanced `<...>` group, used for generic parameter lists
+    /// Consumes a balanced `<...>` group. Generic parameter lists use this.
     pub(super) fn angle_span(&mut self) -> Result<TokSpan, ParseError> {
         let start = self.pos;
         self.expect("<")?;
@@ -49,7 +49,7 @@ impl<'a> Parser<'a> {
     }
 
     pub(super) fn type_body(&mut self) -> Result<(), ParseError> {
-        // Luau allows a leading `|` or `&`
+        // Luau allows a leading `|` or `&`.
         if self.at("|") || self.at("&") {
             self.bump();
         }
@@ -64,7 +64,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// A return type, either a single type or a parenthesized pack
+    /// Parses a return type: a single type or a parenthesized pack.
     pub(super) fn type_ret(&mut self) -> Result<TokSpan, ParseError> {
         self.type_()
     }
@@ -112,13 +112,13 @@ impl<'a> Parser<'a> {
             }
 
             "..." => {
-                // variadic element of a type pack
+                // This is the variadic element of a type pack.
                 self.bump();
 
                 self.type_suffixed()
             }
 
-            // a generic function type, `<T>(T) -> T`
+            // This is a generic function type: `<T>(T) -> T`.
             "<" => {
                 self.angle_span()?;
 
@@ -126,7 +126,7 @@ impl<'a> Parser<'a> {
             }
 
             "(" => {
-                // either a parenthesized type or a function type's parameters
+                // This is a parenthesized type or the parameters of a function type.
                 self.bump();
 
                 if !self.at(")") {
@@ -138,7 +138,7 @@ impl<'a> Parser<'a> {
                                 self.type_suffixed()?;
                             }
                         } else {
-                            // an optionally named parameter
+                            // The parameter can have a name.
                             if self.at_name() && self.text_at(1) == ":" {
                                 self.bump();
                                 self.bump();
@@ -162,7 +162,7 @@ impl<'a> Parser<'a> {
 
             _ => match self.kind_at(0) {
                 Some(TokKind::Str { .. }) => {
-                    // a singleton string type
+                    // This is a singleton string type.
                     self.bump();
 
                     Ok(())
@@ -180,7 +180,7 @@ impl<'a> Parser<'a> {
                         self.angle_span()?;
                     }
 
-                    // a generic type pack, `T...`
+                    // This is a generic type pack: `T...`.
                     if self.at("...") {
                         self.bump();
                     }
@@ -208,7 +208,7 @@ impl<'a> Parser<'a> {
                 self.expect(":")?;
                 self.type_body()?;
             } else {
-                // `read`/`write` access modifiers come before the name
+                // The `read` and `write` access modifiers come before the name.
                 if matches!(self.text(), "read" | "write")
                     && matches!(self.kind_at(1), Some(TokKind::Ident))
                 {
@@ -220,7 +220,7 @@ impl<'a> Parser<'a> {
                     self.bump();
                     self.type_body()?;
                 } else {
-                    // an array style element
+                    // This is an array style element.
                     self.type_body()?;
                 }
             }

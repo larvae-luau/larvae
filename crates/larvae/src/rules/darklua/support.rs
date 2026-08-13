@@ -1,16 +1,17 @@
 /*!
 Shared helpers for the parity rules
 
-Small predicates the rules lean on, plus the edit shapes that show up in
-more than one place. Everything here is deliberately conservative, a
-predicate says yes only when the answer is provable from the tree alone
+This module holds the small predicates that the rules use, and the edit
+shapes that appear in more than one place. Each helper here is
+conservative by design. A predicate answers yes only when the answer is
+provable from the tree alone.
 */
 
 use crate::rules::engine::{Edit, Flow, RuleCtx, Visit, walk_expr};
 use crate::syntax::ast::*;
 use crate::syntax::lexer::TokKind;
 
-/// Luau's reserved words, a field access can never use one of these
+/// Luau's reserved words. A field access can never use one of these.
 pub fn is_reserved(word: &str) -> bool {
     matches!(
         word,
@@ -38,7 +39,7 @@ pub fn is_reserved(word: &str) -> bool {
     )
 }
 
-/// A name that can be written after a dot
+/// True for a name that the code can write after a dot.
 pub fn is_ident(s: &str) -> bool {
     if s.is_empty() || is_reserved(s) {
         return false;
@@ -55,9 +56,10 @@ pub fn is_ident(s: &str) -> bool {
 }
 
 /*
-Side effect probe, a call is the only thing in the tree that can obviously
-run user code, index and arithmetic can fire metamethods too but darklua
-treats those as pure and matching it keeps ported configs predictable
+A side effect probe. A call is the only node in the tree that clearly
+runs user code. An index and arithmetic can also run metamethods, but
+darklua treats those as pure. Larvae matches darklua here, and that keeps
+ported configs predictable.
 */
 pub fn has_call(e: &Expr) -> bool {
     struct Probe {
@@ -80,7 +82,7 @@ pub fn has_call(e: &Expr) -> bool {
     p.found
 }
 
-/// True when the expression needs no parentheses as an operand
+/// True when the expression needs no parentheses as an operand.
 pub fn is_atomic(e: &Expr) -> bool {
     matches!(
         e,
@@ -101,9 +103,10 @@ pub fn is_atomic(e: &Expr) -> bool {
 }
 
 /*
-Safe to write twice, compound assignment has to re-emit its target so the
-target must not run anything, a name or a path of names qualifies and a
-computed key does too as long as the key itself calls nothing
+True when the expression is safe to write twice. Compound assignment
+emits its target again, so the target must not run code. A name or a path
+of names qualifies. A computed key also qualifies when the key itself
+calls nothing.
 */
 pub fn is_reemittable(e: &Expr) -> bool {
     match e {
@@ -124,7 +127,7 @@ pub fn is_reemittable(e: &Expr) -> bool {
     }
 }
 
-/// Values that Lua never treats as false, the guard remove_if_expression needs
+/// Values that Lua never treats as false. remove_if_expression needs this guard.
 pub fn is_never_falsy(e: &Expr) -> bool {
     match e {
         Expr::Number(_)
@@ -142,12 +145,12 @@ pub fn is_never_falsy(e: &Expr) -> bool {
 
 // --- edit shapes ---------------------------------------------------------
 
-/// Zero width insert at a byte offset
+/// A zero width insert at a byte offset.
 pub fn insert(at: u32, text: &str, edits: &mut Vec<Edit>) {
     edits.push((at, at, text.to_string()));
 }
 
-/// Byte range of one token
+/// The byte range of one token.
 pub fn tok_bytes(ctx: &RuleCtx, index: u32) -> (u32, u32) {
     let t = &ctx.toks[index as usize];
 
@@ -155,9 +158,10 @@ pub fn tok_bytes(ctx: &RuleCtx, index: u32) -> (u32, u32) {
 }
 
 /*
-Replace a byte range and pad the newline shortfall, generated text carries
-whatever lines it needs and the rest are appended so retain-lines output
-never drifts, refuses when the text would add lines
+Replace a byte range and pad the newline shortfall. The generated text
+carries the lines that it needs. The function appends the rest, so
+retain-lines output never drifts. The function refuses when the text
+would add lines.
 */
 pub fn replace_keep_lines(
     ctx: &RuleCtx,
@@ -189,12 +193,12 @@ pub fn count_newlines(s: &str) -> usize {
     s.bytes().filter(|&b| b == b'\n').count()
 }
 
-/// True when a comment starts inside this byte range
+/// True when a comment starts inside this byte range.
 pub fn has_comment_in(ctx: &RuleCtx, from: u32, to: u32) -> bool {
     ctx.comments.iter().any(|&(s, _)| s >= from && s < to)
 }
 
-/// Source text of an expression, wrapped in parens unless it is atomic
+/// The source text of an expression. The text gets parens when it is not atomic.
 pub fn operand_text(ctx: &RuleCtx, e: &Expr) -> String {
     let text = ctx.text(e.span());
 
@@ -206,9 +210,10 @@ pub fn operand_text(ctx: &RuleCtx, e: &Expr) -> String {
 }
 
 /*
-The inner content of a string token when it is a plain literal, None for
-anything the rules should not reason about, escapes included, so a caller
-can trust the bytes it gets back
+The inner content of a string token when it is a plain literal. The
+function returns None for each form that the rules must not examine.
+Escapes are included in that set. Thus a caller can trust the bytes that
+it receives.
 */
 pub fn plain_string_value<'a>(ctx: &RuleCtx<'a>, span: TokSpan) -> Option<&'a str> {
     let tok = ctx.toks.get(span.start as usize)?;
@@ -229,7 +234,7 @@ pub fn plain_string_value<'a>(ctx: &RuleCtx<'a>, span: TokSpan) -> Option<&'a st
     }
 }
 
-/// Token index of the `(` that opens a function body's parameter list
+/// The token index of the `(` that opens the parameter list of a function body.
 pub fn params_lparen(ctx: &RuleCtx, body: &FunctionBody) -> Option<u32> {
     let from = match body.generics {
         Some(g) => g.end,
@@ -240,8 +245,8 @@ pub fn params_lparen(ctx: &RuleCtx, body: &FunctionBody) -> Option<u32> {
     (ctx.toks.get(from as usize)?.kind == TokKind::LParen).then_some(from)
 }
 
-/// Statements that introduce a binding, unwrapping a block past one of these
-/// would leak it into the enclosing scope
+/// True when a statement introduces a binding. An unwrap of a block with
+/// one of these would leak the binding into the enclosing scope.
 pub fn declares_local(b: &Block) -> bool {
     b.stmts.iter().any(|s| {
         matches!(

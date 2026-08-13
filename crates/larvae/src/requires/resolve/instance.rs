@@ -1,4 +1,4 @@
-//! Instance expression requires read as input, ex: require(script.Parent.Foo)
+//! Instance expression requires that larvae reads as input, ex: require(script.Parent.Foo)
 
 use crate::diag::Diag;
 use crate::syntax::scan::{InstanceSite, Root, Step};
@@ -7,13 +7,13 @@ use super::*;
 
 impl Resolver<'_> {
     /*
-    Turn an instance chain into whatever the configured target wants
+    Turn an instance chain into the form of the configured target.
 
-    The chain gives a datamodel path, the mount table turns that back into a
-    file, and from there it is the same emission every other require goes
-    through, so realm checks and container rules come along for free. None
-    means leave the expression exactly as it was, which is always the safe
-    answer when we cannot follow the chain all the way
+    The chain gives a datamodel path. The mount table turns that path back
+    into a file. From there, the emission is the same as for every other
+    require, so realm checks and container rules apply at no extra cost.
+    None means: keep the expression exactly as written. That is always the
+    safe answer when the resolver cannot follow the full chain.
     */
     pub fn resolve_instance(
         &self,
@@ -95,9 +95,9 @@ impl Resolver<'_> {
         };
 
         /*
-        Emission writes specs back as require("..."), which reads wrong for a
-        chain that never had quotes, so its diagnostics get unwrapped on the
-        way out. Everything else about the emission is shared on purpose
+        Emission writes specs back as require("..."). That reads wrong for a
+        chain that never had quotes, so the diagnostics lose the quotes on
+        the way out. All other parts of the emission stay shared by design.
         */
         let mut emitted = Vec::new();
         let rewrite = self.emit_fs(ctx, &shown, &target_base, src, offset, &mut emitted);
@@ -110,7 +110,7 @@ impl Resolver<'_> {
         }
 
         match rewrite {
-            // a string spec has to come back with quotes, it is replacing an expression
+            // A string spec must come back with quotes, because it replaces an expression.
             Rewrite::Replace(spec) => Some(lua_quote(&spec, self.quote)),
 
             Rewrite::Expr(expr) => Some(expr),
@@ -163,7 +163,7 @@ mod tests {
             chain(r#"require(script.Parent:WaitForChild("Thing"))"#).unwrap(),
             (Root::Script, vec![Step::Up, Step::Down("Thing".into())])
         );
-        // the shape a wally link module generates
+        // The shape that a wally link module generates.
         assert_eq!(
             chain(r#"require(script.Parent._Index["sleitnick_signal@2.0.1"]["signal"])"#).unwrap(),
             (
@@ -180,15 +180,15 @@ mod tests {
 
     #[test]
     fn leaves_anything_it_cannot_follow() {
-        // a local standing in for a service, we do not track locals yet
+        // A local that stands in for a service; larvae does not track locals yet.
         assert!(chain("require(ReplicatedStorage.Packages.Signal)").is_none());
-        // a computed child
+        // A computed child
         assert!(chain("require(script.Parent[name])").is_none());
-        // a call we do not model
+        // A call that larvae does not model
         assert!(chain("require(script.Parent:FindFirstAncestor(\"x\"))").is_none());
-        // bare script with no hops
+        // A bare script with no steps
         assert!(chain("require(script)").is_none());
-        // trailing work after the chain
+        // Trailing work after the chain
         assert!(chain("require(script.Parent.Foo.Bar())").is_none());
     }
 }

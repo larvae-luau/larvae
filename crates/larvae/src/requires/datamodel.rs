@@ -1,4 +1,4 @@
-//! Filesystem to DataModel mapping plus the container rules, realms and Starter cloning
+//! Filesystem to DataModel mapping, plus the container rules: realms and Starter cloning
 
 use std::path::{Component, Path, PathBuf};
 
@@ -13,12 +13,12 @@ pub struct Mount {
 
 #[derive(Debug, Default)]
 pub struct MountTable {
-    /// Sorted deepest-first so lookup finds the most specific mount
+    /// Sorted deepest first, so a lookup finds the most specific mount
     mounts: Vec<Mount>,
     /*
-    Rojo's own answer, when the project supplied one. It wins over the
-    mounts because it is what rojo actually built rather than what we
-    inferred from the project file
+    The answer from rojo, when the project supplies one. It wins over the
+    mounts, because it is what rojo built and not what larvae inferred from
+    the project file.
     */
     map: crate::project::sourcemap::SourceMap,
 }
@@ -27,7 +27,7 @@ pub struct MountTable {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Realm {
     ServerOnly,
-    /// Starter containers run as clones, absolute @game paths into them hit the template
+    /// Starter containers run as clones; an absolute @game path into them reaches the template
     StarterClone,
     Shared,
 }
@@ -47,9 +47,9 @@ pub fn realm_of_container(service: &str) -> Realm {
 pub struct DmPath {
     /// Segments from the DataModel root to this node (inclusive)
     pub segments: Vec<String>,
-    /// How many leading segments come from the mount, relative emission stays below this
+    /// The count of leading segments from the mount; relative emission stays below this
     pub mount_depth: usize,
-    /// Which mount produced this path (index into the table)
+    /// The mount that produced this path (an index into the table)
     pub mount: usize,
 }
 
@@ -77,14 +77,14 @@ impl MountTable {
         }
     }
 
-    /// Take rojo's sourcemap as the authority, mounts still cover what it misses
+    /// Use the rojo sourcemap as the authority; mounts cover what it misses
     pub fn with_sourcemap(mut self, map: crate::project::sourcemap::SourceMap) -> Self {
         self.map = map;
 
         self
     }
 
-    /// True when nothing at all describes the tree, mounts or sourcemap
+    /// True when no mounts and no sourcemap describe the tree
     pub fn is_empty(&self) -> bool {
         self.mounts.is_empty() && self.map.is_empty()
     }
@@ -94,10 +94,10 @@ impl MountTable {
     }
 
     /*
-    The other direction, where on disk a DataModel path lives. Instance
-    requires arrive as a datamodel path and have to come back to a file
-    before they can be re-emitted, and the most specific mount wins because
-    a deeper one is the more precise answer
+    The other direction: the disk location of a DataModel path. An instance
+    require arrives as a datamodel path and must map back to a file before
+    larvae can emit it again. The most specific mount wins, because a deeper
+    mount is the more precise answer.
     */
     pub fn fs_of(&self, segments: &[String]) -> Option<PathBuf> {
         if let Some(base) = self.map.fs_of(segments) {
@@ -120,8 +120,9 @@ impl MountTable {
     }
 
     /**
-    Map a resolved module path to its DataModel node, extensions and
-    .server/.client markers stripped, init files collapse into their dir
+    Map a resolved module path to its DataModel node. The map removes
+    extensions and .server/.client markers, and an init file collapses into
+    its directory.
     */
     pub fn dm_of(&self, fs_path: &Path) -> Option<DmPath> {
         if let Some(segments) = self.map.dm_of(fs_path) {
@@ -129,8 +130,8 @@ impl MountTable {
                 segments: segments.to_vec(),
                 /*
                 Every node in a sourcemap has a file behind it, so the only
-                floor on a relative require is the service itself. One map
-                covers the whole tree, so everything shares a mount
+                floor for a relative require is the service itself. One map
+                covers the whole tree, so all nodes share a mount.
                 */
                 mount_depth: 1,
                 mount: usize::MAX,
@@ -164,12 +165,12 @@ impl MountTable {
                 continue;
             }
 
-            // Final component, apply script naming rules if it's a file
+            // The final component: apply the script naming rules if it is a file.
             if fs_path.is_dir() {
                 segments.push((*comp).to_string());
             } else {
                 match script_instance_name(comp) {
-                    // init.* collapses into the parent directory node
+                    // init.* collapses into the parent directory node.
                     None => {}
                     Some(name) => segments.push(name.to_string()),
                 }
@@ -177,7 +178,7 @@ impl MountTable {
         }
 
         if segments.is_empty() {
-            return None; // the mount root itself with an init collapse above it
+            return None; // The mount root itself, with an init collapse above it.
         }
 
         Some(DmPath {
@@ -188,7 +189,7 @@ impl MountTable {
     }
 }
 
-/// Instance name for a script file, foo.server.luau becomes foo, init files return None
+/// The instance name for a script file: foo.server.luau becomes foo, and init files return None
 pub fn script_instance_name(file_name: &str) -> Option<&str> {
     let stem = file_name
         .strip_suffix(".luau")
@@ -201,7 +202,7 @@ pub fn script_instance_name(file_name: &str) -> Option<&str> {
     if stem == "init" { None } else { Some(stem) }
 }
 
-/// Script kind from a file name (drives realm checks)
+/// The script kind from a file name (the realm checks use it)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScriptKind {
     Server,

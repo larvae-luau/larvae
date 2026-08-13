@@ -1,4 +1,5 @@
-//! [requires.overrides], a different output form per path
+//! These tests cover [requires.overrides], which sets a different output form
+//! for each path.
 
 use larvae::config::Config;
 use larvae::pipeline;
@@ -6,7 +7,8 @@ use larvae::pipeline;
 mod common;
 use common::*;
 
-/// Shared code plus client code that runs out of a Starter container
+/// This fixture has shared code, plus client code that runs from a Starter
+/// container.
 fn mixed(overrides: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -55,14 +57,14 @@ fn an_override_moves_only_the_paths_it_names() {
 
     assert!(!out.has_errors(), "{:?}", out.diags);
 
-    // shared code kept the default string form
+    // The shared code kept the default string form.
     let shared = read(root, "dist/shared/main.luau");
     assert!(
         shared.contains("require(\"@game/ReplicatedStorage/app/util\")"),
         "{shared}"
     );
 
-    // client code came out as an instance expression instead
+    // The client code became an instance expression instead.
     let client = read(root, "dist/client/init.client.luau");
     assert!(client.contains("GetService"), "{client}");
     assert!(!client.contains("\"@game/"), "{client}");

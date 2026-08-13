@@ -7,7 +7,7 @@ pub enum Severity {
     Error,
 }
 
-/// A user facing diagnostic, line and col captured at creation so rendering needs no source
+/// A user facing diagnostic; creation captures the line and column, so rendering needs no source
 #[derive(Debug, Clone)]
 pub struct Diag {
     pub severity: Severity,
@@ -42,7 +42,7 @@ impl Diag {
         self
     }
 
-    /// The same, through an index built once for the file
+    /// The same, through an index that builds once for the file
     pub fn at_indexed(mut self, index: &LineIndex, source: &str, byte_offset: usize) -> Self {
         self.line_col = Some(index.at(source, byte_offset));
 
@@ -66,7 +66,7 @@ impl Diag {
     }
 
     /**
-    Render as a small block instead of one long line
+    Render as a small block and not one long line
 
     ```text
     ✗ error: require("@nope/x"): unknown alias @nope
@@ -74,8 +74,8 @@ impl Diag {
         help: define it under [aliases] in larvae.toml or in a .luaurc
     ```
 
-    Color stays on theme, dark blue head then darker steps below,
-    warnings get the bright brand head
+    The color stays on theme: a dark blue head, then darker steps below.
+    Warnings get the bright brand head.
     */
     pub fn render(&self, color: bool) -> String {
         if !color {
@@ -123,10 +123,11 @@ impl fmt::Display for Diag {
 /*
 Line starts for one source, so many diagnostics over one file cost one scan.
 
-`line_col` alone counts newlines from the start of the file, which is fine for
-the handful of diagnostics a build produces and quadratic for a lint run: a
-large file with a hundred findings scans it a hundred times. Building this once
-per file and asking it per finding is the same answer in one pass.
+`line_col` alone counts newlines from the start of the file. That is
+acceptable for the few diagnostics of a build, and quadratic for a lint run:
+a large file with a hundred findings scans a hundred times. This index builds
+once for each file and answers each finding, which gives the same answer in
+one pass.
 */
 pub struct LineIndex {
     starts: Vec<u32>,
@@ -172,7 +173,7 @@ pub fn line_col(source: &str, byte_offset: usize) -> (u32, u32) {
     (line, col)
 }
 
-/// Sort diagnostics for deterministic output regardless of rayon scheduling
+/// Sort diagnostics for deterministic output, independent of rayon scheduling
 pub fn sort(diags: &mut [Diag]) {
     diags.sort_by(|a, b| {
         (&a.file, a.line_col, a.severity)

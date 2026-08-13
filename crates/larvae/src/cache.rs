@@ -1,11 +1,13 @@
 /*!
-Incremental build cache
+The incremental build cache.
 
-A per file content hash alone is not enough here, require resolution reads
-other files, so a `.luaurc` edit or a new sibling that creates an ambiguity
-changes the right answer for files that did not themselves change, the key
-therefore carries a resolution epoch, hash of every input that resolution
-consults, any change to it rebuilds everything, coarse but never stale
+A content hash per file is not sufficient here. Require resolution reads other
+files. Thus an edit to `.luaurc`, or a new sibling file that creates an
+ambiguity, changes the correct answer for files that did not change.
+
+For this reason the key carries a resolution epoch. The epoch is a hash of
+every input that resolution consults. Any change to the epoch rebuilds all
+files. This method is coarse, but the cache is never stale.
 */
 
 use std::collections::{HashMap, HashSet};
@@ -14,14 +16,14 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use xxhash_rust::xxh3::xxh3_64;
 
-/// Bump when the cache layout or the meaning of a hash changes
+/// Increase this value when the cache layout or the meaning of a hash changes
 const FORMAT: u32 = 1;
 
 pub fn hash_bytes(bytes: &[u8]) -> u64 {
     xxh3_64(bytes)
 }
 
-/// Fold one more value into a running hash
+/// Add one more value to a running hash
 pub fn mix(acc: u64, bytes: &[u8]) -> u64 {
     xxh3_64(&[&acc.to_le_bytes()[..], bytes].concat())
 }
@@ -30,7 +32,7 @@ pub fn mix(acc: u64, bytes: &[u8]) -> u64 {
 struct CacheFile {
     format: u32,
     epoch: u64,
-    /// Output content hashes keyed by path relative to the input root
+    /// The content hashes of the output, keyed by the path relative to the input root
     files: HashMap<String, u64>,
 }
 
@@ -42,7 +44,7 @@ pub struct Cache {
 }
 
 impl Cache {
-    /// Load the cache, an epoch or format change starts from empty
+    /// Load the cache. A change of the epoch or the format starts from empty.
     pub fn load(cache_dir: &Path, epoch: u64, enabled: bool) -> Self {
         let path = cache_dir.join("build-cache.json");
 
@@ -65,8 +67,8 @@ impl Cache {
         }
     }
 
-    /// True when this file can be skipped, the source is unchanged and the
-    /// output it produced last time is still on disk
+    /// This is true when larvae can skip the file. The source is unchanged,
+    /// and the output of the last run is still on disk.
     pub fn is_fresh(&self, rel: &str, source_hash: u64, output: &Path) -> bool {
         self.enabled && self.entries.get(rel) == Some(&source_hash) && output.exists()
     }
@@ -77,7 +79,7 @@ impl Cache {
         }
     }
 
-    /// Drop entries for files that no longer exist
+    /// Remove the entries for files that do not exist anymore
     pub fn retain(&mut self, keep: &HashSet<String>) {
         self.entries.retain(|k, _| keep.contains(k));
     }
@@ -106,7 +108,7 @@ impl Cache {
     }
 }
 
-/// Everything require resolution depends on beyond a file's own bytes
+/// Every input that require resolution depends on, beyond the bytes of the file
 #[derive(Default)]
 pub struct EpochInputs {
     acc: u64,
@@ -131,8 +133,8 @@ impl EpochInputs {
         }
     }
 
-    /// The set of source paths matters, adding or removing a file can create
-    /// or resolve a module ambiguity for files that did not change
+    /// The set of source paths is part of the key. A file that is added or
+    /// removed can create or resolve a module ambiguity for other files.
     pub fn add_paths(&mut self, paths: &mut [PathBuf]) {
         paths.sort();
 

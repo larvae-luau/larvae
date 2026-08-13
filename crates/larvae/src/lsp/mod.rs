@@ -1,18 +1,19 @@
 /*!
-`larvae lsp`, the language server the editor extension talks to.
+`larvae lsp`, the language server that the editor extension talks to.
 
-Written against the protocol directly rather than on top of a framework. The
-reason is size: a runtime and a protocol crate would add several megabytes to a
-binary whose whole point is being one small thing, and what they provide is the
-framing in [`rpc`] and a dispatch table, both of which are short.
+The server speaks the protocol directly and does not use a framework. The
+reason is size: a runtime and a protocol crate would add several megabytes to
+a binary whose main goal is a small size. Those crates provide the framing in
+[`rpc`] and a dispatch table, and both are short.
 
-It is single threaded and synchronous, which sounds like a limitation and is
-not. A request is answered by parsing one file, and parsing one file is
-microseconds; the work an async server exists to overlap does not happen here.
+The server is single threaded and synchronous, and this is not a limitation.
+The server answers a request with a parse of one file, and a parse of one
+file takes microseconds. The work that an async server overlaps does not
+occur here.
 
-Everything is pull based from the document store: the editor sends the text on
-every change, so this never reads a file the editor has open, and never answers
-from a version the user has already edited past.
+The server reads all text from the document store: the editor sends the text
+on every change. So the server never reads a file that the editor has open,
+and never answers from a version that the user already edited past.
 */
 
 pub mod rpc;
@@ -47,19 +48,19 @@ pub fn run() -> Result<()> {
 
 #[derive(Default)]
 struct Server {
-    /// Open documents, keyed by the uri the editor gave them
+    /// Open documents, keyed by the uri that the editor gave them
     documents: HashMap<String, String>,
     root: Option<PathBuf>,
     fmt: FmtConfig,
     lint: LintConfig,
-    /// What `[lint] exclude` covers, so an excluded file stays quiet
+    /// The paths that `[lint] exclude` covers, so an excluded file stays quiet
     excluded: Excludes,
-    /// Set by `shutdown`, so a later `exit` is clean rather than abrupt
+    /// `shutdown` sets this, so a later `exit` is clean and not abrupt
     shutting_down: bool,
 }
 
 impl Server {
-    /// Returns whether the server should stop
+    /// Returns true when the server must stop
     fn handle(&mut self, message: &rpc::Message, out: &mut impl Write) -> Result<bool> {
         match message.method.as_str() {
             "initialize" => {
@@ -79,9 +80,10 @@ impl Server {
             "initialized" => {}
 
             /*
-            A configuration change can turn a lint on, so every open document
-            is re-checked rather than waiting for each to be touched. An editor
-            showing stale warnings after a settings change looks broken.
+            A configuration change can turn a lint on. So the server checks
+            every open document again and does not wait for each edit. An
+            editor that shows stale warnings after a settings change looks
+            broken.
             */
             "workspace/didChangeConfiguration" => {
                 self.load_config();
@@ -103,12 +105,12 @@ impl Server {
             }
 
             /*
-            Full sync only, declared as such in the capabilities.
+            Full sync only, declared in the capabilities.
 
-            Incremental sync would save the editor sending the whole buffer,
-            and would cost a rope and a patch path to maintain. For files of
-            the size Luau projects hold, sending the text is cheaper than the
-            machinery to avoid sending it.
+            Incremental sync would save the editor a send of the whole
+            buffer, and would cost a rope and a patch path. For files of the
+            size that Luau projects hold, a send of the text is cheaper than
+            the machinery that avoids the send.
             */
             "textDocument/didChange" => {
                 let uri = uri_of(&message.params);
@@ -129,7 +131,7 @@ impl Server {
                 self.publish(&uri, out)?;
             }
 
-            // the diagnostics go with it, or the editor keeps showing them
+            // The diagnostics clear with the document, or the editor keeps them on screen.
             "textDocument/didClose" => {
                 let uri = uri_of(&message.params);
                 self.documents.remove(&uri);
@@ -147,8 +149,8 @@ impl Server {
                 match result {
                     Ok(edits) => self.reply(message, out, edits)?,
 
-                    // a file mid edit does not parse, and saying so on every
-                    // keystroke would be noise, so formatting simply declines
+                    // A file in the middle of an edit does not parse. A report on
+                    // every keystroke would be noise, so the format request declines.
                     Err(_) => self.reply(message, out, Value::Null)?,
                 }
             }
@@ -159,7 +161,7 @@ impl Server {
                 self.reply(message, out, symbols)?;
             }
 
-            // anything else, answered only if it expected an answer
+            // All other methods get an answer only if the message expects one.
             _ => {
                 if let Some(id) = &message.id {
                     rpc::respond_error(out, id, format!("{} is not supported", message.method))?;
@@ -174,7 +176,7 @@ impl Server {
         match &message.id {
             Some(id) => rpc::respond(out, id, result),
 
-            // a notification wants no reply, and sending one is a protocol error
+            // A notification wants no reply, and a reply is a protocol error.
             None => Ok(()),
         }
     }
@@ -193,11 +195,11 @@ impl Server {
     }
 
     /*
-    Read the project's config, falling back to defaults.
+    Read the config of the project, with the defaults as the fallback.
 
-    A broken config is not reported here. The editor is where someone is
-    editing that config, and a server that refuses to start because the file is
-    half typed is worse than one that formats with defaults until it is saved.
+    The server does not report a broken config here. The user edits that
+    config in the editor. A server that refuses to start because the file is
+    incomplete is worse than one that formats with defaults until the save.
     */
     fn load_config(&mut self) {
         let Some(root) = &self.root else {
@@ -224,9 +226,9 @@ impl Server {
         };
 
         /*
-        An excluded file is published empty rather than skipped. Skipping would
-        leave whatever was on screen before the exclude was added sitting there
-        until the editor closed the file.
+        The server publishes an excluded file as empty and does not skip it.
+        A skip would keep the old diagnostics on screen until the editor
+        closed the file.
         */
         if path_of_uri(uri).is_some_and(|p| self.excluded.skips(&p)) {
             return rpc::notify(
@@ -256,7 +258,7 @@ impl Server {
                 })
                 .collect::<Vec<_>>(),
 
-            // a syntax error is one diagnostic, and stops the rest being asked
+            // A syntax error is one diagnostic, and it stops the other checks.
             Err(e) => {
                 let at = e.offset as u32;
 
@@ -276,7 +278,7 @@ impl Server {
         )
     }
 
-    /// One edit replacing the whole document, which is what a formatter produces
+    /// One edit that replaces the whole document; a formatter produces this
     fn format(&self, uri: &str) -> Result<Value> {
         let Some(src) = self.documents.get(uri) else {
             return Ok(Value::Null);
@@ -284,7 +286,7 @@ impl Server {
 
         let formatted = fmt::format(src, &self.fmt)?;
 
-        // an edit that changes nothing still makes the editor mark the file dirty
+        // An edit that changes nothing still makes the editor mark the file dirty.
         if formatted == *src {
             return Ok(json!([]));
         }
@@ -296,11 +298,11 @@ impl Server {
     }
 
     /*
-    The outline, which is what a symbol picker and the breadcrumb bar read.
+    The outline; a symbol picker and the breadcrumb bar read it.
 
-    Top level declarations only. A nested helper is not something anyone
-    navigates to by name, and listing them turns the outline of a large module
-    into something longer than the module.
+    Top level declarations only. No user navigates to a nested helper by
+    name. A list of them makes the outline of a large module longer than the
+    module.
     */
     fn symbols(&self, uri: &str) -> Value {
         let Some(src) = self.documents.get(uri) else {
@@ -328,7 +330,7 @@ impl Server {
         for stmt in &chunk.block.stmts {
             use crate::syntax::ast::Stmt;
 
-            // 12 is Function and 13 is Variable, in the protocol's numbering
+            // 12 is Function and 13 is Variable, in the numbering of the protocol.
             let (name, kind, span) = match stmt {
                 Stmt::Function(n) => {
                     let path: Vec<&str> = n
@@ -375,7 +377,7 @@ impl Server {
     }
 }
 
-/// What this server can do, which is what the editor will then ask for
+/// The abilities of this server; the editor then asks only for these
 fn capabilities() -> Value {
     json!({
         "capabilities": {
@@ -407,15 +409,15 @@ fn uri_of(params: &Value) -> String {
 /*
 A `file://` uri as a path.
 
-Only the plain form, with percent decoding for the characters an editor
-actually escapes. A full uri parser would be a dependency for the one scheme
-that matters, and a path that fails here only means the project config is not
-found, not that anything breaks.
+Only the plain form, with percent decoding for the characters that an editor
+escapes. A full uri parser would be a dependency for the one scheme that
+matters. A path that fails here only means that the server does not find the
+project config; no other function breaks.
 */
 fn path_of_uri(uri: &str) -> Option<PathBuf> {
     let rest = uri.strip_prefix("file://")?;
 
-    // on Windows the path arrives as /C:/thing, with a leading slash to drop
+    // On Windows the path arrives as /C:/thing; remove the leading slash.
     let rest = match rest.get(..3) {
         Some(p) if p.starts_with('/') && p.as_bytes()[2] == b':' => &rest[1..],
 
@@ -458,7 +460,7 @@ mod tests {
         server
     }
 
-    /// Everything advertised has to be something the dispatch actually handles
+    /// The dispatch must handle every advertised capability.
     #[test]
     fn the_advertised_capabilities_are_all_implemented() {
         let caps = capabilities();
@@ -591,9 +593,9 @@ mod tests {
     }
 
     /*
-    An excluded file has to be published empty rather than left alone. Anything
-    already on screen when the exclude was added would otherwise stay there
-    until the editor closed the file.
+    The server must publish an excluded file as empty and not skip it.
+    Otherwise the old diagnostics would stay on screen until the editor
+    closed the file.
     */
     #[test]
     fn an_excluded_document_is_published_empty() {
@@ -617,7 +619,7 @@ mod tests {
         assert!(text.contains("\"diagnostics\":[]"), "{text}");
     }
 
-    /// The help is worth having in the editor, where there is room for it
+    /// The help belongs in the editor, because the editor has room for it
     #[test]
     fn the_help_is_carried_into_the_message() {
         let diags = diagnostics_of("local unused = 1\nreturn 1\n");
@@ -706,7 +708,7 @@ mod tests {
         assert_eq!(server.documents["file:///t.luau"], "local b = 2\n");
     }
 
-    /// Closing has to clear what was published, or the editor keeps showing it
+    /// A close must clear the published diagnostics, or the editor keeps them
     #[test]
     fn closing_a_document_drops_it_and_clears_its_diagnostics() {
         let mut server = server_with("local unused = 1\n");
@@ -743,7 +745,7 @@ mod tests {
         assert!(String::from_utf8(out).unwrap().contains("is not supported"));
     }
 
-    /// Replying to a notification is a protocol error
+    /// A reply to a notification is a protocol error
     #[test]
     fn an_unsupported_notification_is_answered_with_nothing() {
         let mut server = Server::default();

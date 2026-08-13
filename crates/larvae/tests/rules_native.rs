@@ -1,4 +1,5 @@
-//! Pipeline tests for larvae's own rules, before and after on a real project
+//! These pipeline tests run larvae's own rules on a real project, with a
+//! before source and an after source.
 
 use std::fs;
 use std::path::Path;
@@ -18,8 +19,8 @@ fn read(root: &Path, rel: &str) -> String {
 }
 
 /*
-A Rojo shaped project so every file under src has a datamodel path, the
-rules under test are the only ones enabled, `rules` is the body of [rules]
+A Rojo-style project, so every file under src has a datamodel path. The rules
+under test are the only rules that are on. `rules` is the body of [rules].
 */
 fn project(rules: &str) -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
@@ -50,7 +51,8 @@ fn project(rules: &str) -> tempfile::TempDir {
     tmp
 }
 
-/// Run the pipeline in write mode and fail loudly on any error diagnostic
+/// This function runs the pipeline in write mode. It fails with a message on
+/// any error diagnostic.
 fn build(root: &Path) -> Vec<larvae::diag::Diag> {
     let config = Config::load_or_default(root).unwrap();
     let outcome = pipeline::run(root, &config, true).unwrap();
@@ -64,7 +66,7 @@ fn build(root: &Path) -> Vec<larvae::diag::Diag> {
     outcome.diags
 }
 
-/// Output lines must line up with input lines, that is the retain-lines promise
+/// Output lines must align with input lines. That is the retain-lines promise.
 fn same_line_count(before: &str, after: &str) {
     assert_eq!(
         before.lines().count(),
@@ -96,15 +98,15 @@ fn remove_calls_drops_statement_calls_only() {
 
     let after = read(root, "dist/shared/mod.luau");
     same_line_count(before, &after);
-    // statement calls are gone, nested blocks included
+    // The statement calls are gone, and this includes nested blocks.
     assert!(!after.contains("print(\"loading\")"), "{after}");
     assert!(!after.contains("debug.profilebegin"), "{after}");
     assert!(!after.contains("    print(n)\n"), "{after}");
-    // the value is used, the call has to stay
+    // The code uses the value, so the call must stay.
     assert!(after.contains("local shown = print(n)"), "{after}");
-    // the argument calls something, that call may be the point of the line
+    // The argument calls a function. That call can be the purpose of the line.
     assert!(after.contains("print(compute())"), "{after}");
-    // not on the list
+    // This function is not on the list.
     assert!(after.contains("warn(\"kept\")"), "{after}");
 }
 
@@ -137,7 +139,7 @@ fn use_get_service_rewrites_known_services() {
     same_line_count(before, &after);
     assert!(after.contains("local rs = game:GetService(\"ReplicatedStorage\")"));
     assert!(after.contains("local player = game:GetService(\"Players\").LocalPlayer"));
-    // not a service, it stays a plain property
+    // This is not a service, so it stays a plain property.
     assert!(after.contains("local folder = game.SomeFolder"));
 }
 
@@ -153,7 +155,7 @@ fn use_get_service_skips_a_file_that_shadows_game() {
     );
     write(root, "src/shared/mod.luau", before);
     build(root);
-    // the local wins over the global, rewriting it would call a table
+    // The local wins over the global. A rewrite would call a table.
     assert_eq!(read(root, "dist/shared/mod.luau"), before);
 }
 
@@ -162,7 +164,7 @@ fn dedupe_requires_folds_specs_that_resolve_together() {
     let tmp = project("dedupe_requires = true");
     let root = tmp.path();
 
-    // two different specs, the rewriter lands both on the same @game path
+    // Two different specs. The rewriter maps both to the same @game path.
     let before = concat!(
         "local A = require(\"@pkg/math\")\n",
         "local B = require(\"@game/ReplicatedStorage/shared/util/math\")\n",
@@ -198,7 +200,7 @@ fn dedupe_requires_leaves_distinct_modules_alone() {
     );
     write(root, "src/shared/mod.luau", before);
     build(root);
-    // different modules, and the nested one is not a top level statement
+    // The modules are different, and the nested require is not a top-level statement.
     assert_eq!(read(root, "dist/shared/mod.luau"), before);
 }
 
@@ -217,7 +219,8 @@ fn inject_module_path_defines_the_constant() {
     build(root);
 
     let after = read(root, "dist/shared/mod.luau");
-    // after the directive and the header comment, one line longer
+    // The constant goes after the directive and the header comment. The file
+    // is one line longer.
     assert_eq!(
         after,
         concat!(
@@ -235,9 +238,9 @@ fn inject_module_path_stays_quiet_or_warns() {
     let tmp = project("inject_module_path = \"MODULE_PATH\"");
     let root = tmp.path();
 
-    // never referenced, nothing to inject
+    // The code never references the constant, so there is nothing to inject.
     write(root, "src/shared/quiet.luau", "return 1\n");
-    // referenced but no mount covers this directory
+    // The code references the constant, but no mount covers this directory.
     write(root, "src/loose/thing.luau", "return MODULE_PATH\n");
     let diags = build(root);
 
@@ -267,7 +270,8 @@ fn freeze_module_wraps_only_what_it_can_prove() {
     let after = read(root, "dist/shared/safe.luau");
     same_line_count(safe, &after);
     assert!(after.ends_with("return table.freeze(M)\n"), "{after}");
-    // a method table is written to after it is built, freezing it would throw
+    // The code writes to a method table after construction, so a freeze would
+    // raise an error.
     assert_eq!(read(root, "dist/shared/methods.luau"), methods);
     assert_eq!(
         read(root, "dist/shared/literal.luau"),
@@ -291,7 +295,7 @@ fn rules_off_by_default() {
     build(root);
 
     let after = read(root, "dist/shared/mod.luau");
-    // only the require rewriting ran
+    // Only the require rewriting ran.
     assert!(after.contains("print(\"kept\")"));
     assert!(after.contains("game.ReplicatedStorage"));
     assert!(!after.contains("MODULE_PATH ="));

@@ -1,4 +1,4 @@
-//! Writing results out, always atomically, rojo serve watches this tree
+//! The module writes results, always atomically; rojo serve watches this tree.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -33,8 +33,8 @@ pub(super) fn copy_atomic(from: &Path, dest: &Path) -> Result<()> {
 }
 
 /*
-Remove output files whose source is gone, guarded so it can never chew
-through the project when output is misconfigured
+Remove output files whose source is gone. A guard makes sure that the prune
+cannot delete project files when the output path is misconfigured.
 */
 pub(super) fn prune_output(
     output: &Path,

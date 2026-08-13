@@ -1,21 +1,22 @@
 /*!
-Which names exist before a file runs.
+The names that exist before a file runs.
 
-`undefined_variable` is only as good as this list, and a list that is missing
-something turns a working file into a wall of false reports, so the bias
-throughout is to include a name rather than leave it out. A global that exists
-and is not listed costs a wrong warning; one listed that does not exist costs a
-warning nobody was going to get anyway.
+`undefined_variable` is only as good as this list. A list with a missing name
+turns a working file into many false reports. Thus the rule here is to
+include a doubtful name, not to omit it. A global that exists but is not
+listed causes a wrong warning. A listed global that does not exist costs a
+warning that no user would get.
 
-selene keeps these in TOML files a project can extend or replace. larvae ships
-the two that cover almost everyone as static slices instead, because a lookup
-that has to parse a file cannot run on every keystroke, and a project with its
-own globals lists them under `[lint] globals` rather than authoring a library.
+selene keeps these lists in TOML files that a project can extend or replace.
+larvae ships the two lists that cover almost all users as static slices. The
+reason is speed: a lookup that must parse a file cannot run on every
+keystroke. A project with its own globals lists them under `[lint] globals`
+and does not write a library file.
 */
 
 use super::config::StdLib;
 
-/// Luau's own globals, which every Luau host provides
+/// Luau's own globals. Every Luau host provides them.
 pub const LUAU: &[&str] = &[
     "_G",
     "_VERSION",
@@ -58,15 +59,16 @@ pub const LUAU: &[&str] = &[
     "xpcall",
 ];
 
-/// What Roblox adds on top, the data types and the globals its scripts get
+/// The names that Roblox adds: the data types and the globals that its scripts get.
 pub const ROBLOX: &[&str] = &[
-    // the entry points
+    // The entry points.
     "game",
     "plugin",
     "script",
     "shared",
     "workspace",
-    // scheduling, including the deprecated forms so they are not also undefined
+    // Scheduling. The list includes the deprecated forms, so larvae does not
+    // report them as undefined.
     "DebuggerManager",
     "PluginManager",
     "UserSettings",
@@ -82,7 +84,7 @@ pub const ROBLOX: &[&str] = &[
     "time",
     "version",
     "wait",
-    // the data types
+    // The data types.
     "Axes",
     "BrickColor",
     "CFrame",
@@ -122,7 +124,7 @@ pub const ROBLOX: &[&str] = &[
     "Vector3int16",
 ];
 
-/// Whether this name exists before the file runs
+/// Returns true if this name exists before the file runs.
 pub fn has(std: StdLib, name: &str) -> bool {
     match std {
         StdLib::None => false,
@@ -137,7 +139,7 @@ pub fn has(std: StdLib, name: &str) -> bool {
 mod tests {
     use super::*;
 
-    /// `has` binary searches Luau's list, which only works if it stays sorted
+    /// `has` does a binary search in Luau's list, so the list must stay sorted.
     #[test]
     fn the_luau_list_is_sorted() {
         let mut sorted = LUAU.to_vec();
@@ -158,7 +160,7 @@ mod tests {
         }
     }
 
-    /// Roblox adds to Luau rather than replacing it
+    /// Roblox adds to Luau and does not replace it.
     #[test]
     fn the_two_lists_do_not_overlap() {
         for name in ROBLOX {
@@ -194,9 +196,9 @@ mod tests {
     }
 
     /*
-    The deprecated scheduling globals still exist at runtime, so leaving them
-    out would report working code as undefined. Saying they are deprecated is
-    a different lint's job.
+    The deprecated scheduling globals still exist at runtime. To omit them
+    would report working code as undefined. A different lint reports that
+    they are deprecated.
     */
     #[test]
     fn deprecated_globals_are_still_globals() {

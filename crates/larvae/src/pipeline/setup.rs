@@ -1,4 +1,4 @@
-//! Everything `run` has to work out before a single file is touched
+//! The data that `run` must resolve before it touches one file
 
 use std::path::{Path, PathBuf};
 
@@ -13,7 +13,7 @@ use crate::project::luaurc::LuaurcIndex;
 use crate::project::rojo::{self, Project};
 use crate::requires::datamodel::{Mount, MountTable, parse_game_path};
 
-/// Directories the whole walk stays out of, output and caches are ours
+/// The directories that every walk skips; larvae owns the output and the caches
 pub fn skip_dirs(root: &Path, config: &Config) -> [PathBuf; 4] {
     [
         root.join(&config.process.output),
@@ -53,7 +53,7 @@ pub fn mount_table(
 
     let table = MountTable::new(mounts);
 
-    // rojo's own map, when the project keeps one, wins over what we inferred
+    // The rojo sourcemap, when the project keeps one, wins over the inferred mounts.
     let Some(rel) = &config.requires.sourcemap else {
         return table;
     };
@@ -69,7 +69,7 @@ pub fn mount_table(
     }
 }
 
-/// Every .luaurc in the project, aliases resolve by walking up through these
+/// Every .luaurc in the project; an alias resolves through a walk up these files
 pub fn luaurc_index(root: &Path, skip: &[PathBuf], diags: &mut Vec<Diag>) -> LuaurcIndex {
     let mut luaurc = LuaurcIndex::new(root);
 
@@ -84,13 +84,13 @@ pub fn luaurc_index(root: &Path, skip: &[PathBuf], diags: &mut Vec<Diag>) -> Lua
     luaurc
 }
 
-/// Split the input tree into files we transform and files we copy through
+/// Split the input tree into files that larvae transforms and files that larvae copies
 pub fn discover(
     roots: &[super::roots::Root],
     config: &Config,
     /*
-    Extensions a front-end worm claimed. Without these a .luaux file would be
-    copied through untouched, which looks like it worked right up until Studio
+    The extensions that a front-end worm claimed. Without these, larvae would
+    copy a .luaux file through unchanged. That looks correct until Studio
     tries to run markup.
     */
     claimed: &[String],
@@ -106,7 +106,7 @@ pub fn discover(
                 continue;
             }
 
-            // a nested root owns its own files, the outer one skips them
+            // A nested root owns its own files; the outer root skips them.
             if super::roots::owner(roots, entry.path()).map(|o| &o.dir) != Some(&root.dir) {
                 continue;
             }
@@ -134,10 +134,11 @@ pub fn discover(
 }
 
 /*
-Hash of everything require resolution reads, per file content hashing alone
-would be unsound because resolving one file reads others, ex: a .luaurc up
-the tree or a sibling that makes a require ambiguous. Anything here moving
-invalidates the whole cache, coarse but never stale
+A hash of all data that require resolution reads. A content hash for each
+file alone would be unsound, because the resolution of one file reads other
+files, ex: a .luaurc up the tree, or a sibling that makes a require
+ambiguous. A change to any input here invalidates the whole cache. This is
+coarse, but the cache is never stale.
 */
 pub fn epoch(
     root: &Path,
@@ -146,10 +147,10 @@ pub fn epoch(
     skip: &[PathBuf],
     files: &[&[PathBuf]],
     /*
-    Worms produce output, so their artifacts and settings are resolution inputs
-    like any other. Without them, editing a worm leaves every file it touched
-    cached against the old version, which is stale output rather than slow
-    output and therefore the worse failure.
+    Worms produce output, so their artifacts and settings are resolution
+    inputs like all others. Without them, an edit to a worm keeps every
+    touched file cached against the old version. That is stale output and
+    not slow output, and stale output is the worse failure.
     */
     worms: &crate::worm::pool::Pool,
 ) -> u64 {
@@ -208,7 +209,7 @@ fn globset(patterns: &[String]) -> Result<GlobSet> {
     Ok(b.build()?)
 }
 
-/// Flatten `.` and `..` without touching the disk, symlinks must stay intact
+/// Flatten `.` and `..` without disk access; symlinks must stay intact
 pub fn normalize(p: &Path) -> PathBuf {
     let mut out = PathBuf::new();
 

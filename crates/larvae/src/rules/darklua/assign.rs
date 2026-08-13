@@ -1,15 +1,16 @@
 /*!
 Rules that rewrite declarations and assignments
 
-Compound assignment and floor division both re-emit their target, so both
-refuse anything that is not provably safe to write twice
+Compound assignment and floor division both emit their target again. For
+this reason, both rules reject each target that is not provably safe to
+write twice.
 */
 
 use super::support::{self, insert, tok_bytes};
 use crate::rules::engine::{Edit, Flow, RuleCtx, Visit, walk_chunk};
 use crate::syntax::ast::*;
 
-/// The plain operator behind a compound one
+/// The plain operator that matches a compound operator.
 fn compound_op(op: &str) -> Option<&'static str> {
     Some(match op {
         "+=" => "+",
@@ -32,7 +33,7 @@ fn compound_op(op: &str) -> Option<&'static str> {
     })
 }
 
-/// Back up over the spaces in front of an offset so no trailing blank is left
+/// Move back over the spaces in front of an offset, so no trailing blank remains.
 fn trim_back(ctx: &RuleCtx, mut from: u32) -> u32 {
     let b = ctx.src.as_bytes();
 
@@ -44,8 +45,9 @@ fn trim_back(ctx: &RuleCtx, mut from: u32) -> u32 {
 }
 
 /*
-A compound assignment we can rewrite, one target, one value, and a target
-cheap enough to say twice, returns the pieces the callers need
+A compound assignment that the rule can rewrite. It has one target, one
+value, and a target that is cheap to write twice. The function returns
+the pieces that the callers need.
 */
 fn compound_parts<'a>(ctx: &RuleCtx<'a>, a: &'a Assign) -> Option<(&'a str, &'a Expr, &'a str)> {
     if a.targets.len() != 1 || a.values.len() != 1 {
@@ -61,7 +63,7 @@ fn compound_parts<'a>(ctx: &RuleCtx<'a>, a: &'a Assign) -> Option<(&'a str, &'a 
     }
 
     let target_text = ctx.text(target.span());
-    // saying it twice must not move any code onto a new line
+    // The second copy must not move code onto a new line.
     if target_text.contains('\n') {
         return None;
     }
@@ -69,7 +71,7 @@ fn compound_parts<'a>(ctx: &RuleCtx<'a>, a: &'a Assign) -> Option<(&'a str, &'a 
     Some((target_text, &a.values[0], plain))
 }
 
-/// Wrap the right hand side when gluing it onto an operator would re-associate
+/// Wrap the right hand side when a direct join to an operator would re-associate it.
 fn guard_value(ctx: &RuleCtx, value: &Expr, edits: &mut Vec<Edit>) {
     if support::is_atomic(value) {
         return;
@@ -81,9 +83,10 @@ fn guard_value(ctx: &RuleCtx, value: &Expr, edits: &mut Vec<Edit>) {
 }
 
 /*
-remove_compound_assignment, `x += 1` becomes `x = x + 1`, the target is
-written out again so it has to be a name or a path of names, `//=` is left
-to remove_floor_division when that rule is on so the two do not collide
+remove_compound_assignment: `x += 1` becomes `x = x + 1`. The rule writes
+the target again, so the target must be a name or a path of names. When
+remove_floor_division is on, that rule handles `//=`. Then the two rules
+do not collide.
 */
 pub fn remove_compound_assignment(ctx: &RuleCtx, edits: &mut Vec<Edit>, floor_division_on: bool) {
     struct V<'a, 'b> {
@@ -125,12 +128,13 @@ pub fn remove_compound_assignment(ctx: &RuleCtx, edits: &mut Vec<Edit>, floor_di
 }
 
 /*
-remove_floor_division, `a // b` becomes `math.floor(a / b)`
+remove_floor_division: `a // b` becomes `math.floor(a / b)`.
 
-`/` and `//` share a precedence so swapping the operator in place cannot
-re-associate anything, that is why only the wrapping call needs inserting
-and no extra parentheses do. The compound form re-emits its target and so
-carries the same restriction as remove_compound_assignment
+`/` and `//` have the same precedence. Thus an in-place swap of the
+operator cannot re-associate the parse. For this reason, the rule inserts
+only the wrapping call and no extra parentheses. The compound form emits
+its target again, so it has the same restriction as
+remove_compound_assignment.
 */
 pub fn remove_floor_division(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     struct V<'a, 'b> {
@@ -173,7 +177,7 @@ pub fn remove_floor_division(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
             let (oa, ob) = self.ctx.bytes(a.op);
             self.edits
                 .push((oa, ob, format!("= math.floor({target} /")));
-            // the closing paren goes outside any guard the value needs
+            // The closing paren goes outside a guard that the value needs.
             let (va, vb) = self.ctx.bytes(value.span());
 
             if !support::is_atomic(value) {
@@ -190,7 +194,7 @@ pub fn remove_floor_division(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     walk_chunk(ctx.chunk, &mut V { ctx, edits });
 }
 
-/// make_assignment_local, turn a `const` declaration back into a `local` one
+/// make_assignment_local: change a `const` declaration back into a `local` declaration.
 pub fn make_assignment_local(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     struct V<'a, 'b> {
         ctx: &'a RuleCtx<'b>,
@@ -215,8 +219,9 @@ pub fn make_assignment_local(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
 }
 
 /*
-remove_nil_declaration, `local x = nil` becomes `local x`, trailing nils in
-a multi binding go too, a const has to keep its value so it is skipped
+remove_nil_declaration: `local x = nil` becomes `local x`. The rule also
+removes trailing nils in a multi binding. A const must keep its value, so
+the rule skips it.
 */
 pub fn remove_nil_declaration(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     struct V<'a, 'b> {
@@ -244,7 +249,7 @@ pub fn remove_nil_declaration(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
 
             let last_end = self.ctx.bytes(l.values.last().unwrap().span()).1;
             let from = if keep == 0 {
-                // every value was nil, the `=` goes with them
+                // Each value was nil. The `=` goes with them.
                 let Some(eq) = l.values[0].span().start.checked_sub(1) else {
                     return Flow::Next;
                 };
@@ -276,13 +281,15 @@ pub fn remove_nil_declaration(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
 }
 
 /*
-group_local_assignment, fold a run of adjacent `local` declarations into one
+group_local_assignment: fold a run of adjacent `local` declarations into
+one declaration.
 
-Conservative on purpose, every statement in the run must bind exactly as
-many values as names, the values must call nothing, and no later statement
-may read a name an earlier one bound, otherwise the merged form would read
-the outer binding instead. Type annotations, const, comments and blank
-space between the statements all stop a run
+The rule is conservative by design. Each statement in the run must bind
+exactly as many values as names. The values must call nothing. A later
+statement must not read a name that an earlier statement bound. Without
+these checks, the merged form would read the outer binding instead. Type
+annotations, const, comments, and blank space between the statements all
+stop a run.
 */
 pub fn group_local_assignment(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     struct V<'a, 'b> {
@@ -312,7 +319,7 @@ pub fn group_local_assignment(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     walk_chunk(ctx.chunk, &mut V { ctx, edits });
 }
 
-/// A local declaration simple enough to fold into its neighbours
+/// True when a local declaration is simple enough to fold into its neighbours.
 fn groupable(s: &Stmt) -> bool {
     let Stmt::Local(l) = s else { return false };
 
@@ -329,7 +336,7 @@ fn groupable(s: &Stmt) -> bool {
         .any(|v| support::has_call(v) || matches!(v, Expr::Vararg(_)))
 }
 
-/// How many statements starting at `from` can be folded together
+/// The count of statements from `from` that the rule can fold together.
 fn run_length(ctx: &RuleCtx, stmts: &[Stmt], from: usize) -> usize {
     if !groupable(&stmts[from]) {
         return 0;
@@ -344,7 +351,7 @@ fn run_length(ctx: &RuleCtx, stmts: &[Stmt], from: usize) -> usize {
         }
 
         let Stmt::Local(l) = &stmts[end] else { break };
-        // only whitespace may sit between two statements we are joining
+        // Only whitespace is permitted between two statements that the rule joins.
         let gap_from = ctx.bytes(stmts[end - 1].span()).1;
         let gap_to = ctx.bytes(stmts[end].span()).0;
 
@@ -380,7 +387,7 @@ fn local_names<'a>(ctx: &RuleCtx<'a>, s: &Stmt) -> Vec<&'a str> {
     }
 }
 
-/// Does this value read one of the names bound earlier in the run
+/// True when this value reads a name that an earlier statement in the run bound.
 fn reads_any(ctx: &RuleCtx, e: &Expr, names: &[&str]) -> bool {
     struct V<'a, 'b> {
         ctx: &'a RuleCtx<'b>,
@@ -415,7 +422,7 @@ fn emit_group(ctx: &RuleCtx, run: &[Stmt], edits: &mut Vec<Edit>) {
     let from = ctx.bytes(run[0].span()).0;
     let to = ctx.bytes(run[run.len() - 1].span()).1;
 
-    // a comment inside the run would be swallowed by the replacement
+    // The replacement would remove a comment inside the run.
     if support::has_comment_in(ctx, from, to) {
         return;
     }
@@ -463,17 +470,17 @@ mod tests {
 
     #[test]
     fn compound_assignment_parenthesises_the_value() {
-        // `x = x - a - b` would be wrong, the value has to stay one unit
+        // `x = x - a - b` would be wrong. The value must stay one unit.
         assert_eq!(run("x -= a - b\n", compound), "x = x - (a - b)\n");
         assert_eq!(run("x /= a * b\n", compound), "x = x / (a * b)\n");
     }
 
     #[test]
     fn compound_assignment_skips_unsafe_targets() {
-        // a call in the key would run twice
+        // A call in the key would run twice.
         let src = "t[f()] += 1\n";
         assert_eq!(run(src, compound), src);
-        // a plain assignment is not ours
+        // A plain assignment is not a target of this rule.
         let src = "x = 1\n";
         assert_eq!(run(src, compound), src);
     }
@@ -484,7 +491,7 @@ mod tests {
             run("local x = a // b\n", remove_floor_division),
             "local x = math.floor(a / b)\n"
         );
-        // same precedence as `/`, so the surrounding parse is untouched
+        // The precedence equals `/`, so the surrounding parse does not change.
         assert_eq!(
             run("local x = a + b // c\n", remove_floor_division),
             "local x = a + math.floor(b / c)\n"
@@ -546,10 +553,10 @@ mod tests {
 
     #[test]
     fn nil_declarations_leave_the_rest_alone() {
-        // a leading nil is positional, it cannot go
+        // A leading nil is positional. The rule cannot remove it.
         let src = "local a, b = nil, 1\n";
         assert_eq!(run(src, remove_nil_declaration), src);
-        // a const must keep its value
+        // A const must keep its value.
         let src = "const x = nil\n";
         assert_eq!(run(src, remove_nil_declaration), src);
         let src = "local x\n";
@@ -567,16 +574,16 @@ mod tests {
 
     #[test]
     fn grouping_stops_at_a_dependency() {
-        // b reads a, merging would make it read the outer a
+        // b reads a. A merge would make it read the outer a.
         let src = "local a = 1\nlocal b = a\n";
         assert_eq!(run(src, group_local_assignment), src);
-        // a call could observe the order
+        // A call could observe the order.
         let src = "local a = f()\nlocal b = 2\n";
         assert_eq!(run(src, group_local_assignment), src);
-        // a comment between them would be lost
+        // A merge would remove a comment between them.
         let src = "local a = 1\n-- note\nlocal b = 2\n";
         assert_eq!(run(src, group_local_assignment), src);
-        // an annotated binding is left alone
+        // The rule does not change an annotated binding.
         let src = "local a: number = 1\nlocal b = 2\n";
         assert_eq!(run(src, group_local_assignment), src);
     }

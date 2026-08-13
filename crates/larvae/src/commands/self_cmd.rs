@@ -1,4 +1,4 @@
-//! `larvae self <command>`, manage the larvae installation itself
+//! `larvae self <command>` manages the larvae installation.
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -11,7 +11,7 @@ use crate::net::{github, http};
 use crate::sys::paths;
 use crate::ui;
 
-/// GitHub repository releases are published to
+/// The GitHub repository that holds the releases
 const REPO: &str = "larvae-luau/larvae";
 
 #[derive(Subcommand)]
@@ -79,9 +79,9 @@ fn update(force: bool) -> Result<ExitCode> {
     let me = std::env::current_exe().context("cannot locate the running executable")?;
 
     /*
-    We only replace the copy `self install` put in place, a binary a version
-    manager pins belongs to that manager, overwriting it would leave the
-    manifest saying one version while the bytes on disk say another
+    The command replaces only the copy that `self install` wrote. A binary
+    that a version manager pins belongs to that manager. If larvae overwrote
+    it, the manifest would show one version and the bytes on disk another.
     */
     if !force && !paths::is_self_installed(&me) {
         let hint = match paths::managing_tool(&me) {
@@ -114,9 +114,10 @@ fn update(force: bool) -> Result<ExitCode> {
     }
 
     /*
-    Release assets are named larvae-{os}-{arch} from std::env::consts, zipped
-    with the archive taking the binary's name. A bare uncompressed asset under
-    the same stem is still accepted so an older release stays installable.
+    Release assets have the name larvae-{os}-{arch} from std::env::consts.
+    The zip archive takes the name of the binary. The command also accepts a
+    bare uncompressed asset with the same stem, so an older release stays
+    installable.
     */
     let stem = format!("larvae-{}-{}", std::env::consts::OS, std::env::consts::ARCH);
     let zip_name = format!("{stem}.zip");
@@ -161,15 +162,16 @@ fn update(force: bool) -> Result<ExitCode> {
 }
 
 /*
-Pull the binary out of a release archive. The workflow packs exactly one file,
-named for the executable rather than the asset, so we look for that name and
-fall back to the only file present. Entry paths are never used on disk, only
-their base name is read, so a crafted `../` path in the archive goes nowhere.
+Pull the binary out of a release archive. The workflow packs exactly one
+file, with the name of the executable and not the asset. So the function
+looks for that name, and falls back to the only file present. The function
+does not use entry paths on disk and reads only the base name. So a crafted
+`../` path in the archive has no effect.
 */
 fn unzip_binary(archive: &[u8]) -> Result<Vec<u8>> {
     use std::io::Read;
 
-    /// A release binary is a few megabytes, anything near this is not one
+    /// A release binary is a few megabytes; a file near this limit is not one
     const MAX_UNPACKED: u64 = 256 * 1024 * 1024;
 
     let want = format!("larvae{}", std::env::consts::EXE_SUFFIX);
@@ -239,7 +241,7 @@ fn uninstall() -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    // a binary inside ~/.larvae deletes itself first so the dir can go
+    // A binary inside ~/.larvae deletes itself first, so larvae can remove the directory.
     let me = std::env::current_exe()?;
 
     if me
@@ -262,9 +264,9 @@ fn uninstall() -> Result<ExitCode> {
 }
 
 /*
-Put the bin directory on PATH, Windows gets it written to the registry for
-real, unix shells vary too much to edit a profile behind someone's back so
-we print the line instead
+Put the bin directory on PATH. On Windows, the command writes the registry.
+Unix shells differ too much for a safe profile edit without user consent, so
+the command prints the line instead.
 */
 fn add_to_path(bin_dir: &Path) {
     let on_path = std::env::var_os("PATH")
@@ -301,9 +303,10 @@ fn add_to_path(bin_dir: &Path) {
 }
 
 /*
-Prepend to the user Path in HKCU, kept as REG_EXPAND_SZ because existing
-entries commonly hold %USERPROFILE% style variables that must keep expanding,
-then broadcast the change so new terminals pick it up without a logout
+Prepend to the user Path in HKCU. The value stays REG_EXPAND_SZ because
+existing entries often hold %USERPROFILE% style variables that must continue
+to expand. Then broadcast the change, so new terminals get it without a
+logout.
 */
 #[cfg(windows)]
 fn windows_path_add(bin_dir: &Path) -> anyhow::Result<bool> {
@@ -353,7 +356,7 @@ mod tests {
     use super::*;
     use std::io::{Cursor, Write};
 
-    /// A deflated archive holding each (name, contents) pair
+    /// A deflated archive that holds each (name, contents) pair
     fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
         let options = zip::write::SimpleFileOptions::default()
@@ -409,7 +412,7 @@ mod tests {
     }
 }
 
-/// Tell running processes the environment moved, without it only a logout works
+/// Tell active processes that the environment changed; without this, only a logout works
 #[cfg(windows)]
 fn broadcast_environment_change() {
     use windows_sys::Win32::UI::WindowsAndMessaging::{

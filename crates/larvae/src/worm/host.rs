@@ -1,13 +1,15 @@
 /*!
 The host half of the worm ABI, over `wasmi`.
 
-wasm has no strings, so a source file crosses as an offset and a length into the
-worm's own linear memory. The guest side of this lives in the `larvae-worm`
-crate, which hides it behind a macro so a worm author never sees a pointer.
+wasm has no strings. Thus a source file crosses the boundary as an offset and
+a length into the linear memory of the worm. The guest side lives in the
+`larvae-worm` crate. That crate hides the pointers behind a macro, so a worm
+author does not see a pointer.
 
-We run an interpreter rather than a JIT on purpose: `wasmtime` with Cranelift
-measured at nearly three times the binary, and one artifact per worm plus a
-sandbox around code fetched from a URL is what we were buying, not raw speed.
+Larvae runs an interpreter and not a JIT, by intent. A measurement showed that
+`wasmtime` with Cranelift makes the binary almost three times as large. The
+goals are one artifact per worm and a sandbox around code fetched from a URL,
+not raw speed.
 */
 
 use std::sync::Arc;
@@ -17,7 +19,7 @@ use anyhow::{Context, Result, bail};
 use super::ctx::FileCtx;
 use crate::rules::edits::Edit;
 
-/// Guest exports we require, and the one alias we still accept
+/// The guest exports the host requires, and the one alias the host still accepts
 mod export {
     pub const MEMORY: &str = "memory";
     pub const ALLOC: &str = "larvae_alloc";
@@ -26,27 +28,28 @@ mod export {
     pub const INIT: &str = "larvae_init";
     pub const VISIT: &str = "larvae_visit";
 
-    /// The name luaux's prototype shipped before the ABI settled, dropped once api 1 freezes
+    /// The name the luaux prototype shipped before the ABI was stable.
+    /// It is removed when api 1 freezes.
     pub const TRANSFORM_LEGACY: &str = "transform";
 }
 
-/// `[out_ptr, out_len, ok]`, three little endian u32
+/// The header is `[out_ptr, out_len, ok]`, three little endian u32 values
 const HEADER_BYTES: usize = 12;
 
-/// A worm output is source text, so anything near this is a bug rather than a file
+/// A worm output is source text. An output near this size shows a bug, not a file.
 const MAX_OUTPUT: u32 = 64 * 1024 * 1024;
 
-/// What a worm returned, which is either output or the reason there is none
+/// The result a worm returned, which is output or the reason there is no output
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
-    /// Transformed source when `ok`, the diagnostic when not
+    /// The transformed source when `ok` is true, or the diagnostic when it is false
     pub text: String,
-    /// Whether `text` is output rather than an error
+    /// If true, `text` is output and not an error
     pub ok: bool,
 }
 
 impl Outcome {
-    /// The transformed source, or the worm's own message as an error
+    /// Return the transformed source, or the message of the worm as an error
     pub fn into_source(self) -> Result<String> {
         if self.ok {
             Ok(self.text)
@@ -56,13 +59,13 @@ impl Outcome {
     }
 }
 
-/// A loaded wasm worm, ready to be called once per file
-/// What the host functions reach while a rule is running
+/// A loaded wasm worm, ready for one call per file
+/// The state the host functions reach while a rule runs
 #[derive(Default)]
 pub struct HostState {
-    /// The file being walked, absent outside a rule
+    /// The file that larvae walks now. It is absent outside a rule.
     file: Option<Arc<FileCtx>>,
-    /// Text a node accessor produced, read back through larvae_take_str
+    /// The text a node accessor produced. The guest reads it back through larvae_take_str.
     scratch: Vec<u8>,
 }
 
@@ -85,13 +88,13 @@ impl WasmWorm {
         let mut store = wasmi::Store::new(&engine, HostState::default());
 
         /*
-        The only imports are ours. There is no WASI and never will be, so a worm
-        cannot reach a filesystem even by accident, which is what turns the
-        sandbox from a policy into a property rather than a promise.
+        The host supplies the only imports. There is no WASI, and there will be
+        no WASI. Thus a worm cannot reach a filesystem, not even by accident.
+        This makes the sandbox a property of the system, not only a policy.
 
-        Node accessors are functions rather than a shared view of the tree, for
-        the same reason the Luau form uses handles: our AST must stay free to
-        change without breaking every pinned worm.
+        The node accessors are functions and not a shared view of the tree.
+        The reason is the same as for the handles in the Luau form: the AST
+        must stay free to change without breakage of every pinned worm.
         */
         let mut linker = wasmi::Linker::new(&engine);
 
@@ -147,14 +150,14 @@ impl WasmWorm {
             .call(&mut self.store, (src.0, src.1, cfg.0, cfg.1))
             .context("worm trapped")?;
 
-        // The guest is done with the inputs once it has returned, so release them
+        // The guest does not need the inputs after it returns, so release them
         self.free(src)?;
         self.free(cfg)?;
 
         self.pull(header)
     }
 
-    /// Copy bytes into the guest and return where they landed
+    /// Copy bytes into the guest and return their location
     fn push(&mut self, bytes: &[u8]) -> Result<(u32, u32)> {
         let len = u32::try_from(bytes.len()).context("input is larger than a worm can address")?;
         let ptr = self
@@ -177,7 +180,7 @@ impl WasmWorm {
         Ok(())
     }
 
-    /// Read `[ptr, len, ok]`, copy the payload out, then hand it back to be freed
+    /// Read `[ptr, len, ok]`, copy the payload out, then return the payload for release
     fn pull(&mut self, header: u32) -> Result<Outcome> {
         let mut raw = [0u8; HEADER_BYTES];
 
@@ -199,7 +202,7 @@ impl WasmWorm {
             .read(&self.store, ptr as usize, &mut bytes)
             .context("worm returned a payload outside its memory")?;
 
-        // The header is static on the guest side, only the payload is ours to release
+        // The header is static on the guest side. The host releases only the payload.
         self.free((ptr, len))?;
 
         Ok(Outcome {
@@ -226,17 +229,17 @@ where
 /*
 The node API, as imports under the `larvae` module.
 
-Strings never cross as return values, since a wasm function returns one number.
-An accessor stages its text in host scratch and answers with a length, and the
-guest allocates that many bytes and calls larvae_take_str to copy it over. Two
-calls instead of one, but no allocator on our side of the boundary and no
-ownership question about who frees what.
+A string does not cross as a return value, because a wasm function returns one
+number. An accessor stages its text in the host scratch and returns a length.
+The guest then allocates that many bytes and calls larvae_take_str to copy the
+text over. This costs two calls instead of one. In return, the host needs no
+allocator at the boundary, and the ownership of each buffer is clear.
 
-Every accessor checks the handle's epoch first, so a worm reaching for a node
-from a previous file traps with a sentence rather than reading the wrong tree.
+Every accessor checks the epoch of the handle first. Thus a worm that uses a
+node from a previous file gets a clear error and does not read the wrong tree.
 */
 fn host_functions(linker: &mut wasmi::Linker<HostState>) -> Result<()> {
-    /// Answer for a node that is not there, distinct from a real zero
+    /// The answer for a node that does not exist, distinct from a real zero
     const MISSING: i64 = -1;
 
     fn node<'a>(
@@ -350,7 +353,7 @@ fn host_functions(linker: &mut wasmi::Linker<HostState>) -> Result<()> {
         },
     )?;
 
-    // copy the staged string into guest memory, returning how much was written
+    // copy the staged string into guest memory and return the number of bytes written
     linker.func_wrap(
         "larvae",
         "take_str",
@@ -417,10 +420,10 @@ fn host_functions(linker: &mut wasmi::Linker<HostState>) -> Result<()> {
 }
 
 impl WasmWorm {
-    /// Hand over settings once, before any file is seen
+    /// Give the settings to the worm once, before the worm sees a file
     ///
     /// Both blobs cross as TOML text. The Luau form gets real tables instead,
-    /// because each form should get what is natural for it.
+    /// because each form gets the shape that is natural for it.
     pub fn init(&mut self, config: &str, rules: &str) -> Result<()> {
         let Some(init) = self.init else {
             return Ok(());
@@ -438,12 +441,12 @@ impl WasmWorm {
         Ok(())
     }
 
-    /// Whether this worm implements the rule half
+    /// Report if this worm implements the rule half
     pub fn has_rules(&self) -> bool {
         self.visit.is_some()
     }
 
-    /// Run one rule over every node its filter matched
+    /// Run one rule over every node that its filter matched
     pub fn run_rule(
         &mut self,
         rule: u32,

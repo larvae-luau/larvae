@@ -1,7 +1,8 @@
 /*!
-remove_calls, drop statement position calls to named functions, ex: print,
-warn, debug.profilebegin, a call whose value is used is never touched since
-removing it would corrupt the expression around it
+remove_calls: remove statement position calls to named functions.
+Examples: print, warn, debug.profilebegin. The rule never removes a call
+whose value the code uses, because that removal would corrupt the
+expression around it.
 */
 
 use crate::config::RemoveCalls;
@@ -40,11 +41,11 @@ impl Visit for Remover<'_, '_> {
             ..
         } = call
         else {
-            // a method call has a receiver, matching it by name would be a guess
+            // A method call has a receiver. A match by name alone would be a guess.
             return Flow::Next;
         };
 
-        // plain Name or Name.Name chains only, a computed index is not a name
+        // Only plain Name or Name.Name chains match. A computed index is not a name.
         let Some(path) = dotted_path(self.ctx, func) else {
             return Flow::Next;
         };
@@ -58,7 +59,7 @@ impl Visit for Remover<'_, '_> {
         }
 
         let (start, end) = self.ctx.bytes(*span);
-        // eat the indent too so the line does not keep trailing blanks
+        // Also remove the indent, so the line does not keep trailing blanks.
         let from = blank_line_start(self.ctx, start);
         self.ctx.delete_bytes_keep_lines(from, end, self.edits);
 
@@ -66,7 +67,7 @@ impl Visit for Remover<'_, '_> {
     }
 }
 
-/// True when an argument calls something, that call may be the point of the line
+/// True when an argument holds a call. That call can be the purpose of the line.
 fn args_may_do_work(args: &CallArgs) -> bool {
     match args {
         CallArgs::Paren(list) => list.iter().any(contains_call),
@@ -87,12 +88,12 @@ mod tests {
     fn removes_statement_calls() {
         assert_eq!(run(PRINTS, "print(\"hi\")\nreturn 1\n"), "\nreturn 1\n");
         assert_eq!(run(PRINTS, "warn(\"hi\")\n"), "\n");
-        // dotted paths and indented lines
+        // Dotted paths and indented lines.
         assert_eq!(
             run(PRINTS, "do\n    debug.profilebegin(\"x\")\nend\n"),
             "do\n\nend\n"
         );
-        // multi line calls keep their line count
+        // Multi line calls keep their line count.
         assert_eq!(
             run(PRINTS, "print(\n  1\n)\nreturn 2\n"),
             "\n\n\nreturn 2\n"
@@ -101,16 +102,16 @@ mod tests {
 
     #[test]
     fn leaves_used_values_and_unlisted_names_alone() {
-        // the value is used, removing the call would corrupt the statement
+        // The code uses the value. Removal of the call would corrupt the statement.
         let used = "local x = print(\"a\")\n";
         assert_eq!(run(PRINTS, used), used);
-        // method calls have a receiver, the name alone proves nothing
+        // A method call has a receiver. The name alone proves nothing.
         let method = "obj:print(\"a\")\n";
         assert_eq!(run(PRINTS, method), method);
-        // computed callees are not names
+        // A computed callee is not a name.
         let computed = "t[\"print\"](\"a\")\n";
         assert_eq!(run(PRINTS, computed), computed);
-        // not on the list
+        // The name is not on the list.
         let other = "log(\"a\")\n";
         assert_eq!(run(PRINTS, other), other);
     }
@@ -118,7 +119,7 @@ mod tests {
     #[test]
     fn argument_side_effects_decide() {
         let src = "print(compute())\n";
-        // the default keeps the call, compute() may be the point of the line
+        // The default keeps the call. compute() can be the purpose of the line.
         assert_eq!(run(PRINTS, src), src);
         assert_eq!(
             run(
@@ -127,7 +128,7 @@ mod tests {
             ),
             "\n"
         );
-        // an argument without calls is removed either way
+        // The rule removes an argument without calls in both modes.
         assert_eq!(run(PRINTS, "print(x, 1 + 2)\n"), "\n");
     }
 }

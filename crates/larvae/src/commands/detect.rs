@@ -1,16 +1,16 @@
 /*!
-What `init` can work out about a project on its own
+The data that `init` detects about a project without user input
 
-The point is that a config someone has to fill in by hand is a config they
-get wrong. Whatever the project file already says gets read back out, so a
-Wally or pesde tree comes out configured rather than commented
+A config that a user fills in by hand is a config with errors. The scan reads
+the data that the project file already contains. So a Wally or pesde tree
+gets a full config and not a commented template.
 */
 
 use std::path::{Path, PathBuf};
 
 use crate::project::rojo::{self, Project};
 
-/// A package directory and the alias worth giving it
+/// A package directory and the alias that larvae gives it
 const PACKAGE_DIRS: [(&str, &str); 6] = [
     ("Packages", "pkg"),
     ("ServerPackages", "serverpkg"),
@@ -20,13 +20,13 @@ const PACKAGE_DIRS: [(&str, &str); 6] = [
     ("packages", "pkg"),
 ];
 
-/// What init found to put in the config
+/// The data that init found for the config
 pub struct Detected {
-    /// Source directories, mounted and holding code rather than dependencies
+    /// Mounted source directories that hold code and not dependencies
     pub inputs: Vec<PathBuf>,
-    /// Alias name and the `@game/...` value it should carry
+    /// The alias name and the `@game/...` value that it must hold
     pub aliases: Vec<(String, String)>,
-    /// Aliases the project already gets from a .luaurc, which need no config
+    /// Aliases that a .luaurc already gives the project; they need no config
     pub luaurc_aliases: Vec<String>,
 }
 
@@ -47,7 +47,7 @@ pub fn scan(root: &Path, project: Option<&Project>) -> Detected {
                 .unwrap_or_default();
 
             match PACKAGE_DIRS.iter().find(|(dir, _)| *dir == name) {
-                // dependencies, so an alias rather than something to process
+                // The directory holds dependencies, so it gets an alias and no processing.
                 Some((_, alias)) => {
                     let value = format!("@game/{}", mount.dm.join("/"));
 
@@ -65,7 +65,7 @@ pub fn scan(root: &Path, project: Option<&Project>) -> Detected {
         }
     }
 
-    // nothing mounted, fall back to the layout almost everyone uses
+    // No mounts found; use the layout that most projects use.
     if inputs.is_empty() && root.join("src").is_dir() {
         inputs.push(PathBuf::from("src"));
     }
@@ -79,7 +79,7 @@ pub fn scan(root: &Path, project: Option<&Project>) -> Detected {
     }
 }
 
-/// Alias names a root .luaurc already defines, larvae honours those as is
+/// Alias names that a root .luaurc defines; larvae keeps them unchanged
 fn luaurc_aliases(root: &Path) -> Vec<String> {
     let Ok(text) = std::fs::read_to_string(root.join(".luaurc")) else {
         return Vec::new();

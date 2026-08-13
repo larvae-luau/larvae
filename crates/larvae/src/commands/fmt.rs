@@ -1,16 +1,16 @@
 /*!
 `larvae fmt`.
 
-Three ways to run, and they exist for three different callers. With paths or
-none it formats files in place, which is what a person types. With `--check` it
-writes nothing and fails if anything would change, which is what CI runs. With
-`--stdin` it reads one file's text and writes the result, which is what an
-editor calls on every save and the reason that path allocates nothing it does
-not need.
+The command has three modes, one for each type of caller. With paths or no
+paths, the command formats files in place; a user types this. With `--check`,
+the command writes nothing and fails if a file would change; CI runs this.
+With `--stdin`, the command reads the text of one file and writes the result.
+An editor calls this mode on every save, so this path allocates only what it
+needs.
 
-Files are formatted in parallel and only rewritten when the bytes actually
-change, so a run over an already formatted tree touches no mtimes and triggers
-no watcher.
+The command formats files in parallel and rewrites a file only when the bytes
+change. So a run over a formatted tree changes no mtimes and does not activate
+a file watcher.
 */
 
 use std::io::Read;
@@ -25,7 +25,7 @@ use crate::fmt::{FmtConfig, format};
 use crate::ui;
 use crate::worm::{pool::Pool, proto, registry::Registry};
 
-/// What happened to one file
+/// The result for one file
 enum Outcome {
     Unchanged,
     Changed,
@@ -41,7 +41,7 @@ pub fn run(
 ) -> Result<ExitCode> {
     let cfg = discover(root, config.clone())?;
 
-    // stdin has no filepath to route to a worm by, so it stays Luau only
+    // Stdin has no file path that routes to a worm, so stdin formats only Luau.
     if stdin {
         return from_stdin(&cfg);
     }
@@ -68,11 +68,11 @@ pub fn run(
 }
 
 /*
-The project's worms, for the commands that walk a tree themselves.
+The worms of the project, for the commands that walk a tree.
 
-A project with no config or no `[worms]` gets an empty pool at no cost, which
-keeps `larvae fmt` on a bare directory exactly what it was. A pinned worm on a
-cold cache does fetch here, the same as `larvae process` would.
+A project with no config or no `[worms]` gets an empty pool at no cost. So
+`larvae fmt` on a bare directory keeps its old behavior. A pinned worm on a
+cold cache does a fetch here, the same as `larvae process`.
 */
 pub fn worm_pool(root: &Path, config: Option<PathBuf>) -> Result<Pool> {
     let path = config.unwrap_or_else(|| root.join("larvae.toml"));
@@ -88,11 +88,11 @@ pub fn worm_pool(root: &Path, config: Option<PathBuf>) -> Result<Pool> {
 }
 
 /*
-The `[fmt]` table, over a `stylua.toml` if the project still has one.
+The `[fmt]` table, layered over a `stylua.toml` if the project has one.
 
-`larvae.toml` is optional here on purpose. Formatting a directory should not
-require a project file, since the first thing someone does with a formatter is
-point it at a folder to see what it does.
+`larvae.toml` is optional here by design. A format of a directory must not
+require a project file. The first action of a new user is to point the
+formatter at a folder to see the result.
 */
 fn discover(root: &Path, config: Option<PathBuf>) -> Result<FmtConfig> {
     let path = config.unwrap_or_else(|| root.join("larvae.toml"));
@@ -135,12 +135,12 @@ fn one(path: &Path, cfg: &FmtConfig, check: bool, pool: &Pool) -> Outcome {
 }
 
 /*
-One file's formatted text, by whoever owns its extension.
+The formatted text of one file, from the owner of its extension.
 
-A claimed file goes to its worm, which replies with a layout document larvae
-renders in the project's own style. Walks only turn claimed files up when the
-worm formats, so the error arm here is reached by naming a file, and a named
-file that nothing can format is worth a sentence rather than silence.
+A claimed file goes to its worm. The worm replies with a layout document, and
+larvae renders it in the style of the project. A walk returns claimed files
+only when the worm formats. So only a named file reaches the error arm here.
+A named file that no tool can format gets an error message and not silence.
 */
 fn formatted(path: &Path, src: &str, cfg: &FmtConfig, pool: &Pool) -> Result<String> {
     let Some(index) = pool.frontend_for(path) else {
@@ -162,7 +162,7 @@ fn formatted(path: &Path, src: &str, cfg: &FmtConfig, pool: &Pool) -> Result<Str
         .with_context(|| format!("worm `{}`", spec.manifest.name))
 }
 
-/// One file over the pipes, which is how an editor asks
+/// One file over stdin and stdout; an editor uses this path
 fn from_stdin(cfg: &FmtConfig) -> Result<ExitCode> {
     let mut src = String::new();
     std::io::stdin()
@@ -177,15 +177,17 @@ fn from_stdin(cfg: &FmtConfig) -> Result<ExitCode> {
 }
 
 /*
-Which files to format.
+The files to format.
 
-Explicit paths win, and a named file is formatted whatever it is called, since
-someone naming a file means it. Without paths the project's input directory is
-walked when there is a config, and the working directory otherwise.
+Explicit paths win. The command formats a named file with any name, because a
+user who names a file wants it formatted. Without paths, the command walks the
+input directory of the project when a config exists, and the working directory
+otherwise.
 
-`exclude` applies to what a walk turns up, named directories included, and not
-to a file somebody named themselves. That is the same line: a walk is us
-guessing, a name is somebody telling us.
+`exclude` applies to the files that a walk finds, named directories included.
+`exclude` does not apply to a file that the user named. The rule is the same
+in both cases: a walk is a guess by larvae, and a name is an instruction from
+the user.
 */
 pub fn collect(
     root: &Path,
@@ -243,7 +245,7 @@ fn default_roots(root: &Path) -> Vec<PathBuf> {
             .map(|dir| root.join(dir))
             .collect(),
 
-        // a config too broken to read is not a reason to refuse to format
+        // A config that larvae cannot read does not stop the format.
         Err(_) => vec![root.to_path_buf()],
     }
 }
@@ -252,7 +254,7 @@ fn walk(dir: &Path, claimed: &[String]) -> Vec<PathBuf> {
     walkdir::WalkDir::new(dir)
         .into_iter()
         .filter_entry(|e| {
-            // a build output or a package tree is not the project's to format
+            // The project does not own a build output or a package tree, so skip them.
             !matches!(
                 e.file_name().to_str(),
                 Some(".git" | "node_modules" | ".larvae")
@@ -262,11 +264,12 @@ fn walk(dir: &Path, claimed: &[String]) -> Vec<PathBuf> {
         .filter(|e| e.file_type().is_file())
         .map(walkdir::DirEntry::into_path)
         /*
-        What larvae itself reads, plus claimed extensions the caller's worms
-        can actually serve. The caller passes the capability-filtered list, so
-        a frontend-only worm's files stay skipped: walking one with nothing
-        able to format it would parse it as Luau, fail, and turn a passing
-        `fmt --check` into a failing one.
+        The extensions that larvae reads, plus the claimed extensions that
+        the worms of the caller can format. The caller passes the list
+        filtered by capability, so the walk skips the files of a
+        frontend-only worm. If the walk kept such a file, larvae would parse
+        it as Luau and fail. Then a passing `fmt --check` would become a
+        failing one.
         */
         .filter(|p| {
             let Some(ext) = p.extension().and_then(|e| e.to_str()) else {

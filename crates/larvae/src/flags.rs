@@ -1,29 +1,29 @@
 /*!
-Flag comments, the ones addressed to larvae rather than to a reader.
+Flag comments: the comments that speak to larvae and not to a reader.
 
 ```lua
 local unused = 1 -- larvae: allow(unused_variable)
 ```
 
-One vocabulary, two readers. The linter reads them to know what an author
-already decided is fine here, and `larvae process` reads them to know which
-comments are instructions to a tool rather than notes to a person, so it can
-leave them out of the output. Keeping the recognition in one place is what
-stops those two from drifting into disagreeing about what a flag is.
+One vocabulary, two readers. The linter reads them to learn what an author
+already accepts here. `larvae process` reads them to learn which comments are
+instructions to a tool and not notes to a person, so it can remove them from
+the output. The recognition lives in one place, and this stops the two
+readers from a drift into different definitions of a flag.
 
-selene's spelling is accepted alongside ours, because a project switching over
-has these scattered through it already and rewriting every one by hand to say
-the same thing is not a migration anyone should have to do.
+larvae accepts the selene spelling beside its own. A project that switches
+over already has these comments in many files, and no user must rewrite each
+one by hand to say the same thing.
 
-Deliberately narrow: only `allow(...)` counts. `-- larvae: this is load bearing`
-is a note somebody left for the next reader, and treating it as a flag would
-mean quietly deleting it from the build.
+The recognition is narrow by design: only `allow(...)` counts. `-- larvae:
+this is load bearing` is a note for the next reader. If larvae treated it as
+a flag, larvae would delete it from the build without a message.
 */
 
-/// The names a flag comment can be addressed to
+/// The names that a flag comment can speak to
 const PREFIXES: [&str; 2] = ["larvae:", "selene:"];
 
-/// The lints this comment allows, or None when it is not a flag at all
+/// The lints that this comment allows, or None when it is not a flag
 pub fn allows(text: &str) -> Option<impl Iterator<Item = &str>> {
     let rest = PREFIXES
         .iter()
@@ -38,7 +38,7 @@ pub fn allows(text: &str) -> Option<impl Iterator<Item = &str>> {
     Some(inner.split(',').map(str::trim).filter(|n| !n.is_empty()))
 }
 
-/// Whether this comment is talking to larvae rather than to a reader
+/// True if this comment speaks to larvae and not to a reader
 pub fn is_flag(text: &str) -> bool {
     allows(text).is_some()
 }
@@ -64,7 +64,7 @@ mod tests {
         assert_eq!(allowed("-- larvae: allow(*)"), ["*"]);
     }
 
-    /// A project switching over should not have to rewrite its comments
+    /// A project that switches over must not have to rewrite its comments
     #[test]
     fn selenes_spelling_is_a_flag_too() {
         assert!(is_flag("-- selene: allow(unused_variable)"));

@@ -1,15 +1,16 @@
 /*!
-`[fmt]`, and the `stylua.toml` a project probably already has.
+`[fmt]`, and the `stylua.toml` that a project possibly already has.
 
-Every stylua option is accepted under its own name, so a project can point
-larvae at an existing `stylua.toml` and get the same output without editing
-anything, or paste the whole file into `[fmt]` and delete it. The options past
-that are the ones people keep asking stylua for and Biome already has: granular
-spacing, and a trailing comma that means something.
+Larvae accepts each stylua option under its own name. So a project can point
+larvae at an existing `stylua.toml` and get the same output without edits. Or
+the user can paste the whole file into `[fmt]` and delete it. The options
+beyond that set are the options that users frequently request from stylua and
+that Biome already has: granular spacing, and a trailing comma with an effect.
 
-A key we do not know is dropped from `stylua.toml`, since that file belongs to
-another tool and may name options from a version we have not caught up with.
-The same key in `[fmt]` is still an error, because there it is a typo.
+Larvae drops an unknown key from `stylua.toml`. That file belongs to another
+tool, and it can name options from a stylua version that larvae does not track
+yet. The same unknown key in `[fmt]` is still an error, because there it is a
+typo.
 */
 
 use std::path::Path;
@@ -20,22 +21,22 @@ use serde::{Deserialize, Serialize};
 use super::doc::{Indent, Style};
 use crate::config::Excludes;
 
-/// Where a string literal's quotes come from
+/// Selects the quotes of a string literal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum QuoteStyle {
-    /// Double unless single needs fewer escapes
+    /// Double quotes, unless single quotes need fewer escapes.
     #[default]
     AutoPreferDouble,
-    /// Single unless double needs fewer escapes
+    /// Single quotes, unless double quotes need fewer escapes.
     AutoPreferSingle,
     ForceDouble,
     ForceSingle,
-    /// Leave every literal exactly as written
+    /// Keep every literal exactly as written.
     Preserve,
 }
 
-/// When a call with one string or table argument keeps its parentheses
+/// Selects when a call with one string or table argument keeps its parentheses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CallParens {
@@ -44,24 +45,24 @@ pub enum CallParens {
     NoSingleString,
     NoSingleTable,
     None,
-    /// Whatever the author wrote, consistency not enforced
+    /// Keep the form that the author wrote. This does not enforce consistency.
     Input,
 }
 
-/// Where a space goes between a function name and its parentheses
+/// Selects where a space goes between a function name and its parentheses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SpaceAfterFunctionNames {
     #[default]
     Never,
-    /// `function foo ()` but `foo()`
+    /// `function foo ()` but `foo()`.
     Definitions,
-    /// `foo ()` but `function foo()`
+    /// `foo ()` but `function foo()`.
     Calls,
     Always,
 }
 
-/// Which one line bodies may stay on one line
+/// Selects which one-line bodies can stay on one line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CollapseSimpleStatement {
@@ -72,7 +73,7 @@ pub enum CollapseSimpleStatement {
     Always,
 }
 
-/// Whether the blank lines an author left at the edge of a block survive
+/// Selects if the blank lines that an author left at the edge of a block survive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum BlockNewlineGaps {
@@ -97,14 +98,14 @@ pub enum IndentType {
     Spaces,
 }
 
-/// How `sort_requires` groups what it sorts
+/// Selects how `sort_requires` groups the requires it sorts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RequireGrouping {
-    /// One sorted run, which is what stylua does
+    /// One sorted run. This is what stylua does.
     #[default]
     Flat,
-    /// Aliases, then absolute, then relative, a blank line between each
+    /// Aliases, then absolute paths, then relative paths, with a blank line between each group.
     ByKind,
 }
 
@@ -120,7 +121,7 @@ pub struct SortRequires {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct FmtConfig {
-    // --- stylua parity, same names and same defaults --------------------
+    // --- stylua parity: the same names and the same defaults -------------
     #[serde(default = "default_width")]
     pub column_width: usize,
 
@@ -151,46 +152,50 @@ pub struct FmtConfig {
     #[serde(default)]
     pub sort_requires: SortRequires,
 
-    // --- past stylua ----------------------------------------------------
+    // --- options beyond stylua -------------------------------------------
     /*
-    A trailing comma the author left in a table means "keep this expanded".
+    A trailing comma that the author left in a table means "keep this table
+    expanded".
 
-    Prettier's magic trailing comma. It turns line breaking into something an
-    author decides per table rather than something width alone decides, so a
-    short table meant as a list of things stops collapsing onto one line.
+    This is the magic trailing comma from Prettier. With it, the author
+    decides the line breaks per table. Width alone does not decide them. So a
+    short table that the author means as a list of things does not collapse
+    onto one line.
 
-    Tables only, and not by choice: Luau rejects `f(a, b,)`, so a call has no
-    trailing comma to read. A call is laid out by width alone.
+    The option applies to tables only, and not by choice. Luau rejects
+    `f(a, b,)`, so a call has no trailing comma to read. Width alone lays out
+    a call.
     */
     #[serde(default = "default_true")]
     pub magic_trailing_comma: bool,
 
-    /// `f( a )` rather than `f(a)`
+    /// `f( a )` instead of `f(a)`.
     #[serde(default)]
     pub space_inside_parens: bool,
 
-    /// `t[ k ]` rather than `t[k]`
+    /// `t[ k ]` instead of `t[k]`.
     #[serde(default)]
     pub space_inside_brackets: bool,
 
-    /// `{ a }` rather than `{a}`, which is the Luau convention
+    /// `{ a }` instead of `{a}`. This is the Luau convention.
     #[serde(default = "default_true")]
     pub space_inside_braces: bool,
 
-    /// A table that broke keeps a trailing comma on its last field
+    /// A table that broke keeps a trailing comma on its last field.
     #[serde(default = "default_true")]
     pub trailing_comma: bool,
 
-    /// Globs a walk passes over, relative to the project root. A file named on
-    /// the command line is still formatted, see [`Excludes`].
+    /// Globs that a walk skips, relative to the project root. Larvae still
+    /// formats a file named on the command line, see [`Excludes`].
     #[serde(default)]
     pub exclude: Vec<String>,
 
-    // --- accepted, and nothing to do with ------------------------------
+    // --- accepted keys with no effect -------------------------------------
     /*
-    stylua's dialect switch, taken so a `stylua.toml` can move into `[fmt]`
-    whole rather than key by key. larvae formats Luau and only Luau, which is
-    what every value of this asks for here, so it is read and then ignored.
+    This is the dialect switch of stylua. Larvae accepts it, so a
+    `stylua.toml` can move into `[fmt]` whole, not key by key. Larvae formats
+    Luau and only Luau, which is what each value of this option requests
+    here. So larvae reads the option and then ignores it.
     */
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub syntax: Option<String>,
@@ -215,7 +220,7 @@ impl Default for FmtConfig {
 }
 
 impl FmtConfig {
-    /// The layout style this config asks the renderer for
+    /// Returns the layout style that this config requests from the renderer.
     pub fn style(&self) -> Style {
         Style {
             width: self.column_width,
@@ -233,7 +238,7 @@ impl FmtConfig {
         }
     }
 
-    /// Whether a definition puts a space before its parentheses
+    /// Reports if a definition puts a space before its parentheses.
     pub fn space_before_definition_parens(&self) -> bool {
         matches!(
             self.space_after_function_names,
@@ -241,12 +246,12 @@ impl FmtConfig {
         )
     }
 
-    /// The paths this config asked `larvae fmt` to leave alone
+    /// Returns the paths that this config tells `larvae fmt` to skip.
     pub fn excludes(&self, root: &Path) -> Result<Excludes> {
         Excludes::new(root, &self.exclude).context("[fmt]")
     }
 
-    /// Whether a call puts a space before its parentheses
+    /// Reports if a call puts a space before its parentheses.
     pub fn space_before_call_parens(&self) -> bool {
         matches!(
             self.space_after_function_names,
@@ -255,9 +260,9 @@ impl FmtConfig {
     }
 
     /*
-    Read `stylua.toml` if there is one, so a project already using stylua gets
-    the same output without editing anything. `[fmt]` in `larvae.toml` wins
-    where both say something, since it is the more specific file.
+    Reads `stylua.toml` if the file exists. So a project that already uses
+    stylua gets the same output without edits. Where both files set a key,
+    `[fmt]` in `larvae.toml` wins, because it is the more specific file.
     */
     pub fn discover(root: &Path, larvae: Option<&toml::Value>) -> Result<Self> {
         let mut config = stylua_file(root)?.unwrap_or_default();
@@ -270,12 +275,12 @@ impl FmtConfig {
     }
 
     /*
-    `over` laid on top of `self`, key by key.
+    Applies `over` on top of `self`, key by key.
 
-    Round tripping through a `toml::Value` rather than matching every field by
-    hand, so adding an option later needs no change here and cannot be
-    forgotten. The nested `sort_requires` table merges the same way, since a
-    project setting only `grouping` should not lose `enabled`.
+    The merge round-trips through a `toml::Value` instead of a manual match
+    on every field. So a new option later needs no change here, and nobody
+    can forget one. The nested `sort_requires` table merges the same way. A
+    project that sets only `grouping` must not lose `enabled`.
     */
     fn merged(self, over: &toml::Value) -> Result<Self> {
         let mut base = toml::Value::try_from(&self).expect("the config always serializes");
@@ -303,11 +308,12 @@ impl FmtConfig {
 }
 
 /*
-The stylua file, if present.
+Reads the stylua file, if the file exists.
 
-stylua spells its enums in PascalCase and ours in kebab, so the values are
-lowered before parsing rather than duplicating every enum with a second set of
-serde names.
+Stylua spells its enums in PascalCase, and larvae spells them in kebab-case.
+So this function lowercases the values before it parses them. The other
+option, a duplicate of every enum with a second set of serde names, is not
+necessary then.
 */
 fn stylua_file(root: &Path) -> Result<Option<FmtConfig>> {
     for name in ["stylua.toml", ".stylua.toml"] {
@@ -338,17 +344,17 @@ fn stylua_file(root: &Path) -> Result<Option<FmtConfig>> {
 }
 
 /*
-Drop the keys we do not know, in place.
+Drops the keys that larvae does not know, in place.
 
-This is stylua's file, not ours, so a key we do not recognise is not a mistake
-in it: stylua adds options on its own schedule and a project may well be using
-one we have not caught up with. Refusing to read the file over that would mean
-the whole config is ignored for the sake of one line, so the line is dropped
-and the rest is honoured. `larvae.toml` stays strict, where an unknown key
-really is a typo.
+This is the file of stylua, not of larvae. So an unknown key is not a mistake
+in it. Stylua adds options on its own schedule, and a project can use an
+option that larvae does not track yet. A refusal to read the file for that
+reason would ignore the whole config for the sake of one line. So larvae
+drops the line and honors the rest. `larvae.toml` stays strict, because there
+an unknown key really is a typo.
 
-The known set is the serialized default rather than a hand written list, so
-adding an option later needs no change here.
+The known set is the serialized default, not a manual list. So a new option
+later needs no change here.
 */
 fn prune_unknown(table: &mut toml::value::Table, known: &toml::value::Table) {
     table.retain(|key, value| {
@@ -364,7 +370,7 @@ fn prune_unknown(table: &mut toml::value::Table, known: &toml::value::Table) {
     });
 }
 
-/// `"AutoPreferDouble"` becomes `"auto-prefer-double"`, in place, for values only
+/// Turns `"AutoPreferDouble"` into `"auto-prefer-double"`, in place, for values only.
 fn lower_enum_values(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -433,8 +439,8 @@ mod tests {
         assert!(!c.sort_requires.enabled);
     }
 
-    /// The point of the extra options is that they are on by default where the
-    /// Luau community already writes that way
+    /// The extra options are on by default where the Luau community already
+    /// writes that way. That is their purpose.
     #[test]
     fn the_extra_options_default_to_the_common_style() {
         let c = FmtConfig::default();
@@ -503,7 +509,7 @@ call_parentheses = "NoSingleTable"
             r#"quote_style = "auto-prefer-double""#
         );
 
-        // a path or a glob has to survive untouched
+        // A path or a glob must survive without changes.
         assert_eq!(
             lower_enum_values(r#"ignore = ["Packages/**", "a/B/c.luau"]"#),
             r#"ignore = ["Packages/**", "a/B/c.luau"]"#
@@ -544,7 +550,7 @@ call_parentheses = "NoSingleTable"
         assert!(both.space_before_call_parens());
     }
 
-    /// stylua's file, so a key from a version we do not track costs nothing
+    /// The file belongs to stylua. So a key from a version larvae does not track costs nothing.
     #[test]
     fn an_unknown_key_in_the_stylua_file_is_dropped() {
         let dir = tempfile::tempdir().unwrap();
@@ -560,7 +566,7 @@ call_parentheses = "NoSingleTable"
         assert!(c.sort_requires.enabled, "including nested ones");
     }
 
-    /// A stylua.toml can be pasted into [fmt] whole, dialect switch and all
+    /// The user can paste a stylua.toml into [fmt] whole, with the dialect switch included.
     #[test]
     fn a_stylua_only_key_is_accepted_in_larvae_toml() {
         let over = toml::from_str::<toml::Value>("syntax = \"Luau\"\ncolumn_width = 80").unwrap();
@@ -570,7 +576,7 @@ call_parentheses = "NoSingleTable"
         assert_eq!(c.syntax.as_deref(), Some("Luau"));
     }
 
-    /// Our file, where an unknown key is a typo and worth saying so
+    /// This file belongs to larvae. There an unknown key is a typo, and larvae must report it.
     #[test]
     fn an_unknown_key_in_larvae_toml_is_still_refused() {
         let over = toml::from_str::<toml::Value>("colum_width = 80").unwrap();

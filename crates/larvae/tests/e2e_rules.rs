@@ -1,4 +1,4 @@
-//! End to end coverage for rules, quoting, the cache and check
+//! These tests cover rules, quoting, the cache, and the check mode end to end.
 
 use larvae::config::Config;
 use larvae::pipeline;
@@ -28,16 +28,16 @@ fn quote_style_single_applies_everywhere() {
 
     assert!(!outcome.has_errors());
 
-    // rewritten require uses single quotes
+    // The rewritten require uses single quotes.
     let main = read(root, "dist/server/main.server.luau");
     assert!(
         main.contains("require('@game/ReplicatedStorage/Packages/signal')"),
         "{main}"
     );
-    // untouched relative require gets requoted too
+    // larvae also requotes the unchanged relative require.
     let geometry = read(root, "dist/shared/util/geometry.luau");
     assert!(geometry.contains("require('./math')"), "{geometry}");
-    // @self passthrough requoted
+    // larvae requotes the @self passthrough.
     let init = read(root, "dist/shared/pkg/init.luau");
     assert!(init.contains("require('@self/sub')"), "{init}");
 }
@@ -97,7 +97,7 @@ fn const_requires_rule() {
         main.contains("const math = require(\"@game/ReplicatedStorage/shared/util/math\")"),
         "{main}"
     );
-    // non local requires untouched
+    // larvae does not change non-local requires.
     let consumer = read(root, "dist/shared/consumer.luau");
     assert!(consumer.contains("return require(\"./pkg\")"), "{consumer}");
 }
@@ -107,7 +107,7 @@ fn a_name_darklua_has_but_we_do_not_says_where_it_went() {
     let tmp = fixture();
     let root = tmp.path();
 
-    // it is a real darklua name, it just is not a rule here
+    // remove_spaces is a real darklua name, but it is not a rule here.
     write(root, "larvae.toml", "[rules]\nremove_spaces = true\n");
     let err = Config::load_or_default(root).unwrap_err().to_string();
     assert!(
@@ -138,11 +138,11 @@ fn remove_comments_rule() {
     assert!(!outcome.has_errors());
 
     let doc = read(root, "dist/shared/doc.luau");
-    // Luau directives survive by default, plain comments do not
+    // By default, larvae keeps Luau directives and removes plain comments.
     assert!(doc.contains("--!strict"), "{doc}");
     assert!(!doc.contains("a note"), "{doc}");
     assert!(!doc.contains("trailing"), "{doc}");
-    // line numbers preserved
+    // The output keeps the line numbers.
     assert_eq!(doc.lines().count(), 4, "{doc}");
 }
 
@@ -189,7 +189,7 @@ fn darklua_rule_names_get_useful_errors() {
         assert!(err.contains(expect), "{line} -> {err}");
     }
 
-    // a name darklua does not have either
+    // darklua also does not have this rule name.
     write(root, "larvae.toml", "[rules]\nmake_it_fast = true\n");
     let err = Config::load_or_default(root).unwrap_err().to_string();
     assert!(err.contains("unknown rule"), "{err}");
@@ -210,7 +210,7 @@ fn cache_skips_unchanged_files_and_notices_edits() {
         "warm build should skip everything"
     );
 
-    // editing one file rebuilds exactly that file
+    // When the user edits one file, larvae rebuilds only that file.
     write(
         root,
         "src/shared/util/geometry.luau",
@@ -235,7 +235,7 @@ fn luaurc_change_invalidates_the_whole_cache() {
     let warm = pipeline::run(root, &config, true).unwrap();
     assert!(warm.stats.files_cached > 0);
 
-    // a .luaurc changes how requires resolve for files that did not change
+    // The new .luaurc changes require resolution for files that did not change.
     write(root, ".luaurc", r#"{ "aliases": { "extra": "./src" } }"#);
     let after = pipeline::run(root, &config, true).unwrap();
     assert_eq!(
@@ -286,8 +286,8 @@ fn check_reports_syntax_errors() {
 
 #[test]
 fn rules_that_touch_the_same_byte_do_not_corrupt_output() {
-    // add_luau_directive inserts at byte 0 and const_requires replaces the
-    // `local` that also starts at byte 0
+    // add_luau_directive inserts at byte 0. const_requires replaces the
+    // `local` that also starts at byte 0.
     let tmp = fixture();
     let root = tmp.path();
 
@@ -321,9 +321,9 @@ fn a_rule_that_loses_to_another_says_so() {
     let root = dir.path();
 
     /*
-    group_local_assignment merges the two locals and rewrites that whole span,
-    so compute_expression never gets to fold the sum inside it. The user asked
-    for both rules and only got one, that has to be said out loud
+    group_local_assignment merges the two locals and rewrites that full span.
+    Thus compute_expression cannot fold the sum inside that span. The user asked
+    for both rules and got only one, so larvae must report this.
     */
     write(
         root,
@@ -349,7 +349,7 @@ fn a_rule_that_loses_to_another_says_so() {
 
     assert!(warned, "expected a conflict warning, got {:?}", out.diags);
     assert!(!out.has_errors());
-    // the winner still applied cleanly, a clash never mangles the output
+    // The winner still applied correctly. A clash never damages the output.
     assert!(read(root, "dist/shared/pair.luau").contains("local a, b = 1, 2 + 3"));
 }
 
@@ -359,9 +359,9 @@ fn an_edit_inside_a_deletion_does_not_warn() {
     let root = dir.path();
 
     /*
-    filter_after_early_return drops the unreachable statement that
-    compute_expression wanted to fold inside, those bytes were leaving
-    either way so there is nothing to report
+    filter_after_early_return removes the unreachable statement in which
+    compute_expression folds an expression. The removal deletes those bytes
+    in all cases, so there is nothing to report.
     */
     write(
         root,
@@ -401,10 +401,10 @@ fn the_summary_counts_rules_that_actually_did_something() {
         concat!(
             "[aliases]\npkg = \"@game/ReplicatedStorage/Packages\"\n\n",
             "[rules]\n",
-            // two of ours and one parity rule that all fire
+            // The config sets two larvae rules and one parity rule. All three apply.
             "const_requires = true\nadd_luau_directive = \"strict\"\n",
             "compute_expression = true\n",
-            // enabled but there is nothing in the source for it to do
+            // This rule is on, but the source has nothing for it to change.
             "remove_empty_do = true\n",
         ),
     );
@@ -415,12 +415,13 @@ fn the_summary_counts_rules_that_actually_did_something() {
     let s = &outcome.stats;
 
     assert!(!outcome.has_errors());
-    // three fired, remove_empty_do had nothing to do so it is not counted
+    // Three rules applied. remove_empty_do changed nothing, so the summary does not count it.
     assert_eq!(s.applied(Family::Native), 3, "{:?}", s.rules_applied);
     assert_eq!(s.applied(Family::Extension), 0);
 }
 
-/// A flag comment is an instruction to larvae, so by default it does not ship
+/// A flag comment is an instruction to larvae, so by default larvae removes it
+/// from the output.
 #[test]
 fn flag_comments_are_stripped_from_the_output() {
     let tmp = fixture();
@@ -470,7 +471,8 @@ fn strip_flags_false_keeps_them() {
     assert!(read(root, "dist/shared/flagged.luau").contains("allow(unused_variable)"));
 }
 
-/// remove_comments already speaks for every comment, so the two never both run
+/// remove_comments already controls every comment, so the two features never
+/// run together.
 #[test]
 fn remove_comments_wins_over_strip_flags() {
     let tmp = fixture();

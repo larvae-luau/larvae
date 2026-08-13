@@ -6,7 +6,7 @@
 
 **One toolchain for all of Luau.**
 
-Transformers today, formatting and linting next, in one parallel Rust binary.
+One parallel Rust binary. It has transformers today, and formatting and linting come next.
 
 [![CI](https://github.com/larvae-luau/larvae/actions/workflows/ci.yml/badge.svg)](https://github.com/larvae-luau/larvae/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/larvae-luau/larvae?color=10E694&label=release)](https://github.com/larvae-luau/larvae/releases/latest)
@@ -15,10 +15,10 @@ Transformers today, formatting and linting next, in one parallel Rust binary.
 
 </div>
 
-It starts with the require rewriting nothing else in the ecosystem does, and it
-refuses to emit one that would break at runtime. Roblox shipped native string
-requires, and `@game/...` went live in early 2026. Nothing generated them.
-larvae does.
+larvae starts with require rewriting that no other tool in the ecosystem
+does. It refuses to emit a require that would fail at runtime. Roblox
+shipped native string requires, and `@game/...` became available in early
+2026. No tool generated them. larvae does.
 
 ```lua
 -- what you write
@@ -34,28 +34,29 @@ local Signal = require("@game/ReplicatedStorage/Packages/signal")
 pkg = "@game/ReplicatedStorage/Packages"
 ```
 
-That is the whole idea. No Instance chains, no sourcemap, and the output stays
-readable in a diff.
+That is the whole idea. There are no Instance chains and no sourcemap, and
+the output stays readable in a diff.
 
 ## Why not darklua
 
-darklua is good software, and larvae accepts every one of its rule names so
-porting a config is mostly copy and paste. Five things are different.
+darklua is good software. larvae accepts every darklua rule name, so a user
+can port a config with almost no changes. Five things are different.
 
-**It emits native string requires.** darklua only ever produced Instance
-chains like `script.Parent:FindFirstChild("Foo")`. larvae still can, with
-all three indexing styles, but it does not have to.
+**It emits native string requires.** darklua only produces Instance chains
+such as `script.Parent:FindFirstChild("Foo")`. larvae can also produce
+them, with all three indexing styles, but it does not have to.
 
-**It refuses to emit requires that break at runtime.** Code under
-StarterPlayerScripts runs as a clone, so an absolute `@game/StarterPlayer/...`
-require resolves to the template instead of the copy and module state quietly
-duplicates. Client code cannot reach ServerScriptService at all. larvae maps
-both ends of every require into the DataModel and errors on both cases.
-Nothing else in the ecosystem checks this, darklua and luau lsp included.
+**It refuses to emit requires that fail at runtime.** Code under
+StarterPlayerScripts runs as a clone. An absolute `@game/StarterPlayer/...`
+require therefore resolves to the template, not the copy, and module state
+silently duplicates. Client code cannot reach ServerScriptService at all.
+larvae maps both ends of every require into the DataModel and reports an
+error in both cases. No other tool in the ecosystem checks this, and that
+includes darklua and luau lsp.
 
-**It is faster by architecture, not by tuning.** Files are processed in
-parallel, rewrites are byte range splices rather than a full reprint, and
-there is an incremental cache. darklua is single threaded and has been since
+**It is faster by architecture, not by tuning.** larvae processes files in
+parallel. A rewrite is a byte range splice, not a full reprint. There is
+also an incremental cache. darklua is single threaded, and has been since
 the issue was filed in 2021.
 
 | files | larvae cold | larvae warm | darklua | speedup |
@@ -64,16 +65,16 @@ the issue was filed in 2021.
 | 5000 | 44 ms | 24 ms | 722 ms | 16.4x |
 | one 3.5 MB file | 21 ms | 3 ms | 1375 ms | 65.4x |
 
-darklua ran with an empty rule list, so it only parsed and reprinted while
-larvae did the full job. Reproduce with `scripts/bench.sh`.
+darklua ran with an empty rule list, so it only parsed and reprinted, while
+larvae did the full job. Run `scripts/bench.sh` to reproduce the numbers.
 
-**One Rojo project file.** The usual setup keeps two nearly identical project
-files, one pointed at source for sourcemaps and one pointed at the build
-output for serving. larvae derives the second from the first and keeps it
-fresh, so you edit one file.
+**One Rojo project file.** The usual setup keeps two almost identical
+project files: one points at the source for sourcemaps, and one points at
+the build output for serving. larvae derives the second file from the first
+and keeps it current, so the user edits one file.
 
 **It never runs rojo.** Serving is rojo's job. larvae writes
-`.larvae/build.project.json` and stops there.
+`.larvae/build.project.json` and does nothing more.
 
 ## Install
 
@@ -83,8 +84,8 @@ larvae self install
 ```
 
 `self install` copies the binary to `~/.larvae/bin` and prints the line to
-add to your shell profile. `larvae self update` pulls the latest release
-later on.
+add to the shell profile. Run `larvae self update` later to get the latest
+release.
 
 ## Getting started
 
@@ -96,12 +97,13 @@ rojo serve .larvae/build.project.json
 ```
 
 A project that already has a `default.project.json` and `.luaurc` aliases
-needs no config at all. Mounts come from the project file, aliases come from
-`.luaurc`, and `larvae process` just works.
+needs no config. Mounts come from the project file, and aliases come from
+`.luaurc`. `larvae process` then works without setup.
 
-While editing, `larvae process --watch` rebuilds on save, mirrors deletions,
-and keeps the last good output when a file will not lex, so a half typed save
-does not cascade require failures into a live Studio session.
+During editing, `larvae process --watch` rebuilds on each save and mirrors
+deletions. When a file does not lex, the command keeps the last good
+output. A partial save therefore does not spread require failures into a
+live Studio session.
 
 ## Commands
 
@@ -114,15 +116,16 @@ does not cascade require failures into a live Studio session.
 | `larvae self code` | set up editor completion for larvae.toml |
 | `larvae self install` | manage the install, with `update` and `uninstall` |
 
-`check` is the CI gate. It reports unresolvable requires, realm violations,
-alias cycles and syntax errors, and counts the dynamic requires it left alone
-on purpose.
+`check` is the CI gate. It reports requires that do not resolve, realm
+violations, alias cycles, and syntax errors. It also counts the dynamic
+requires that it intentionally did not change.
 
 ## Configuration
 
-Every key is optional. Run `larvae self code` for completion and hover docs.
-It wires up Even Better TOML if you have it, and falls back to a schema line
-in your config if you do not.
+Every key is optional. Run `larvae self code` to get completion and hover
+docs. The command sets up Even Better TOML when that extension is
+installed. When the extension is absent, the command writes a schema line
+in the config instead.
 
 ```toml
 [aliases]
@@ -142,17 +145,17 @@ const_requires = true      # local X = require(...) becomes const X = require(..
 add_luau_directive = "strict"
 ```
 
-Unknown keys are hard errors, and keys for features that do not exist yet tell
-you which release they land in. Nothing is silently ignored.
+An unknown key is a hard error. A key for a feature that does not exist yet
+reports the release that adds the feature. larvae ignores nothing silently.
 
 ## Status
 
-Requires, the Rojo integration, the parser, the cache and watch mode all work
-today. Next up, reading Instance requires as input so existing codebases can
-convert, compile time constants, build profiles, and the rest of the rules now
-that the parser exists. After that, bundling with documented module init
-order, cross module dead code elimination, and transforms you write yourself
-in Luau.
+Requires, the Rojo integration, the parser, the cache, and watch mode all
+work today. The next work items are: Instance requires as input, so that
+existing codebases can convert; compile time constants; build profiles; and
+the rest of the rules, now possible because the parser exists. After that:
+bundling with a documented module init order, cross module dead code
+elimination, and transforms that the user writes in Luau.
 
 ## License
 

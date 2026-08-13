@@ -1,11 +1,11 @@
 /*!
-Luau syntax tree, nodes hold token index ranges rather than owned strings so
-printing a node is just replaying its tokens and the source between them,
-types are kept as spans on purpose, larvae parses types but never
-interprets them until a rule needs to
+The Luau syntax tree. Nodes hold token index ranges, not owned strings. So a
+print of a node is a replay of its tokens and the source between them. The
+tree keeps types as spans on purpose. Larvae parses types but does not
+interpret them until a rule needs to.
 */
 
-/// Half open range of token indices
+/// A half-open range of token indices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TokSpan {
     pub start: u32,
@@ -38,11 +38,11 @@ pub struct Block {
 
 #[derive(Debug)]
 pub enum Stmt {
-    /// A stray `;`
+    /// A stray `;`.
     Empty(TokSpan),
     Local(Local),
     Assign(Assign),
-    /// A call used as a statement
+    /// A call used as a statement.
     Call(Expr, TokSpan),
     Do(DoBlock),
     While(While),
@@ -90,10 +90,10 @@ impl Stmt {
     }
 }
 
-/// `local a, b: T = x, y` or its `const` form
+/// `local a, b: T = x, y` or its `const` form.
 #[derive(Debug)]
 pub struct Local {
-    /// The `local` or `const` keyword
+    /// The `local` or `const` keyword.
     pub keyword: TokSpan,
     pub is_const: bool,
     pub names: Vec<Binding>,
@@ -107,11 +107,11 @@ pub struct Binding {
     pub ty: Option<TokSpan>,
 }
 
-/// `a, b = x, y` and the compound forms like `a += 1`
+/// `a, b = x, y` and the compound forms, for example `a += 1`.
 #[derive(Debug)]
 pub struct Assign {
     pub targets: Vec<Expr>,
-    /// The `=` or compound operator
+    /// The `=` or compound operator.
     pub op: TokSpan,
     pub values: Vec<Expr>,
     pub span: TokSpan,
@@ -139,7 +139,7 @@ pub struct Repeat {
 
 #[derive(Debug)]
 pub struct If {
-    /// `if` and every `elseif`, condition plus body
+    /// The `if` and every `elseif`. Each entry is a condition and a body.
     pub branches: Vec<(Expr, Block)>,
     pub else_block: Option<Block>,
     pub span: TokSpan,
@@ -163,11 +163,11 @@ pub struct GenericFor {
     pub span: TokSpan,
 }
 
-/// `function a.b:c() end`
+/// `function a.b:c() end`.
 #[derive(Debug)]
 pub struct Function {
     pub attributes: Vec<TokSpan>,
-    /// Every name token in the dotted path, `:` method name included
+    /// Every name token in the dotted path, with the `:` method name included.
     pub path: Vec<TokSpan>,
     pub is_method: bool,
     pub body: FunctionBody,
@@ -177,7 +177,7 @@ pub struct Function {
 #[derive(Debug)]
 pub struct LocalFunction {
     pub attributes: Vec<TokSpan>,
-    /// `const function f()` rather than `local function f()`
+    /// `const function f()` instead of `local function f()`.
     pub is_const: bool,
     pub name: TokSpan,
     pub body: FunctionBody,
@@ -195,7 +195,7 @@ pub struct FunctionBody {
 
 #[derive(Debug)]
 pub struct Param {
-    /// Name token, or the `...` token for a vararg param
+    /// The name token, or the `...` token for a vararg param.
     pub name: TokSpan,
     pub is_vararg: bool,
     pub ty: Option<TokSpan>,
@@ -207,7 +207,7 @@ pub struct Return {
     pub span: TokSpan,
 }
 
-/// `type X<T> = ...`, `export type ...`, `type function f() ... end`
+/// `type X<T> = ...`, `export type ...`, `type function f() ... end`.
 #[derive(Debug)]
 pub struct TypeAlias {
     pub exported: bool,
@@ -254,38 +254,39 @@ pub enum Expr {
         span: TokSpan,
     },
 
-    /// `obj.field` or `obj[key]`
+    /// `obj.field` or `obj[key]`.
     Index {
         object: Box<Expr>,
         key: IndexKey,
         span: TokSpan,
     },
 
-    /// `f(args)`, `obj:method(args)`, `f<<T>>(args)`
+    /// `f(args)`, `obj:method(args)`, `f<<T>>(args)`.
     Call {
         func: Box<Expr>,
         method: Option<TokSpan>,
         /*
-        An explicit type instantiation, the `<<T>>` in `f<<T>>()`.
+        An explicit type instantiation: the `<<T>>` in `f<<T>>()`.
 
-        Held rather than discarded because anything rebuilding source from the
-        tree has to put it back. Dropping it turned `charm.atom<<number>>()`
-        into `charm.atom()`, which still parses and no longer means the same
-        thing, so the loss was invisible until something printed the tree.
+        The tree holds it instead of a discard, because each rebuild of
+        source from the tree must put it back. A discard turned
+        `charm.atom<<number>>()` into `charm.atom()`. That result still
+        parses, but it no longer means the same thing. So the loss stayed
+        invisible until some code printed the tree.
         */
         type_args: Option<TokSpan>,
         args: CallArgs,
         span: TokSpan,
     },
 
-    /// `if c then a else b` as an expression
+    /// `if c then a else b` as an expression.
     IfElse {
         branches: Vec<(Expr, Expr)>,
         else_value: Box<Expr>,
         span: TokSpan,
     },
 
-    /// `expr :: T`
+    /// `expr :: T`.
     TypeAssert {
         expr: Box<Expr>,
         ty: TokSpan,
@@ -319,27 +320,27 @@ impl Expr {
 
 #[derive(Debug)]
 pub enum IndexKey {
-    /// `.name`
+    /// `.name`.
     Field(TokSpan),
-    /// `[expr]`
+    /// `[expr]`.
     Computed(Box<Expr>),
 }
 
 #[derive(Debug)]
 pub enum CallArgs {
     Paren(Vec<Expr>),
-    /// `f "str"`
+    /// `f "str"`.
     Str(TokSpan),
-    /// `f {table}`
+    /// `f {table}`.
     Table(Box<Expr>),
 }
 
 #[derive(Debug)]
 pub enum TableField {
-    /// `value`
+    /// `value`.
     Positional(Expr),
-    /// `name = value`
+    /// `name = value`.
     Named { name: TokSpan, value: Expr },
-    /// `[key] = value`
+    /// `[key] = value`.
     Computed { key: Expr, value: Expr },
 }

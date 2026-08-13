@@ -11,8 +11,8 @@ categories = ["development-tools::build-utils", "wasm"]
 
 [features]
 # The native transport: serve() and the wire types, for a worm that ships as
-# an executable rather than wasm. Off by default so the wasm path stays
-# dependency free.
+# an executable and not as wasm. It is off by default, so the wasm path stays
+# free of dependencies.
 native = ["dep:serde", "dep:serde_json"]
 
 [dependencies]

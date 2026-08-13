@@ -1,22 +1,22 @@
 /*!
-The format and lint payloads that cross a worm boundary, whatever the
-transport.
+The format and lint payloads that cross a worm boundary, on every transport.
 
 A worm that formats does not return text. It returns a layout document, and
-larvae renders it with the project's own [`FmtConfig`], so a claimed file
-obeys `column_width` and friends by construction and no worm reimplements the
-printer. The document's `host` spans mark ordinary Luau the worm does not
-parse: larvae lays those out itself and splices the result in, which is how a
-`.luaux` file and a `.luau` file come out in one style.
+larvae renders the document with the [`FmtConfig`] of the project. Thus a
+claimed file obeys `column_width` and the related settings by construction,
+and no worm reimplements the printer. The `host` spans of the document mark
+ordinary Luau that the worm does not parse. Larvae formats those spans itself
+and splices the result in. This is how a `.luaux` file and a `.luau` file come
+out in one style.
 
-A worm that lints returns findings without a severity. The host stamps levels
-from `[lint.rules]`, applies `-- larvae: allow(...)`, renders, and owns exit
-codes, so a worm cannot decide a build fails.
+A worm that lints returns findings without a severity. The host stamps the
+levels from `[lint.rules]`, applies `-- larvae: allow(...)`, renders, and owns
+the exit codes. Thus a worm cannot decide that a build fails.
 
-The shapes here are the contract, mirrored by hand on the guest side of each
-transport the way [`crate::worm::host`] mirrors `larvae-worm`'s `abi`. The
-tests at the bottom pin the exact JSON, which is what stands in for a shared
-crate.
+The shapes here are the contract. The guest side of each transport mirrors
+them by hand, in the same way as [`crate::worm::host`] mirrors the `abi` of
+`larvae-worm`. The tests at the bottom pin the exact JSON. The tests stand in
+for a shared crate.
 */
 
 use std::borrow::Cow;
@@ -26,50 +26,51 @@ use serde::{Deserialize, Serialize};
 
 use crate::fmt::{FmtConfig, doc, doc::Doc};
 
-/// The layout contract revision, sent to a worm at init and required back on
-/// every format reply
+/// The layout contract revision. The host sends it to a worm at init and
+/// requires it back on every format reply.
 pub const DOC_VERSION: u32 = 1;
 
 /*
 One piece of layout, as it crosses the wire.
 
-The shape mirrors [`Doc`] with two substitutions that keep text cheap and
-honest: source text crosses as a `src` span rather than a copy, and `lit` is
-reserved for text the worm generated, so a reply that rewrites the author's
-bytes says so. `host` is the variant that makes the whole design work in
-unison, see the module docs.
+The shape mirrors [`Doc`] with two substitutions. These keep text cheap and
+explicit. Source text crosses as a `src` span and not as a copy. `lit` is
+reserved for text the worm generated, so a reply that rewrites the bytes of
+the author states this. `host` is the variant that makes the design work as
+one system. See the module docs.
 */
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WireDoc {
-    /// Nothing at all
+    /// No output at all
     Nil,
-    /// A verbatim slice of the source, `{"src": [start, end]}`
+    /// An exact slice of the source, `{"src": [start, end]}`
     Src(u32, u32),
-    /// Text the worm generated, `{"lit": "<Frame>"}`
+    /// Text that the worm generated, `{"lit": "<Frame>"}`
     Lit(String),
     /// A space when flat, a newline when broken
     Line,
     /// Nothing when flat, a newline when broken
     Soft,
-    /// A newline either way
+    /// A newline in both modes
     Hard,
-    /// A blank line the author wrote
+    /// A blank line that the author wrote
     Blank,
     /// `{"if_break": [flat, broken]}`
     IfBreak(Box<WireDoc>, Box<WireDoc>),
-    /// Flat if it fits, broken if it does not
+    /// Flat when it fits, broken when it does not fit
     Group(Box<WireDoc>),
-    /// One more level of indentation for anything inside
+    /// One more level of indentation for the content inside
     Indent(Box<WireDoc>),
-    /// In order
+    /// The parts, in order
     Concat(Vec<WireDoc>),
     /*
-    A span of ordinary Luau. Host, format it.
+    A span of ordinary Luau. The host formats it.
 
-    `parse` is explicit because a hole or attribute value is an expression
-    while the run between markup regions is statements, and guessing which a
-    worm meant would turn a worm bug into a confusing parse error downstream.
+    `parse` is explicit for a reason. A hole or attribute value is an
+    expression, while the run between markup regions is statements. A guess
+    about the intent of the worm would turn a worm bug into an unclear parse
+    error later.
     */
     Host {
         start: u32,
@@ -79,7 +80,7 @@ pub enum WireDoc {
     },
 }
 
-/// How a `host` span parses
+/// The parse mode of a `host` span
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HostParse {
@@ -93,21 +94,21 @@ pub enum HostParse {
 /// A format reply, assembled by the transport
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FormatReply {
-    /// The [`DOC_VERSION`] the worm speaks, refused on mismatch
+    /// The [`DOC_VERSION`] the worm speaks. The host refuses a mismatch.
     pub doc: u32,
     /// The layout for the whole file
     pub document: WireDoc,
-    /// Every comment's span, for the survival backstop
+    /// The span of every comment, for the survival backstop
     #[serde(default)]
     pub comments: Vec<(u32, u32)>,
 }
 
-/// One problem a worm found, severity deliberately absent
+/// One problem a worm found. The severity is absent by intent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WireFinding {
-    /// Byte range in the source
+    /// The byte range in the source
     pub span: (u32, u32),
-    /// The lint's name, which must be declared in the worm's `[lints]`
+    /// The name of the lint. The worm must declare it in `[lints]`.
     pub lint: String,
     pub message: String,
     #[serde(default)]
@@ -119,13 +120,13 @@ pub struct WireFinding {
 pub struct LintReply {
     #[serde(default)]
     pub findings: Vec<WireFinding>,
-    /// Comment spans, so `-- larvae: allow(...)` works in a claimed file.
-    /// A worm that omits them opts its findings out of suppression.
+    /// The comment spans, so `-- larvae: allow(...)` works in a claimed file.
+    /// A worm that omits them removes its findings from suppression.
     #[serde(default)]
     pub comments: Vec<(u32, u32)>,
 }
 
-/// Render a worm's format reply against the project's own style
+/// Render the format reply of a worm with the style of the project
 pub fn render_format(src: &str, reply: &FormatReply, cfg: &FmtConfig) -> Result<String> {
     if reply.doc != DOC_VERSION {
         bail!(
@@ -140,8 +141,8 @@ pub fn render_format(src: &str, reply: &FormatReply, cfg: &FmtConfig) -> Result<
 
     let document = convert(&reply.document, src, cfg)?;
 
-    // the host owns the file-final newline, exactly as it does for Luau,
-    // so no worm encodes it and every file ends the same way
+    // the host owns the file-final newline, the same as it does for Luau,
+    // so no worm encodes it and every file ends in the same way
     let document = Doc::concat([document, Doc::Hard]);
     let out = doc::render(&document, cfg.style());
 
@@ -151,12 +152,12 @@ pub fn render_format(src: &str, reply: &FormatReply, cfg: &FmtConfig) -> Result<
 }
 
 /*
-Turn the wire document into a real one.
+Turn the wire document into a real document.
 
-`src` spans borrow the source and `lit` borrows the reply, so the only copies
-made are for `host` spans, which have to outlive the token buffers they were
-emitted from. Depth is bounded before this runs: serde_json refuses more than
-128 levels of nesting, so the recursion here cannot go deeper than that.
+`src` spans borrow the source, and `lit` borrows the reply. Thus the only
+copies are for `host` spans, which must live longer than the token buffers
+they came from. The depth is bounded before this runs: serde_json refuses more
+than 128 levels of nesting, so the recursion here cannot go deeper than that.
 */
 fn convert<'a>(wire: &'a WireDoc, src: &'a str, cfg: &FmtConfig) -> Result<Doc<'a>> {
     Ok(match wire {
@@ -202,7 +203,7 @@ fn convert<'a>(wire: &'a WireDoc, src: &'a str, cfg: &FmtConfig) -> Result<Doc<'
     })
 }
 
-/// A validated span, since every span here came off a wire
+/// A validated span, because every span here came off a wire
 fn slice(src: &str, start: u32, end: u32) -> Result<&str> {
     let (s, e) = (start as usize, end as usize);
 
@@ -217,8 +218,8 @@ fn slice(src: &str, start: u32, end: u32) -> Result<&str> {
 mod tests {
     use super::*;
 
-    /// The JSON here is the contract every guest mirrors, changed only with
-    /// a DOC_VERSION bump
+    /// The JSON here is the contract that every guest mirrors. It changes
+    /// only with a DOC_VERSION bump.
     #[test]
     fn the_wire_doc_shape_is_the_documented_one() {
         let doc = WireDoc::Concat(vec![
@@ -299,7 +300,7 @@ mod tests {
 
     #[test]
     fn a_span_splitting_a_character_is_refused() {
-        // é is two bytes, so 1..2 lands inside it
+        // é is two bytes, so 1..2 points inside it
         let r = reply(WireDoc::Src(1, 2));
 
         assert!(render_format("é", &r, &FmtConfig::default()).is_err());

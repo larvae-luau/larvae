@@ -1,16 +1,17 @@
 /*!
-Rules that drop whole call statements
+Rules that remove whole call statements
 
-Both rules share a shape, a call used as a statement whose target has a
-known name goes away. `preserve_arguments_side_effects` decides what happens
-when an argument might do something, on by default the call stays put
+Both rules have the same shape. Each rule removes a call statement whose
+target has a known name. `preserve_arguments_side_effects` decides the
+result when an argument can have a side effect. The option is on by
+default, and then the call stays.
 */
 
 use super::support;
 use crate::rules::engine::{Edit, Flow, RuleCtx, Visit, walk_chunk};
 use crate::syntax::ast::*;
 
-/// remove_assertions, drop `assert(...)` statements
+/// remove_assertions: remove `assert(...)` statements.
 pub fn remove_assertions(ctx: &RuleCtx, edits: &mut Vec<Edit>, preserve: bool) {
     drop_calls(
         ctx,
@@ -20,7 +21,7 @@ pub fn remove_assertions(ctx: &RuleCtx, edits: &mut Vec<Edit>, preserve: bool) {
     );
 }
 
-/// remove_debug_profiling, drop `debug.profilebegin` and `debug.profileend`
+/// remove_debug_profiling: remove `debug.profilebegin` and `debug.profileend`.
 pub fn remove_debug_profiling(ctx: &RuleCtx, edits: &mut Vec<Edit>, preserve: bool) {
     drop_calls(ctx, edits, preserve, &|ctx, func| {
         let Expr::Index {
@@ -129,13 +130,13 @@ mod tests {
     fn arguments_with_side_effects_keep_the_call() {
         let src = "assert(check())\n";
         assert_eq!(run(src, assertions), src);
-        // turning the option off removes it anyway
+        // With the option off, the rule removes the call.
         assert!(!run(src, assertions_forced).contains("assert"));
     }
 
     #[test]
     fn assertions_used_as_values_stay() {
-        // the result is bound, this is not a bare statement
+        // The code binds the result, so this is not a bare statement.
         let src = "local x = assert(y)\n";
         assert_eq!(run(src, assertions), src);
         let src = "obj:assert(y)\n";

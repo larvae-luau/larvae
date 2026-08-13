@@ -1,47 +1,48 @@
-//! Finds `require("...")` call sites in a token stream
+//! Finds `require("...")` call sites in a token stream.
 
 use crate::syntax::lexer::{Tok, TokKind};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RequireSite {
-    /// Byte range of the string literal's content (between quotes/brackets)
+    /// The byte range of the content of the string literal, between the quotes or brackets.
     pub inner_start: u32,
     pub inner_end: u32,
-    /// Whole string token with quotes, instance rewrites replace this span
+    /// The whole string token with quotes. Instance rewrites replace this span.
     pub tok_start: u32,
     pub tok_end: u32,
-    /// True for require("x"), parenless calls need the expression wrapped in parens
+    /// True for require("x"). A call without parentheses needs the expression wrapped in them.
     pub has_parens: bool,
-    /// Byte offset of the `require` identifier, for diagnostics
+    /// The byte offset of the `require` identifier, for diagnostics.
     pub at: u32,
-    /// Index of the require ident in the token stream, for context checks
+    /// The index of the require identifier in the token stream, for context checks.
     pub require_idx: usize,
 }
 
-/// One hop along an instance expression
+/// One hop along an instance expression.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
-    /// `.Parent`
+    /// `.Parent`.
     Up,
-    /// `.Name`, `["Name"]`, or a FindFirstChild style call
+    /// `.Name`, `["Name"]`, or a FindFirstChild style call.
     Down(String),
 }
 
-/// Where an instance expression starts counting from
+/// The place where an instance expression starts to count from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Root {
-    /// `script`, relative to the requiring file's own instance
+    /// `script`, relative to the own instance of the file that requires.
     Script,
-    /// `game`, absolute from the DataModel root
+    /// `game`, absolute from the DataModel root.
     Game,
 }
 
 /*
-An instance require, ex: require(script.Parent.Foo)
+An instance require, for example require(script.Parent.Foo).
 
-Legacy Roblox code is full of these and Wally link modules generate them, so
-reading them is what lets an existing codebase move over. The whole
-expression is replaced, not just a string, so the spans cover every token
+Legacy Roblox code has many of these, and Wally link modules generate them.
+The ability to read them lets an existing codebase move over. The rewrite
+replaces the whole expression, not only a string. So the spans cover every
+token.
 */
 #[derive(Debug, Clone)]
 pub struct InstanceSite {
@@ -49,12 +50,12 @@ pub struct InstanceSite {
     pub steps: Vec<Step>,
     pub start: u32,
     pub end: u32,
-    /// Byte offset of the `require` identifier, for diagnostics
+    /// The byte offset of the `require` identifier, for diagnostics.
     pub at: u32,
 }
 
 impl InstanceSite {
-    /// How the expression reads in the source, for diagnostics
+    /// Returns the expression as it reads in the source, for diagnostics.
     pub fn render(&self) -> String {
         let mut out = match self.root {
             Root::Script => String::from("script"),
@@ -80,9 +81,9 @@ impl InstanceSite {
 #[derive(Debug, Default)]
 pub struct ScanResult {
     pub sites: Vec<RequireSite>,
-    /// Instance expression requires, resolved through the project map
+    /// Requires with an instance expression. Larvae resolves them through the project map.
     pub instances: Vec<InstanceSite>,
-    /// Offsets of dynamic requires, left untouched and counted by check
+    /// The offsets of dynamic requires. Larvae does not change them, and check counts them.
     pub dynamic: Vec<u32>,
 }
 
@@ -94,7 +95,7 @@ pub fn scan(src: &str, toks: &[Tok]) -> ScanResult {
             continue;
         }
 
-        // `foo.require(...)` / `foo:require(...)` is not the global require
+        // `foo.require(...)` and `foo:require(...)` are not the global require.
         if i > 0 && matches!(toks[i - 1].kind, TokKind::Dot | TokKind::Colon) {
             continue;
         }
@@ -127,7 +128,7 @@ pub fn scan(src: &str, toks: &[Tok]) -> ScanResult {
                     require_idx: i,
                 }),
 
-                // require(<expr>), an instance chain if we can read it
+                // require(<expr>) is an instance chain when the scanner can read it.
                 _ => match instance_expr(src, toks, i + 2) {
                     Some((root, steps, end)) => out.instances.push(InstanceSite {
                         root,
@@ -141,7 +142,7 @@ pub fn scan(src: &str, toks: &[Tok]) -> ScanResult {
                 },
             },
 
-            // require "path", parenless call sugar
+            // require "path" is call sugar without parentheses.
             Some(TokKind::Str {
                 inner_start,
                 inner_end,
@@ -159,7 +160,7 @@ pub fn scan(src: &str, toks: &[Tok]) -> ScanResult {
             }
 
             Some(TokKind::InterpStr) => out.dynamic.push(tok.start),
-            // bare require reference, nothing to rewrite but worth counting
+            // A bare require reference. There is nothing to rewrite, but the count matters.
             _ => out.dynamic.push(tok.start),
         }
     }
@@ -168,12 +169,12 @@ pub fn scan(src: &str, toks: &[Tok]) -> ScanResult {
 }
 
 /*
-Read an instance chain off the token stream, ex: script.Parent.Foo
+Reads an instance chain from the token stream, for example script.Parent.Foo.
 
-Returns the root, the hops, and the token index just past the expression,
-which the caller checks is the closing paren. Anything unrecognized returns
-None and stays a dynamic require, a chain we cannot read in full is one we
-must not rewrite
+The function returns the root, the hops, and the token index just past the
+expression. The caller checks that this index is the closing parenthesis. An
+unrecognized shape returns None and stays a dynamic require. A chain that
+larvae cannot read in full is a chain that larvae must not rewrite.
 */
 fn instance_expr(src: &str, toks: &[Tok], start: usize) -> Option<(Root, Vec<Step>, usize)> {
     let first = toks.get(start)?;
@@ -230,7 +231,7 @@ fn instance_expr(src: &str, toks: &[Tok], start: usize) -> Option<(Root, Vec<Ste
                 j += 5;
             }
 
-            // ["X"], which is how Wally link modules index their _Index folder
+            // ["X"] is the form that Wally link modules use to index their _Index folder.
             TokKind::Symbol if tok.text(src) == "[" => {
                 let closing = toks.get(j + 2)?;
 
@@ -246,7 +247,7 @@ fn instance_expr(src: &str, toks: &[Tok], start: usize) -> Option<(Root, Vec<Ste
         }
     }
 
-    // the caller only accepts a chain that ends right at the closing paren
+    // The caller only accepts a chain that ends exactly at the closing parenthesis.
     if steps.is_empty() || toks.get(j)?.kind != TokKind::RParen {
         return None;
     }
@@ -254,7 +255,8 @@ fn instance_expr(src: &str, toks: &[Tok], start: usize) -> Option<(Root, Vec<Ste
     Some((root, steps, j))
 }
 
-/// Plain string literal contents, escapes are left as dynamic rather than guessed at
+/// Returns the contents of a plain string literal. A literal with escapes
+/// stays dynamic, because the scanner does not guess its value.
 fn literal_name(src: &str, tok: &Tok) -> Option<String> {
     let TokKind::Str {
         inner_start,

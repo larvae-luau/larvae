@@ -1,20 +1,20 @@
 /*!
 One worm instance per rayon worker.
 
-`mlua::Lua` is `!Send`, so a Luau worm cannot even be moved into a parallel
-closure, let alone shared. A wasm `Store` can move but not be used from two
-threads at once. So the registry holds artifacts and settings, which are `Sync`,
-and each worker builds its own instances the first time it meets a file that
-needs one.
+`mlua::Lua` is `!Send`. Thus a move of a Luau worm into a parallel closure is
+not possible, and a share is also not possible. A wasm `Store` can move, but
+two threads cannot use it at the same time. Thus the registry holds artifacts
+and settings, which are `Sync`. Each worker builds its own instances the first
+time it meets a file that needs one.
 
-Measured, this is not optional: a rule crossing costs about 1.2µs in Luau and
-6.9µs in wasm, so at three thousand files a serial pass is 0.6s and 2.7s
-respectively, against a build that is otherwise 25ms.
+Measurements show this is necessary. A rule crossing costs about 1.2 µs in
+Luau and 6.9 µs in wasm. At three thousand files, a serial pass is 0.6 s and
+2.7 s, against a build that is otherwise 25 ms.
 
-**A worm keeping state between files is undefined.** Which files a worker sees
-is decided by work stealing, so cross file state makes output depend on
-scheduling. A rule receives a node and a context and nothing else, deliberately,
-so there is nowhere for larvae to invite it.
+**A worm that keeps state between files has undefined behavior.** Work
+stealing decides which files a worker sees. Thus cross file state makes the
+output depend on the schedule. By intent, a rule receives a node and a context
+and nothing else, so larvae gives no place for such state.
 */
 
 use std::cell::RefCell;
@@ -30,30 +30,30 @@ use super::ctx::FileCtx;
 use super::manifest::Manifest;
 use super::{Worm, toml_text, toml_text_map};
 
-/// Identifies one registry, so a worker can tell its instances are stale
+/// The id of one registry, so a worker can see that its instances are stale
 static NEXT_BUILD: AtomicU64 = AtomicU64::new(1);
 
-/// Everything a worker needs to make its own instance of one worm
+/// All the data a worker needs to make its own instance of one worm
 pub struct Spec {
     pub manifest: Manifest,
-    /// The Luau source or wasm module, kept so a worker never touches the disk
+    /// The Luau source or wasm module. It is kept so a worker does not touch the disk.
     pub artifact: Vec<u8>,
-    /// Where the worm was unpacked, which a native worm execs from
+    /// The unpack directory of the worm. A native worm executes from it.
     pub dir: std::path::PathBuf,
-    /// `[worms.<name>.config]`, untouched
+    /// `[worms.<name>.config]`, unchanged
     pub config: toml::Value,
-    /// Rules that are on, by name, with the value each resolved to
+    /// The rules that are on, by name, with the resolved value of each
     pub rules: BTreeMap<String, toml::Value>,
-    /// What the user asked for, which beats what the worm declared
+    /// The order the user requested. It wins over the order the worm declared.
     pub run_order: Option<super::manifest::Stage>,
-    /// Who owns the requires in this worm's output
+    /// The owner of the requires in the output of this worm
     pub requires: super::RequireOwner,
-    /// Extensions this worm's front-end claims, empty when it has none
+    /// The extensions the front-end of this worm claims. It is empty when there is none.
     pub claims: Vec<String>,
 }
 
 impl Spec {
-    /// Rule names in a stable order, which is also the wasm rule index
+    /// The rule names in a stable order, which is also the wasm rule index
     pub fn enabled(&self) -> Vec<&str> {
         self.manifest
             .rules
@@ -63,7 +63,7 @@ impl Spec {
             .collect()
     }
 
-    /// Node kinds this worm's enabled rules ask to see
+    /// The node kinds that the enabled rules of this worm ask to see
     pub fn filters(&self) -> Vec<super::nodes::Kind> {
         let mut kinds = Vec::new();
 
@@ -85,27 +85,27 @@ impl Spec {
         kinds
     }
 
-    /// Whether this worm lays its claimed files out for `larvae fmt`
+    /// Report if this worm formats its claimed files for `larvae fmt`
     pub fn formats(&self) -> bool {
         self.manifest.frontend.as_ref().is_some_and(|f| f.fmt)
     }
 
-    /// Whether this worm reports lints on its claimed files
+    /// Report if this worm reports lints on its claimed files
     pub fn lints(&self) -> bool {
         !self.manifest.lints.is_empty()
     }
 }
 
-/// Worms this build will run, shared across every worker
+/// The worms this build runs, shared across every worker
 pub struct Pool {
     build: u64,
     specs: Vec<Arc<Spec>>,
-    /// Where larvae's own rules sit, so before and after mean something
+    /// The slot of the native rules of larvae. It gives before and after a meaning.
     native: i64,
 }
 
 thread_local! {
-    /// This worker's instances, rebuilt when the build id moves
+    /// The instances of this worker. They are rebuilt when the build id changes.
     static LOCAL: RefCell<Local> = const { RefCell::new(Local { build: 0, worms: Vec::new() }) };
 }
 
@@ -123,17 +123,18 @@ impl Pool {
         }
     }
 
-    /// Everything a worm brings that could change output, for the cache epoch
+    /// All the worm data that can change the output, for the cache epoch
     pub fn specs(&self) -> &[Arc<Spec>] {
         &self.specs
     }
 
-    /// The slot larvae's own rules run in
+    /// The slot in which the native rules of larvae run
     pub fn native(&self) -> i64 {
         self.native
     }
 
-    /// The slot one worm's rules run in, user first, then the worm, then after us
+    /// The slot for the rules of one worm. The user wins, then the worm, then the default
+    /// of one slot after the native rules.
     pub fn slot_of(&self, spec: &Spec) -> i64 {
         spec.run_order
             .or(spec.manifest.run_order)
@@ -141,7 +142,7 @@ impl Pool {
             .unwrap_or(self.native + 1)
     }
 
-    /// Every distinct slot that has work in it, in the order they run
+    /// Every distinct slot that has work in it, in run order
     pub fn slots(&self) -> Vec<i64> {
         let mut out: Vec<i64> = self
             .specs
@@ -157,7 +158,7 @@ impl Pool {
         out
     }
 
-    /// Worms with rules in one slot
+    /// The worms with rules in one slot
     pub fn in_slot(&self, slot: i64) -> Vec<(usize, &Arc<Spec>)> {
         self.specs
             .iter()
@@ -170,7 +171,7 @@ impl Pool {
         self.specs.is_empty()
     }
 
-    /// Node kinds any enabled rule wants, so a file with none skips everything
+    /// The node kinds that the enabled rules want. A file with none skips all rule work.
     pub fn filters(&self) -> Vec<super::nodes::Kind> {
         let mut kinds: Vec<_> = self.specs.iter().flat_map(|s| s.filters()).collect();
 
@@ -181,11 +182,12 @@ impl Pool {
     }
 
     /*
-    Whether we own the requires in whatever this file becomes.
+    Report if larvae owns the requires in the output of this file.
 
-    A worm saying `requires = "worm"` resolves its own, so we do not scan,
-    resolve or rewrite them. That costs realm validation for those files, which
-    is why it is a thing a worm has to say rather than a thing we guess.
+    A worm that sets `requires = "worm"` resolves its own requires. Then
+    larvae does not scan, resolve, or rewrite them. This costs the realm
+    validation for those files. For this reason the worm must state it, and
+    larvae does not guess it.
     */
     pub fn owns_requires(&self, front: Option<usize>) -> bool {
         match front {
@@ -195,7 +197,7 @@ impl Pool {
         }
     }
 
-    /// The worm whose front-end claims this path, if any
+    /// The worm whose front-end claims this path, if one exists
     pub fn frontend_for(&self, path: &std::path::Path) -> Option<usize> {
         let ext = path.extension().and_then(|e| e.to_str())?;
 
@@ -206,7 +208,7 @@ impl Pool {
         })
     }
 
-    /// Every extension any front-end claims, without the dot
+    /// Every extension that a front-end claims, without the dot
     pub fn claimed(&self) -> Vec<String> {
         self.specs
             .iter()
@@ -218,16 +220,16 @@ impl Pool {
     /*
     The claimed extensions with a capability behind them, without the dot.
 
-    `larvae fmt` and `larvae lint` widen their walks with these rather than
-    with `claimed()`, so a frontend-only worm's files stay skipped: walking
-    one with nothing able to format it would turn a passing `fmt --check`
-    into a failing one.
+    `larvae fmt` and `larvae lint` widen their walks with these and not with
+    `claimed()`. Thus the files of a frontend-only worm stay skipped. A walk
+    over such a file, with no worm able to format it, would turn a passing
+    `fmt --check` into a failing one.
     */
     pub fn fmt_claimed(&self) -> Vec<String> {
         Self::extensions(self.specs.iter().filter(|s| s.formats()))
     }
 
-    /// The same, for the lint walk
+    /// The same list, for the lint walk
     pub fn lint_claimed(&self) -> Vec<String> {
         Self::extensions(self.specs.iter().filter(|s| s.lints()))
     }
@@ -243,28 +245,29 @@ impl Pool {
         &self.specs[index]
     }
 
-    /// Run a front-end over one file, on this thread's instance
+    /// Run a front-end over one file, on the instance of this thread
     pub fn compile(&self, index: usize, source: &str) -> Result<super::Outcome> {
         self.with_worm(index, |worm, spec| {
             worm.transform(source, &toml_text(&spec.config))
         })
     }
 
-    /// Ask a worm for one file's layout, on this thread's instance
+    /// Ask a worm for the layout of one file, on the instance of this thread
     pub fn format(&self, index: usize, source: &str) -> Result<super::proto::FormatReply> {
         self.with_worm(index, |worm, _spec| worm.format(source))
     }
 
-    /// Ask a worm for one file's findings, on this thread's instance
+    /// Ask a worm for the findings of one file, on the instance of this thread
     pub fn lint(&self, index: usize, source: &str) -> Result<super::proto::LintReply> {
         self.with_worm(index, |worm, _spec| worm.lint(source))
     }
 
     /*
-    Run one worm's rules over a file, on this thread's instance.
+    Run the rules of one worm over a file, on the instance of this thread.
 
-    The instance is built on first use and kept, so a worker that never meets a
-    worm file pays nothing and one that does pays once rather than per file.
+    The pool builds the instance on first use and keeps it. Thus a worker that
+    does not meet a worm file pays nothing. A worker that does pays once and
+    not per file.
     */
     pub fn run(&self, index: usize, file: Arc<FileCtx>, matched: &Matched) -> Result<Vec<Edit>> {
         self.with_worm(index, |worm, spec| {
@@ -287,10 +290,10 @@ impl Pool {
     }
 
     /*
-    Borrow this worker's instance of one worm, building it on first use.
+    Borrow the instance of one worm on this worker. Build it on first use.
 
-    A worker that never meets a file needing this worm pays nothing, and one
-    that does pays the module load once rather than per file.
+    A worker that does not meet a file that needs this worm pays nothing. A
+    worker that does pays the module load once and not per file.
     */
     fn with_worm<R>(
         &self,
@@ -303,7 +306,7 @@ impl Pool {
         LOCAL.with(|local| {
             let mut local = local.borrow_mut();
 
-            // a new build means whatever this worker kept belongs to the old one
+            // on a new build, the kept instances of this worker belong to the old build
             if local.build != build {
                 local.build = build;
                 local.worms.clear();
@@ -325,10 +328,10 @@ impl Pool {
             let result = f(local.worms[index].as_mut().expect("just built"), &spec);
 
             /*
-            A worm that failed may be a subprocess whose pipe is now dead, and
-            reusing a dead pipe turns one bad file into every later file on
-            this worker failing. Dropping the instance costs one rebuild after
-            an error, so it is not worth telling the forms apart.
+            A worm that failed can be a subprocess with a dead pipe. Reuse of
+            a dead pipe turns one bad file into a failure for every later file
+            on this worker. A drop of the instance costs one rebuild after an
+            error, so a distinction between the forms is not worth the code.
             */
             if result.is_err() {
                 local.worms[index] = None;
@@ -351,13 +354,13 @@ fn init(worm: &mut Worm, spec: &Spec) -> Result<()> {
     }
 }
 
-/// Nodes matching each rule's filter, worked out once per file
+/// The nodes that match the filter of each rule, computed once per file
 pub struct Matched {
     by_kind: BTreeMap<&'static str, Vec<u32>>,
 }
 
 impl Matched {
-    /// Bucket a file's nodes by kind, so every rule reads its own without a walk
+    /// Group the nodes of a file by kind, so every rule reads its own set without a walk
     pub fn of(table: &super::nodes::NodeTable, wanted: &[super::nodes::Kind]) -> Self {
         let mut by_kind: BTreeMap<&'static str, Vec<u32>> = BTreeMap::new();
 
@@ -375,9 +378,9 @@ impl Matched {
     }
 
     /*
-    A rule with no filter sees nothing rather than everything. Handing an
-    undeclared rule the whole tree would make `filter` advice instead of the
-    cost control it is.
+    A rule with no filter sees nothing, not the full tree. The full tree for
+    an undeclared rule would make `filter` a suggestion instead of the cost
+    control it is.
     */
     fn for_rule(&self, spec: &Spec, rule: &str) -> Option<Vec<u32>> {
         let decl = spec.manifest.rules.get(rule)?;
@@ -401,9 +404,9 @@ mod tests {
     use super::*;
 
     /*
-    A native worm whose first life ends mid call and whose second life works,
-    told apart by a marker file beside the script. Only a pool that drops a
-    failed instance ever sees the second life.
+    A native worm whose first life stops in the middle of a call and whose
+    second life works. A marker file beside the script separates the lives.
+    Only a pool that drops a failed instance sees the second life.
     */
     #[cfg(unix)]
     #[test]

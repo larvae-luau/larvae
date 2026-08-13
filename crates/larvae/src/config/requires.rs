@@ -1,4 +1,4 @@
-//! The [requires] and [rojo] tables, what a rewritten require turns into
+//! The [requires] and [rojo] tables control the form of a rewritten require.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -24,9 +24,9 @@ pub struct RequiresConfig {
 
     /*
     Read require(script.Parent.Foo) style requires and rewrite them to the
-    configured target. On by default because it is the whole point of moving
-    an existing codebase over, off is the escape hatch for anyone who wants
-    their instance requires left exactly as written
+    configured target. The default is on, because this is the main goal of a
+    move from an existing codebase. Off is the escape option for a user who
+    wants instance requires kept exactly as written.
     */
     #[serde(default = "default_true")]
     pub instance_input: bool,

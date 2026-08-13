@@ -1,13 +1,14 @@
 /*!
-Printing back out, tokens are replayed with the source between them so an
-untouched tree reproduces the input byte for byte, that is the retain-lines
-guarantee and it holds by construction rather than by patching bugs
+The printer writes the tree back out. It replays the tokens with the source
+between them. So a tree without changes reproduces the input byte for byte.
+That is the retain-lines guarantee. It holds by construction, not through bug
+patches.
 */
 
 use crate::syntax::ast::*;
 use crate::syntax::lexer::Tok;
 
-/// Print a token range, including the trivia that sits between the tokens
+/// Prints a token range, with the trivia that sits between the tokens included.
 pub fn print_range(src: &str, toks: &[Tok], from: u32, to: u32, out: &mut String) {
     for i in from..to {
         let t = &toks[i as usize];
@@ -28,7 +29,7 @@ pub fn print_span(src: &str, toks: &[Tok], span: TokSpan) -> String {
     out
 }
 
-/// Print a whole parsed file, leading and trailing trivia included
+/// Prints a whole parsed file, with the leading and trailing trivia included.
 pub fn print_chunk(src: &str, toks: &[Tok], chunk: &Chunk) -> String {
     let mut out = String::new();
 
@@ -52,9 +53,10 @@ pub fn print_chunk(src: &str, toks: &[Tok], chunk: &Chunk) -> String {
 }
 
 /*
-Coverage check, every block's statements must tile that block's token span
-with no holes, without this the round trip could pass while the tree quietly
-dropped tokens, since the gaps would print the missing text anyway
+This is a coverage check. The statements of each block must tile the token
+span of that block with no holes. Without this check, the round trip could
+pass while the tree silently dropped tokens, because the gaps would print the
+missing text anyway.
 */
 pub fn coverage_errors(chunk: &Chunk) -> Vec<String> {
     let mut errs = Vec::new();

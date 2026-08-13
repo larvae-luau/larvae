@@ -1,4 +1,4 @@
-//! End to end require rewriting, the flagship path
+//! These tests cover end-to-end require rewriting, the primary feature.
 
 use larvae::config::Config;
 use larvae::diag::Severity;
@@ -21,38 +21,38 @@ fn processes_fixture_end_to_end() {
 
     assert!(!outcome.has_errors(), "unexpected errors");
 
-    // Alias expanded to a native @game require
+    // larvae expands the alias to a native @game require.
     let main = read(root, "dist/server/main.server.luau");
     assert!(
         main.contains(r#"require("@game/ReplicatedStorage/Packages/signal")"#),
         "alias not expanded: {main}"
     );
-    // Cross mount relative went absolute
+    // larvae rewrites the cross-mount relative require to an absolute require.
     assert!(
         main.contains(r#"require("@game/ReplicatedStorage/shared/util/math")"#),
         "cross-mount require not rewritten: {main}"
     );
-    // Comment untouched (splice preserves all other bytes)
+    // The comment is unchanged, because the splice keeps all other bytes.
     assert!(main.contains("require(\"./inside-comment\")"));
-    // Trailing content preserved
+    // The trailing content stays in the output.
     assert!(main.contains("print(Signal, math)"));
 
-    // Same mount sibling stays relative (identical -> byte-identical output)
+    // A sibling in the same mount stays relative, so the output is byte-identical.
     let geometry = read(root, "dist/shared/util/geometry.luau");
     assert_eq!(geometry, "local math = require(\"./math\")\nreturn math\n");
 
-    // @self pass-through
+    // larvae passes @self through unchanged.
     let init = read(root, "dist/shared/pkg/init.luau");
     assert!(init.contains(r#"require("@self/sub")"#));
 
-    // Sibling require of a directory module stays relative
+    // A sibling require of a directory module stays relative.
     let consumer = read(root, "dist/shared/consumer.luau");
     assert_eq!(consumer, "return require(\"./pkg\")\n");
 
-    // Non code file copied
+    // larvae copies the non-code file.
     assert_eq!(read(root, "dist/shared/data.json"), "{\"k\":1}\n");
 
-    // Derived build project generated with rerelativized paths
+    // larvae generates the derived build project with rerelativized paths.
     let bp = outcome.build_project.expect("derived build project");
     let bp_json: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&bp).unwrap()).unwrap();
@@ -79,7 +79,7 @@ fn idempotent_reprocessing() {
     pipeline::run(root, &config, true).unwrap();
     let first = read(root, "dist/server/main.server.luau");
 
-    // Process the dist tree as input, already-native requires pass through
+    // The test processes the dist tree as input. Already-native requires pass through.
     write(root, "src/server/main.server.luau", &first);
     let outcome = pipeline::run(root, &config, true).unwrap();
 
@@ -115,7 +115,7 @@ fn client_requiring_server_is_error() {
     let tmp = fixture();
     let root = tmp.path();
 
-    // Client-marked script requiring a server only module
+    // A client-marked script requires a server-only module.
     write(root, "src/server/secret.luau", "return {}\n");
     write(
         root,
@@ -246,7 +246,7 @@ fn luaurc_aliases_work_zero_config() {
     write(root, "src/util/list.luau", "return {}\n");
     write(root, "src/main.luau", "return require(\"@util/list\")\n");
 
-    // No larvae.toml at all
+    // The project has no larvae.toml file.
     let config = Config::load_or_default(root).unwrap();
     let outcome = pipeline::run(root, &config, true).unwrap();
 
@@ -256,7 +256,7 @@ fn luaurc_aliases_work_zero_config() {
 
     assert!(!outcome.has_errors());
     let main = read(root, "dist/main.luau");
-    // util maps into the same mount -> relative require
+    // The util alias maps into the same mount, so larvae emits a relative require.
     assert_eq!(main, "return require(\"./util/list\")\n");
 }
 
@@ -274,26 +274,26 @@ fn instance_target_find_first_child() {
     assert!(!outcome.has_errors());
 
     let main = read(root, "dist/server/main.server.luau");
-    // Alias with a @game value becomes an absolute chain
+    // larvae converts an alias with a @game value to an absolute chain.
     assert!(
         main.contains(
             r#"require(game:GetService("ReplicatedStorage"):FindFirstChild("Packages"):FindFirstChild("signal"))"#
         ),
         "alias not converted: {main}"
     );
-    // Cross mount relative goes absolute too
+    // larvae also converts the cross-mount relative require to an absolute chain.
     assert!(main.contains(
         r#"require(game:GetService("ReplicatedStorage"):FindFirstChild("shared"):FindFirstChild("util"):FindFirstChild("math"))"#
     ));
 
-    // Same mount sibling becomes a script relative chain
+    // larvae converts a sibling in the same mount to a script-relative chain.
     let geometry = read(root, "dist/shared/util/geometry.luau");
     assert!(
         geometry.contains(r#"require(script.Parent:FindFirstChild("math"))"#),
         "{geometry}"
     );
 
-    // @self resolves to a child of the script
+    // @self resolves to a child of the script.
     let init = read(root, "dist/shared/pkg/init.luau");
     assert!(
         init.contains(r#"require(script:FindFirstChild("sub"))"#),
@@ -321,7 +321,7 @@ fn instance_target_property_style() {
     let tmp = instance_fixture("property");
     let root = tmp.path();
 
-    // A parenless require must get wrapped in parens
+    // larvae must wrap a parenless require in parentheses.
     write(
         root,
         "src/shared/parenless.luau",

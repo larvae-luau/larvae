@@ -1,4 +1,4 @@
-//! GitHub releases API (the slice `self update` needs)
+//! The GitHub releases API (the part that `self update` needs)
 
 use anyhow::Result;
 use serde::Deserialize;
@@ -19,7 +19,7 @@ pub struct Asset {
 pub fn release_by_tag(repo: &str, version: &str) -> Result<Release> {
     let tag = version.trim_start_matches('v');
 
-    // a project may tag either way, so try the bare form then the v form
+    // A project can tag either way, so try the bare form and then the v form.
     get(&format!(
         "https://api.github.com/repos/{repo}/releases/tags/{tag}"
     ))
@@ -30,7 +30,7 @@ pub fn release_by_tag(repo: &str, version: &str) -> Result<Release> {
     })
 }
 
-/// Latest non prerelease of owner/repo, honors GITHUB_TOKEN
+/// The latest non prerelease of owner/repo; the request uses GITHUB_TOKEN
 pub fn latest_release(repo: &str) -> Result<Release> {
     get(&format!(
         "https://api.github.com/repos/{repo}/releases/latest"

@@ -1,11 +1,12 @@
 /*!
-Parser conformance, every snippet must parse, tile the token stream with no
-holes, and print back byte for byte, that trio is the M1a exit criterion
+These tests check parser conformance. Every snippet must parse, must tile the
+token stream with no holes, and must print back byte for byte. That set of
+three checks is the M1a exit criterion.
 */
 
 use larvae::syntax::{lexer, parser, printer};
 
-/// Parse, check coverage, print, compare, all in one
+/// This function parses, checks coverage, prints, and compares in one step.
 #[track_caller]
 fn round_trip(src: &str) {
     let lexed = match lexer::lex(src) {
@@ -44,7 +45,7 @@ fn rejects(src: &str) {
 }
 
 const CORPUS: &[&str] = &[
-    // --- explicit type instantiation, so the sweeps mutate and truncate it ---
+    // --- explicit type instantiation, which the sweeps mutate and truncate ---
     "local a = charm.atom<<number>>()\n",
     "local a = charm.atom<<(number, string)>>()\n",
     "local a = obj:method<<...number>>()\n",
@@ -201,9 +202,10 @@ return t
 ];
 
 /*
-Explicit type instantiation, Luau's turbofish. The argument is a type or a type
-pack, so all of these are legal, and the round trip matters as much as the parse
-because a swallowed span would silently drop the type arguments from the output.
+This is explicit type instantiation, Luau's turbofish. The argument is a type
+or a type pack, so all of these forms are legal. The round trip matters as much
+as the parse, because a swallowed span would drop the type arguments from the
+output with no report.
 */
 #[test]
 fn turbofish_type_arguments() {
@@ -214,24 +216,25 @@ fn turbofish_type_arguments() {
     round_trip("local a = charm.atom<<{ x: number }>>()\n");
     round_trip("local a = f<<number>>()\n");
 
-    // nested generics, which is why the bracket counting has to be by depth
+    // Nested generics. This is why the bracket count must go by depth.
     round_trip("local a = charm.atom<<Map<string, number>>>()\n");
     round_trip("local a = f<<A<B<C>>>>()\n");
 
-    // a method call takes them too
+    // A method call also takes type arguments.
     round_trip("local a = obj:method<<number>>()\n");
     round_trip("local a = obj:method<<(number, string)>>()\n");
 
-    // and the other two call argument forms
+    // The other two call argument forms also take them.
     round_trip("local a = f<<number>>{ 1, 2 }\n");
     round_trip("local a = f<<string>>\"lit\"\n");
 
-    // chained, so the suffix loop keeps going afterwards
+    // These calls are chained, so the suffix loop continues afterward.
     round_trip("local a = f<<number>>().field\n");
     round_trip("local a = f<<number>>()<<string>>()\n");
 }
 
-/// A single `<` is still a comparison and must not be read as a turbofish
+/// A single `<` is still a comparison. The parser must not read it as a
+/// turbofish.
 #[test]
 fn comparisons_are_not_turbofish() {
     round_trip("local a = b < c\n");
@@ -240,11 +243,12 @@ fn comparisons_are_not_turbofish() {
     round_trip("local a = t[b < c]\n");
     round_trip("if a < b then end\n");
 
-    // a generic call in type position, unrelated to the expression form
+    // This is a generic call in type position. It is not related to the
+    // expression form.
     round_trip("local a: Map<string, number> = x\n");
 }
 
-/// A turbofish only ever precedes a call, so a bare one is a real error
+/// A turbofish always precedes a call, so a bare turbofish is a real error.
 #[test]
 fn a_turbofish_without_a_call_is_rejected() {
     rejects("local a = f<<number>>\n");
@@ -281,7 +285,7 @@ fn rejects_broken_input() {
 
 #[test]
 fn deep_nesting_errors_instead_of_crashing() {
-    // a stack overflow here is the darklua bug class we designed out
+    // A stack overflow here is the darklua bug class that the design removed.
     let deep = format!("local x = {}1{}", "(".repeat(5000), ")".repeat(5000));
     let lexed = lexer::lex(&deep).unwrap();
 
@@ -294,8 +298,9 @@ fn deep_nesting_errors_instead_of_crashing() {
 }
 
 /*
-Poor man's fuzzing, byte level mutations of the corpus must never panic or
-hang, real coverage guided fuzzing lives in fuzz/ for nightly runs
+This is a simple form of fuzzing. Byte-level mutations of the corpus must
+never panic or hang. The real coverage-guided fuzzing lives in fuzz/ for
+nightly runs.
 */
 #[test]
 fn mutations_never_panic() {
@@ -315,7 +320,8 @@ fn mutations_never_panic() {
                 };
 
                 if let Ok(lexed) = lexer::lex(&text) {
-                    // must terminate and must not panic, either result is fine
+                    // The parse must stop and must not panic. Each result is
+                    // acceptable.
                     let _ = parser::parse(&text, &lexed.toks);
                 }
 

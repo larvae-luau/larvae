@@ -23,7 +23,7 @@ pub fn get_json<T: serde::de::DeserializeOwned>(url: &str, headers: &[(&str, &st
         .with_context(|| format!("invalid JSON from {url}"))
 }
 
-/// GET raw bytes following redirects by hand, ureq 2 skips 307/308 and GitHub uses them
+/// GET raw bytes and follow redirects by hand; ureq 2 skips 307/308, and GitHub uses them
 pub fn get_bytes(url: &str) -> Result<Vec<u8>> {
     let mut url = url.to_string();
 

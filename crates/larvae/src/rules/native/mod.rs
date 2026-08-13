@@ -1,14 +1,14 @@
 /*!
 larvae's own rules
 
-Rules with no darklua equivalent, they lean on what only larvae knows,
-resolved require forms and the datamodel path of every file. Same contract
-as the parity rules, walk the tree, push byte edits, keep newline counts
-when deleting multiline spans
+These rules have no darklua equivalent. They use data that only larvae
+knows: the resolved require forms and the datamodel path of each file.
+The contract equals the parity rules. Walk the tree, push byte edits, and
+keep newline counts when a rule deletes multiline spans.
 
-Every rule here is conservative by construction, when safety cannot be read
-off the tree the instance is skipped silently, a wrong rewrite in a live
-game costs more than a missed transform
+Each rule here is conservative by construction. When the tree alone
+cannot prove safety, the rule skips the instance without a report. A
+wrong rewrite in a live game costs more than a missed transform.
 */
 
 use std::path::Path;
@@ -25,7 +25,7 @@ mod inject_module_path;
 mod remove_calls;
 mod use_get_service;
 
-/// True when any rule in this module is enabled, gates the parse
+/// True when one or more rules in this module are enabled. This gates the parse.
 pub fn wants(cfg: &RulesConfig) -> bool {
     cfg.remove_calls.is_some()
         || cfg.use_get_service
@@ -34,7 +34,7 @@ pub fn wants(cfg: &RulesConfig) -> bool {
         || cfg.freeze_module
 }
 
-/// Run every enabled rule, push edits and diagnostics
+/// Run each enabled rule. Push edits and diagnostics.
 pub fn apply(
     cfg: &RulesConfig,
     ctx: &RuleCtx,
@@ -67,12 +67,12 @@ pub fn apply(
 
 // --- shared helpers ----------------------------------------------------------
 
-/// Text of a span that is exactly one token, ex: a binding name
+/// The text of a span that is exactly one token. Example: a binding name.
 fn name_text<'src>(ctx: &RuleCtx<'src>, span: TokSpan) -> &'src str {
     ctx.tok_text(span.start)
 }
 
-/// Dotted name path of a callee or receiver, ex: `debug.profilebegin`
+/// The dotted name path of a callee or receiver. Example: `debug.profilebegin`.
 fn dotted_path(ctx: &RuleCtx, expr: &Expr) -> Option<String> {
     match expr {
         Expr::Name(s) => Some(name_text(ctx, *s).to_string()),
@@ -89,13 +89,13 @@ fn dotted_path(ctx: &RuleCtx, expr: &Expr) -> Option<String> {
     }
 }
 
-/// True when the expression calls something anywhere inside it
+/// True when the expression holds a call anywhere inside it.
 fn contains_call(expr: &Expr) -> bool {
     struct Finder(bool);
     impl Visit for Finder {
         fn expr(&mut self, e: &Expr) -> Flow {
             if self.0 {
-                // one is enough, nothing below can change the answer
+                // One call is enough. No node below can change the answer.
                 return Flow::Skip;
             }
 
@@ -115,7 +115,7 @@ fn contains_call(expr: &Expr) -> bool {
     finder.0
 }
 
-/// Newlines a byte range spans, a replacement must keep the same count
+/// The newline count in a byte range. A replacement must keep the same count.
 fn newlines_in(ctx: &RuleCtx, from: u32, to: u32) -> usize {
     ctx.src[from as usize..to as usize]
         .bytes()
@@ -123,7 +123,7 @@ fn newlines_in(ctx: &RuleCtx, from: u32, to: u32) -> usize {
         .count()
 }
 
-/// Start of the line `at` sits on when only blanks come before it
+/// The start of the line that holds `at`, when only blanks come before it.
 fn blank_line_start(ctx: &RuleCtx, at: u32) -> u32 {
     let bytes = ctx.src.as_bytes();
     let mut i = at as usize;
@@ -135,7 +135,7 @@ fn blank_line_start(ctx: &RuleCtx, at: u32) -> u32 {
     i as u32
 }
 
-/// Valid Luau identifier, the config checks names before they reach the output
+/// True for a valid Luau identifier. The config checks names before they reach the output.
 pub fn is_ident(name: &str) -> bool {
     const KEYWORDS: [&str; 21] = [
         "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in",
@@ -157,18 +157,18 @@ pub(crate) mod test_support {
     use crate::syntax::scan::RequireSite;
     use crate::syntax::{lexer, parser, scan};
 
-    /// Run the larvae rules over a source and return the spliced output
+    /// Run the larvae rules over a source and return the spliced output.
     pub fn run(rules: &str, src: &str) -> String {
         run_full(rules, src, None, &mut Vec::new())
     }
 
-    /// Same, with a datamodel path for this file and the diagnostics it produced
+    /// The same run, with a datamodel path for this file and the produced diagnostics.
     pub fn run_full(rules: &str, src: &str, dm: Option<&str>, diags: &mut Vec<Diag>) -> String {
         let cfg: RulesConfig = toml::from_str(rules).expect("rule config");
         let lexed = lexer::lex(src).expect("lex");
         let chunk = parser::parse(src, &lexed.toks).expect("parse");
 
-        // the unit tests stand in for the rewriter, every site keeps its own spec
+        // The unit tests replace the rewriter. Each site keeps its own spec.
         let forms: Vec<(RequireSite, String)> = scan::scan(src, &lexed.toks)
             .sites
             .iter()

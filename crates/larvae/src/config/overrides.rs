@@ -1,9 +1,9 @@
-//! Per path require targets
+//! Require targets set for each path
 //!
-//! Most projects want one output form everywhere. Mixed ones do not. Client
-//! code that runs out of a Starter container cannot lean on absolute `@game`
-//! strings the way shared code can, so `[requires.overrides]` lets a glob
-//! pick a different target for the files that need it.
+//! Most projects want one output form for all files. Mixed projects do not.
+//! Client code that runs from a Starter container cannot use absolute `@game`
+//! strings the way shared code can. So `[requires.overrides]` lets a glob
+//! select a different target for the files that need it.
 //!
 //! ```toml
 //! [requires.overrides]
@@ -11,15 +11,15 @@
 //! "legacy/**" = { target = "roblox-instance", indexing_style = "wait_for_child" }
 //! ```
 //!
-//! Patterns match the path relative to `[process].input`, and the first one
-//! that matches wins, so order in the file is the priority order.
+//! Patterns match the path relative to `[process].input`. The first pattern
+//! that matches wins, so the order in the file is the priority order.
 
 use anyhow::{Result, bail};
 use globset::{Glob, GlobMatcher};
 
 use super::requires::{IndexingStyle, Target};
 
-/// One glob and the target it forces
+/// One glob and the target that it forces
 #[derive(Debug)]
 pub struct Override {
     pattern: GlobMatcher,
@@ -27,7 +27,7 @@ pub struct Override {
     pub style: Option<IndexingStyle>,
 }
 
-/// Read the `[requires.overrides]` table, in the order it was written
+/// Read the `[requires.overrides]` table in its written order
 pub fn parse(table: &toml::Value) -> Result<Vec<Override>> {
     let Some(map) = table.as_table() else {
         bail!("[requires.overrides] must be a table of path patterns");
@@ -41,7 +41,7 @@ pub fn parse(table: &toml::Value) -> Result<Vec<Override>> {
             .compile_matcher();
 
         let (target, style) = match value {
-            // the short form, just a target name
+            // The short form: only a target name.
             toml::Value::String(name) => (target_named(name, pattern)?, None),
 
             toml::Value::Table(t) => {
@@ -79,7 +79,7 @@ impl Override {
     }
 }
 
-/// First pattern that matches, so the file's order is the priority order
+/// The first pattern that matches wins, so the order in the file is the priority order
 pub fn lookup<'a>(overrides: &'a [Override], rel: &std::path::Path) -> Option<&'a Override> {
     overrides.iter().find(|o| o.matches(rel))
 }

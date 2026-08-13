@@ -1,4 +1,5 @@
-//! Build profiles, merged over the config before anything is typed
+//! These tests cover build profiles. larvae merges a profile over the config
+//! before it types anything.
 
 use larvae::config::Config;
 use larvae::pipeline;
@@ -58,11 +59,11 @@ fn a_profile_overrides_key_by_key() {
 
     assert!(!out.has_errors(), "{:?}", out.diags);
 
-    // output moved, the define flipped, and the profile's own rule ran
+    // The output moved, the define changed, and the profile's own rule ran.
     let got = read(root, "build/main.luau");
     assert!(got.contains("return false"), "{got}");
     assert!(!got.contains("a comment"), "{got}");
-    // input was never named by the profile so it kept the base value
+    // The profile never named the input, so the input kept the base value.
     assert!(root.join("src/main.luau").exists());
 }
 
@@ -71,7 +72,8 @@ fn the_profile_block_is_inert_without_the_flag() {
     let tmp = project();
     let root = tmp.path();
 
-    // it parses fine and changes nothing, no unknown key error either
+    // The block parses correctly and changes nothing. There is also no
+    // unknown-key error.
     let config = Config::load_or_default(root).unwrap();
 
     assert_eq!(config.process.output, std::path::PathBuf::from("dist"));
@@ -84,7 +86,7 @@ fn an_unknown_profile_lists_the_real_ones() {
         .unwrap_err()
         .to_string();
 
-    // anyhow chains the context, so walk it for the useful part
+    // anyhow chains the context, so the test walks the chain for the useful part.
     let full = format!("{err:#}");
     assert!(full.contains("nope"), "{full}");
 }

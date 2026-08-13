@@ -1,9 +1,9 @@
 /*!
-Lints about names: what is declared, what is used, and what quietly escapes.
+Lints about names: what is declared, what is used, and what silently escapes.
 
-All of these read the resolution done once in [`crate::lint::scope`] rather
-than walking the tree themselves, which is why they are cheap enough to run on
-every keystroke.
+All these lints read the resolution that [`crate::lint::scope`] computes
+once, and they do not walk the tree themselves. For that reason, they are
+cheap enough to run on every keystroke.
 */
 
 use serde::Deserialize;
@@ -34,11 +34,11 @@ lints! {
 #[derive(Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct UnusedOptions {
-    /// Report unused function parameters too
+    /// Report unused function parameters too.
     pub parameters: bool,
-    /// Report unused `for` variables too
+    /// Report unused `for` variables too.
     pub loop_variables: bool,
-    /// Names exempted, as a regular expression
+    /// The names to exempt, as a regular expression.
     pub ignore_pattern: String,
 }
 
@@ -46,12 +46,12 @@ impl Default for UnusedOptions {
     fn default() -> Self {
         Self {
             /*
-            Both off by default, and for the same reason.
+            Both options are off by default, and for the same reason.
 
-            A parameter is part of a signature the caller decides, and a `for k,
-            v` where only `k` is wanted is how the language is written. Neither
-            is a mistake, so reporting them by default would train people to
-            stop reading the linter.
+            A parameter is part of a signature that the caller decides. A
+            `for k, v` where the author wants only `k` is normal Luau.
+            Neither is a mistake. To report them by default would teach
+            users to stop reading the linter.
             */
             parameters: false,
             loop_variables: false,
@@ -65,9 +65,9 @@ impl UnusedVariable {
         let options: UnusedOptions = ctx.cfg.options_for("unused_variable");
 
         /*
-        The default pattern is a prefix, and compiling a regex to test one is
-        several times the cost of the whole rest of this lint. Only a project
-        that changed it pays for the engine.
+        The default pattern is a prefix test. To compile a regex for it
+        costs several times the whole rest of this lint. Thus only a
+        project that changed the pattern pays for the regex engine.
         */
         let ignore = match options.ignore_pattern.as_str() {
             "^_" => None,
@@ -92,7 +92,7 @@ impl UnusedVariable {
                 continue;
             }
 
-            // a method's implicit self has no name token and cannot be removed
+            // A method's implicit self has no name token, so the user cannot remove it.
             if binding.name == "self" && binding.origin == Origin::Param {
                 continue;
             }
@@ -113,9 +113,9 @@ impl UnusedVariable {
             );
 
             /*
-            A binding written but never read is worth saying differently. It
-            usually means the value is being computed and thrown away, which
-            reads as a bug rather than as tidying.
+            A binding that is written but never read needs a different
+            message. It usually means that the code computes a value and
+            discards it, which is a possible bug and not only untidy code.
             */
             let (message, help) = if binding.writes.is_empty() {
                 (
@@ -138,14 +138,16 @@ impl UnusedVariable {
 
 impl Shadowing {
     /*
-    A name declared while another of the same name is still in scope.
+    A name that is declared while another name of the same name is in scope.
 
-    The outer one becomes unreachable for the rest of the inner scope, so a
-    later edit meaning to touch it silently touches the inner one instead.
+    The outer name becomes unreachable for the rest of the inner scope. Thus
+    a later edit that intends to touch the outer name silently touches the
+    inner name instead.
 
-    A binding that immediately re-derives what it hides, `local x = f(x)`, is
-    the deliberate form and is not reported: it reads the outer value on the
-    way in, which is exactly the case where the shadowing is the point.
+    A binding that directly derives from what it hides, `local x = f(x)`, is
+    the intentional form, and the lint does not report it. That form reads
+    the outer value at the declaration, and there the shadowing is the
+    purpose.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         for binding in &ctx.names.bindings {
@@ -157,7 +159,7 @@ impl Shadowing {
                 continue;
             }
 
-            // the implicit self of a method has no name token to point at
+            // The implicit self of a method has no name token to point at.
             if binding.name == "self" && binding.origin == Origin::Param {
                 continue;
             }
@@ -186,11 +188,12 @@ impl Shadowing {
 }
 
 /*
-Whether the outer binding is read inside the declaration that hides it.
+Returns true if the declaration that hides the outer binding also reads it.
 
-`local x = x + 1` reads the outer `x` on its own right hand side, which is the
-deliberate form of shadowing and not worth reporting. `local x = 2` does not,
-and hides a name the rest of the scope can no longer reach.
+`local x = x + 1` reads the outer `x` on its own right side. That is the
+intentional form of shadowing, and the lint does not report it.
+`local x = 2` does not read the outer `x`, and it hides a name that the rest
+of the scope cannot reach.
 */
 fn reads_inside(outer: &crate::lint::scope::Binding<'_>, declaration: TokSpan) -> bool {
     outer
@@ -203,13 +206,15 @@ fn reads_inside(outer: &crate::lint::scope::Binding<'_>, declaration: TokSpan) -
 
 impl UndefinedVariable {
     /*
-    A name nothing in the file declares and no standard library provides.
+    A name that nothing in the file declares and no standard library provides.
 
-    Denied rather than warned, because unlike everything else here this one is
-    not a matter of taste: the name is nil at runtime and the line that touches
-    it will throw. It is the lint most worth having and the one most dependent
-    on the globals list being right, so a project with its own globals should
-    list them under `[lint] globals` rather than turn this off.
+    The default level is deny, not warn. Unlike the other lints here, this
+    is not a matter of taste. The name is nil at runtime, and the line that
+    touches it will throw.
+
+    This lint has the most value, and it depends the most on a correct
+    globals list. Thus a project with its own globals must list them under
+    `[lint] globals` and must not turn this lint off.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         for &token in &ctx.names.undefined {
@@ -239,15 +244,15 @@ impl UnscopedVariables {
     /*
     `counter = 1` with no `local`.
 
-    One missing keyword is the difference between a value this file owns and
-    one every script in the process shares, and nothing about the line says
-    which was meant. Almost always the keyword was forgotten.
+    One missing keyword separates a value that this file owns from a value
+    that every script in the process shares. Nothing on the line says which
+    one the author meant. Almost always, the author forgot the keyword.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         for &token in &ctx.names.global_writes {
             let name = ctx.tok(token);
 
-            // assigning a known global is a deliberate act, not a slip
+            // To assign a known global is an intentional act, not a mistake.
             if globals::has(ctx.cfg.std, name) || ctx.cfg.globals.iter().any(|g| g == name) {
                 continue;
             }
@@ -272,10 +277,10 @@ impl GlobalUsage {
     /*
     `_G.thing`.
 
-    A table shared with every other script in the process, so two of them
-    picking the same key is a collision nothing warns about and nothing
-    isolates. A module returning its values is the same thing without the
-    shared namespace.
+    `_G` is a table that every other script in the process shares. If two
+    scripts pick the same key, they collide, and nothing warns about or
+    isolates the collision. A module that returns its values gives the
+    same result without the shared namespace.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         each_expr(ctx, out, |ctx, e, out| {
@@ -287,7 +292,7 @@ impl GlobalUsage {
                 return;
             }
 
-            // a local named _G is somebody's own table, not the shared one
+            // A local named _G is the author's own table, not the shared one.
             if !ctx.names.is_global(span.start) {
                 return;
             }

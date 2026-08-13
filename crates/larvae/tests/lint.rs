@@ -1,9 +1,9 @@
 /*!
-The lints.
+These tests cover the lints.
 
-Each one gets a case that should fire and at least one that should not, since
-a lint that fires on everything is worse than no lint. The near misses are the
-half worth reading: they are where the rule stops.
+Each lint gets a case that must fire and at least one case that must not fire.
+A lint that fires on everything is worse than no lint. The near-miss cases
+show where each rule stops.
 */
 
 use std::path::Path;
@@ -12,7 +12,7 @@ use larvae::diag::Severity;
 use larvae::lint::config::Level;
 use larvae::lint::{LintConfig, lint};
 
-/// Which lints fired, in source order
+/// This function returns the lints that fired, in source order.
 fn names(src: &str) -> Vec<String> {
     fired(src, &LintConfig::default())
 }
@@ -30,7 +30,7 @@ fn fired(src: &str, cfg: &LintConfig) -> Vec<String> {
         .collect()
 }
 
-/// Whether one named lint fired
+/// This function reports if one named lint fired.
 fn fires(name: &str, src: &str) -> bool {
     names(src).iter().any(|n| n == name)
 }
@@ -167,7 +167,7 @@ fn a_real_swap_is_not_reported() {
     assert!(!fires("almost_swapped", "local tmp = a\na = b\nb = tmp\n"));
 }
 
-/// Two unrelated assignments that happen to be adjacent
+/// These are two unrelated assignments that are adjacent.
 #[test]
 fn assignments_that_are_not_a_swap_are_left_alone() {
     assert!(!fires("almost_swapped", "a = b\nc = d\n"));
@@ -180,7 +180,7 @@ fn compare_nan_catches_the_zero_over_zero_idiom() {
     assert!(fires("compare_nan", "if 0/0 ~= x then end\n"));
 }
 
-/// The correct nan test, which must not be reported
+/// This is the correct nan test, and the lint must not report it.
 #[test]
 fn comparing_a_value_to_itself_is_not_reported() {
     assert!(!fires("compare_nan", "if x ~= x then end\n"));
@@ -212,7 +212,7 @@ fn dividing_by_something_that_might_be_zero_is_not_reported() {
     assert!(!fires("divide_by_zero", "local x = n / d\n"));
 }
 
-/// `0/0` is how nan is written, and compare_nan owns that case
+/// `0/0` is the written form of nan, and compare_nan owns that case.
 #[test]
 fn nan_is_not_also_reported_as_a_division() {
     assert!(!fires("divide_by_zero", "local x = 0/0\n"));
@@ -290,7 +290,7 @@ fn a_countdown_with_a_negative_step_is_correct() {
     ));
 }
 
-/// A limit that is not a literal could be anything
+/// A limit that is not a literal can hold any value.
 #[test]
 fn a_loop_over_computed_bounds_is_not_guessed_at() {
     assert!(!fires(
@@ -334,13 +334,13 @@ fn a_matched_assignment_is_fine() {
     assert!(!fires("unbalanced_assignments", "local a, b = 1, 2\n"));
 }
 
-/// Declaring names to fill in later is normal, not an imbalance
+/// A declaration of names for later values is normal, not an imbalance.
 #[test]
 fn a_declaration_with_no_values_is_not_reported() {
     assert!(!fires("unbalanced_assignments", "local a, b\n"));
 }
 
-/// A call can return any number of values, so the counts need not match
+/// A call can return any number of values, so the counts do not have to match.
 #[test]
 fn a_call_or_vararg_in_last_position_excuses_the_count() {
     assert!(!fires("unbalanced_assignments", "local a, b = f()\n"));
@@ -356,7 +356,7 @@ fn empty_if_catches_an_empty_branch() {
     assert!(fires("empty_if", "if a then x() else end\n"));
 }
 
-/// A branch holding a comment is deliberate, the comment is the content
+/// A branch that holds a comment is intentional. The comment is the content.
 #[test]
 fn a_branch_with_only_a_comment_is_left_alone() {
     assert!(!fires(
@@ -415,7 +415,7 @@ fn multiple_statements_is_off_until_a_project_asks() {
     );
 }
 
-/// The idiom this lint must not report, even when it is on
+/// The lint must not report this pattern, even when the lint is on.
 #[test]
 fn a_one_line_guard_is_not_two_statements() {
     let cfg = with("multiple_statements", Level::Warn);
@@ -441,14 +441,15 @@ fn a_local_that_is_read_is_fine() {
     assert!(!fires("unused_variable", "local x = 1\nprint(x)\n"));
 }
 
-/// The convention for a name deliberately not used
+/// This is the convention for a name that the author intends not to use.
 #[test]
 fn an_underscore_name_is_exempt() {
     assert!(!fires("unused_variable", "local _ = f()\n"));
     assert!(!fires("unused_variable", "local _unused = 1\n"));
 }
 
-/// A signature is the caller's shape, and `for k, v` where only k is wanted is normal
+/// A signature is the caller's shape. A `for k, v` loop that uses only k is
+/// normal.
 #[test]
 fn parameters_and_loop_variables_are_not_reported_by_default() {
     assert!(!fires(
@@ -474,7 +475,8 @@ fn parameters_can_be_asked_for() {
     assert!(fired(src, &cfg).iter().any(|n| n == "unused_variable"));
 }
 
-/// A value computed and thrown away reads as a bug, not as tidying
+/// The code computes a value and never reads it. That reads as a bug, not as
+/// cleanup.
 #[test]
 fn a_variable_written_but_never_read_is_reported_differently() {
     let out = lint(
@@ -518,7 +520,7 @@ fn a_project_can_add_its_own_globals() {
     );
 }
 
-/// A Roblox global should not be defined when the project is plain Luau
+/// A Roblox global must not be defined when the project is plain Luau.
 #[test]
 fn the_std_setting_decides_which_globals_exist() {
     let cfg = LintConfig {
@@ -533,7 +535,7 @@ fn the_std_setting_decides_which_globals_exist() {
     );
 }
 
-/// It is nil at runtime, which is not a matter of taste
+/// The value is nil at run time, and that is not a matter of style.
 #[test]
 fn undefined_variable_is_an_error_rather_than_a_warning() {
     let out = lint(
@@ -567,7 +569,8 @@ fn shadowing_catches_a_hidden_name() {
     ));
 }
 
-/// Re-deriving what you hide is the deliberate form
+/// A binding that computes its value from the name it hides is the
+/// intentional form.
 #[test]
 fn a_binding_that_reads_what_it_hides_is_not_reported() {
     assert!(!fires(
@@ -590,7 +593,7 @@ fn global_usage_catches_reaching_into_the_shared_table() {
     assert!(fires("global_usage", "print(_G.thing)\n"));
 }
 
-/// Somebody's own table named _G is theirs
+/// A user's own table named _G is not the shared table.
 #[test]
 fn a_local_named_underscore_g_is_not_the_shared_one() {
     assert!(!fires("global_usage", "local _G = {}\nprint(_G.thing)\n"));
@@ -618,7 +621,7 @@ fn code_before_the_exit_is_fine() {
     ));
 }
 
-/// An exit inside a branch leaves the enclosing block reachable
+/// An exit inside a branch leaves the enclosing block reachable.
 #[test]
 fn a_conditional_exit_does_not_kill_what_follows() {
     assert!(!fires(
@@ -639,7 +642,8 @@ fn assigning_something_different_is_fine() {
     assert!(!fires("self_assignment", "t.a = t.b\n"));
 }
 
-/// A compound operator does something, and a computed index may not be the same element
+/// A compound operator has an effect. A computed index can point to a
+/// different element.
 #[test]
 fn compound_and_computed_forms_are_left_alone() {
     assert!(!fires("self_assignment", "local x = 1\nx += x\nprint(x)\n"));
@@ -694,7 +698,7 @@ fn a_lookup_hoisted_above_the_loop_is_quiet() {
     ));
 }
 
-/// A call whose argument varies is not invariant
+/// A call with an argument that varies is not invariant.
 #[test]
 fn a_call_with_a_computed_argument_is_not_reported() {
     assert!(!fires(
@@ -703,7 +707,7 @@ fn a_call_with_a_computed_argument_is_not_reported() {
     ));
 }
 
-/// A function body does not run once per iteration
+/// A function body does not run one time per iteration.
 #[test]
 fn a_call_inside_a_callback_is_not_this_loops_work() {
     assert!(!fires(
@@ -743,7 +747,7 @@ fn a_malformed_hex_or_unicode_escape_is_caught() {
     assert!(fires("bad_string_escape", r#"local s = "\u41""#));
 }
 
-/// A long string's content is literal, there is nothing to escape
+/// A long string's content is literal, so there is nothing to escape.
 #[test]
 fn a_long_string_is_not_scanned_for_escapes() {
     assert!(!fires("bad_string_escape", "local s = [[C:\\path\\to]]"));
@@ -764,14 +768,15 @@ fn using_the_result_is_the_whole_point_and_is_quiet() {
     ));
 }
 
-/// A call with side effects is not on the list and must not be guessed at
+/// A call with side effects is not on the list, so the lint must not guess
+/// about it.
 #[test]
 fn a_call_that_might_do_something_is_left_alone() {
     assert!(!fires("must_use", "table.insert(t, 1)\n"));
     assert!(!fires("must_use", "print('hi')\n"));
 }
 
-/// A local named string is somebody's own table
+/// A local named string is the user's own table.
 #[test]
 fn a_shadowed_standard_table_is_not_assumed_to_be_the_real_one() {
     assert!(!fires(
@@ -891,9 +896,9 @@ fn mismatched_arg_count_catches_too_many_arguments() {
 }
 
 /*
-Passing fewer arguments than a function declares is legal and idiomatic Lua,
-so it is only reported when every parameter carries a type and none of them is
-optional, which is the author saying all of them are required.
+A call with fewer arguments than the function declares is legal and usual Lua.
+Thus the lint reports it only when every parameter has a type and no parameter
+is optional. That combination shows the author requires all parameters.
 */
 #[test]
 fn too_few_arguments_is_reported_only_when_every_parameter_is_required() {
@@ -908,7 +913,7 @@ fn too_few_arguments_is_reported_only_when_every_parameter_is_required() {
     ));
 }
 
-/// An optional parameter says outright that it may be left off
+/// An optional parameter states that the caller can omit it.
 #[test]
 fn an_optional_parameter_may_be_omitted() {
     assert!(!fires(
@@ -925,7 +930,7 @@ fn a_call_with_the_right_count_is_fine() {
     ));
 }
 
-/// A vararg takes anything past the named parameters
+/// A vararg accepts any arguments after the named parameters.
 #[test]
 fn a_vararg_function_is_not_checked() {
     assert!(!fires(
@@ -934,7 +939,7 @@ fn a_vararg_function_is_not_checked() {
     ));
 }
 
-/// A spread in last position can supply any number of values
+/// A spread in the last position can supply any number of values.
 #[test]
 fn a_call_forwarding_a_call_is_not_counted() {
     assert!(!fires(
@@ -943,7 +948,8 @@ fn a_call_forwarding_a_call_is_not_counted() {
     ));
 }
 
-/// A binding reassigned later may hold a different function by the call site
+/// A binding with a later reassignment can hold a different function at the
+/// call site.
 #[test]
 fn a_reassigned_function_is_not_checked() {
     assert!(!fires(
@@ -1010,7 +1016,7 @@ fn a_udim2_using_both_halves_is_left_alone() {
     ));
 }
 
-/// All zeros is UDim2.new(), which needs no advice
+/// An all-zero value equals UDim2.new(), so the lint gives no advice.
 #[test]
 fn an_all_zero_udim2_is_not_reported() {
     assert!(!fires(
@@ -1019,7 +1025,7 @@ fn an_all_zero_udim2_is_not_reported() {
     ));
 }
 
-/// These names mean nothing outside Roblox
+/// These names have no meaning outside Roblox.
 #[test]
 fn the_roblox_lints_are_silent_under_plain_luau() {
     let mut cfg = LintConfig {
@@ -1038,7 +1044,8 @@ fn the_roblox_lints_are_silent_under_plain_luau() {
 
 // --- regressions found by review -------------------------------------------
 
-/// A global the file itself defines is defined, which is how Roblox scripts are written
+/// A global that the file itself defines is defined. Roblox scripts use this
+/// pattern.
 #[test]
 fn a_global_declared_in_this_file_is_not_undefined() {
     assert!(!fires(
@@ -1052,7 +1059,8 @@ fn a_global_declared_in_this_file_is_not_undefined() {
     ));
 }
 
-/// Reading it before the line that sets it is still not this lint's complaint
+/// A read before the line that sets the global is still not this lint's
+/// concern.
 #[test]
 fn a_forward_reference_to_a_file_global_is_allowed() {
     assert!(!fires(
@@ -1077,7 +1085,7 @@ fn a_local_used_only_from_a_type_is_not_unused() {
     ));
 }
 
-/// It has no name token and cannot be removed
+/// The implicit self has no name token, so the user cannot remove it.
 #[test]
 fn the_implicit_self_of_a_method_is_never_reported_unused() {
     let cfg = opts("unused_variable", "parameters = true");
@@ -1086,7 +1094,8 @@ fn the_implicit_self_of_a_method_is_never_reported_unused() {
     assert!(!out.iter().any(|n| n == "unused_variable"), "{out:?}");
 }
 
-/// A field write lands somewhere different each iteration, so it is linear
+/// A field write goes to a different place on each iteration, so the cost is
+/// linear.
 #[test]
 fn a_per_iteration_field_write_is_not_an_accumulator() {
     assert!(!fires(
@@ -1095,7 +1104,7 @@ fn a_per_iteration_field_write_is_not_an_accumulator() {
     ));
 }
 
-/// A string declared inside the body starts empty every time around
+/// A string declared inside the body starts empty on each iteration.
 #[test]
 fn a_string_built_within_one_iteration_is_not_an_accumulator() {
     assert!(!fires(
@@ -1104,7 +1113,7 @@ fn a_string_built_within_one_iteration_is_not_an_accumulator() {
     ));
 }
 
-/// Guarding the append behind a condition is the shape this appears in most
+/// An append behind a condition is the most frequent shape of this problem.
 #[test]
 fn an_accumulate_inside_a_branch_is_still_found() {
     assert!(fires(
@@ -1113,7 +1122,7 @@ fn an_accumulate_inside_a_branch_is_still_found() {
     ));
 }
 
-/// table.clone would discard whatever the destination already held
+/// table.clone would discard the data that the destination already held.
 #[test]
 fn a_merge_into_an_existing_table_is_not_a_clone() {
     assert!(!fires(
@@ -1130,7 +1139,8 @@ fn a_copy_into_a_table_declared_empty_just_above_is_a_clone() {
     ));
 }
 
-/// A step it cannot evaluate has to suppress the report, not permit it
+/// When the lint cannot evaluate the step, it must suppress the report, not
+/// permit it.
 #[test]
 fn a_countdown_with_a_step_it_cannot_read_is_not_reported() {
     assert!(!fires(
@@ -1139,7 +1149,7 @@ fn a_countdown_with_a_step_it_cannot_read_is_not_reported() {
     ));
 }
 
-/// `Queue:remove(1)` is somebody's own collection, not a deprecated Instance
+/// `Queue:remove(1)` is the user's own collection, not a deprecated Instance.
 #[test]
 fn a_lowercase_remove_on_an_unknown_receiver_is_not_deprecated() {
     assert!(!fires("deprecated", "local q = Queue.new()\nq:remove(1)\n"));
@@ -1151,7 +1161,7 @@ fn the_legacy_roblox_casing_is_still_reported() {
     assert!(fires("deprecated", "local c = part:children()\nprint(c)\n"));
 }
 
-/// These names mean nothing outside Roblox
+/// These names have no meaning outside Roblox.
 #[test]
 fn deprecated_methods_are_silent_under_plain_luau() {
     let cfg = LintConfig {

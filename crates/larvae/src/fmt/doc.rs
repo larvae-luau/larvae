@@ -1,51 +1,52 @@
 /*!
 The layout document, and the renderer that turns it into text.
 
-Formatting is two problems, and they are much easier apart than together. This
-half decides only *where the line breaks go*: the emitter builds a tree of
-groups, and a group either fits on the rest of the line and is printed flat, or
-does not and is printed broken. Nothing here knows what Luau is.
+Formatting is two problems. They are easier to solve apart than together. This
+module decides only where the line breaks go. The emitter builds a tree of
+groups. A group that fits on the rest of the line is printed flat. A group
+that does not fit is printed broken. No code in this module knows what Luau is.
 
-The algorithm is the Wadler one every modern formatter uses, which is worth
-saying because it is the reason output is stable: a group's decision depends
-only on its own width and the column it starts at, never on what a previous
-group chose to do.
+The algorithm is the Wadler algorithm that every modern formatter uses. This
+algorithm is the reason the output is stable. The decision for a group depends
+only on the width of the group and the column where it starts. The decision
+never depends on what a previous group chose.
 
-Text borrows from the source wherever possible, so formatting a file allocates
-roughly one `Vec` per nesting level rather than a string per token.
+Text borrows from the source where possible. Because of this, the renderer
+allocates roughly one `Vec` per nesting level, not a string per token.
 */
 
 use std::borrow::Cow;
 
-/// One piece of layout
+/// One piece of the layout.
 #[derive(Debug, Clone)]
 pub enum Doc<'a> {
-    /// Nothing at all, the identity for concatenation
+    /// An empty document. It is the identity for concatenation.
     Nil,
-    /// Literal text, usually a slice of the source
+    /// Literal text, usually a slice of the source.
     Text(Cow<'a, str>),
-    /// A space when flat, a newline when broken
+    /// A space when flat, a newline when broken.
     Line,
-    /// Nothing when flat, a newline when broken
+    /// Nothing when flat, a newline when broken.
     Soft,
-    /// A newline either way, which also forces every enclosing group to break
+    /// A newline in both modes. It also forces each enclosing group to break.
     Hard,
-    /// A blank line the author wrote, kept because it separates ideas
+    /// A blank line that the author wrote. Larvae keeps it because it separates ideas.
     Blank,
     /*
-    One thing when the enclosing group is flat, another when it is broken.
+    The renderer prints one document when the enclosing group is flat, and the
+    other when it is broken.
 
-    The trailing comma on a table exists for this: it must be absent on one
-    line and present on many, and deciding which without knowing the group's
-    outcome is what makes a formatter emit output it will not reproduce when
-    given its own output back.
+    The trailing comma on a table is the reason this variant exists. The comma
+    must be absent on one line and present on many lines. A formatter that
+    decides this without the outcome of the group emits output that it does
+    not reproduce when it formats its own output again.
     */
     IfBreak(Box<Doc<'a>>, Box<Doc<'a>>),
-    /// Flat if it fits, broken if it does not
+    /// The renderer prints this flat if it fits, and broken if it does not fit.
     Group(Box<Doc<'a>>),
-    /// One more level of indentation for anything inside
+    /// One more level of indentation for the content inside.
     Indent(Box<Doc<'a>>),
-    /// In order
+    /// A sequence of documents, printed in order.
     Concat(Vec<Doc<'a>>),
 }
 
@@ -62,7 +63,7 @@ impl<'a> Doc<'a> {
         Self::Indent(Box::new(inner))
     }
 
-    /// `broken` only when the enclosing group breaks, `flat` otherwise
+    /// Prints `broken` only when the enclosing group breaks, and `flat` otherwise.
     pub fn if_break(flat: Doc<'a>, broken: Doc<'a>) -> Self {
         Self::IfBreak(Box::new(flat), Box::new(broken))
     }
@@ -79,7 +80,7 @@ impl<'a> Doc<'a> {
         }
     }
 
-    /// `parts` separated by `sep`, which is the shape most lists take
+    /// Joins `parts` with `sep` between them. Most lists have this shape.
     pub fn join(sep: Doc<'a>, parts: impl IntoIterator<Item = Doc<'a>>) -> Self {
         let mut out = Vec::new();
 
@@ -98,8 +99,8 @@ impl<'a> Doc<'a> {
         matches!(self, Self::Nil)
     }
 
-    /// The same document with every borrow bought out, for a document that
-    /// has to outlive the source and token buffers it was emitted from
+    /// Returns the same document with each borrow copied to owned data.
+    /// Use this when the document must outlive the source and token buffers.
     pub fn into_owned(self) -> Doc<'static> {
         match self {
             Self::Nil => Doc::Nil,
@@ -127,22 +128,22 @@ impl<'a> Doc<'a> {
     }
 
     /*
-    Whether anything inside forces a break.
+    Reports if content inside this document forces a break.
 
-    A hard newline or a blank line cannot be printed flat, so every group
-    containing one is broken before its width is even considered. This is what
-    makes a function body with statements in it always expand.
+    The renderer cannot print a hard newline or a blank line flat. So each
+    group that contains one breaks before the renderer considers its width.
+    This rule is the reason a function body with statements always expands.
     */
     fn must_break(&self) -> bool {
         match self {
             Self::Hard | Self::Blank => true,
 
-            // a long comment spanning lines cannot sit on a flat line
+            // A long comment that spans lines cannot sit on a flat line.
             Self::Text(s) => s.contains('\n'),
 
             Self::Group(inner) | Self::Indent(inner) => inner.must_break(),
 
-            // only the flat side can rule flat out, the broken side never runs flat
+            // Only the flat side can exclude flat mode. The broken side never runs flat.
             Self::IfBreak(flat, _) => flat.must_break(),
 
             Self::Concat(parts) => parts.iter().any(Self::must_break),
@@ -152,29 +153,30 @@ impl<'a> Doc<'a> {
     }
 }
 
-/// How the renderer lays text out
+/// Controls how the renderer lays text out.
 #[derive(Debug, Clone, Copy)]
 pub struct Style {
-    /// The column to aim to stay under, a guide rather than a hard limit
+    /// The column that the renderer tries to stay under. It is a guide, not a hard limit.
     pub width: usize,
-    /// One level of indentation, already expanded to the characters to emit
+    /// One level of indentation, already expanded to the characters to emit.
     pub indent: Indent,
-    /// What ends a line
+    /// The characters that end a line.
     pub newline: &'static str,
 }
 
-/// A single indentation level
+/// A single indentation level.
 #[derive(Debug, Clone, Copy)]
 pub enum Indent {
     Tabs {
-        /// Only for width accounting, a tab emits one character
+        /// The width is only for width accounting. A tab emits one character.
         width: usize,
     },
     Spaces(usize),
 }
 
 impl Indent {
-    /// Characters this level occupies on screen, for the fits calculation
+    /// Returns the number of columns this level occupies on screen.
+    /// The fits calculation uses this number.
     fn columns(self) -> usize {
         match self {
             Self::Tabs { width } => width,
@@ -208,7 +210,7 @@ enum Mode {
     Broken,
 }
 
-/// Render a document to text
+/// Renders a document to text.
 pub fn render(doc: &Doc<'_>, style: Style) -> String {
     let mut out = String::with_capacity(256);
     let mut column = 0usize;
@@ -222,10 +224,10 @@ pub fn render(doc: &Doc<'_>, style: Style) -> String {
                 out.push_str(s);
 
                 /*
-                A long comment carries its own newlines and is emitted exactly
-                as the author wrote it, since re-indenting its inner lines
-                would change what the comment says. The column continues from
-                its last line rather than from its total width.
+                A long comment carries its own newlines. The renderer emits it
+                exactly as the author wrote it, because new indentation on its
+                inner lines would change what the comment says. The column
+                continues from its last line, not from its total width.
                 */
                 column = match s.rsplit_once('\n') {
                     Some((_, last)) => width_of(last),
@@ -246,9 +248,10 @@ pub fn render(doc: &Doc<'_>, style: Style) -> String {
             }
 
             /*
-            A blank line is one break more than a hard one, so it stands in
-            for the separator rather than being added to it. Emitting both
-            would give two blank lines where the author left one.
+            A blank line is one break more than a hard one. So it replaces the
+            separator instead of an addition to it. If the renderer emitted
+            both, the output would have two blank lines where the author left
+            one.
             */
             Doc::Blank => {
                 trim_end(&mut out);
@@ -275,9 +278,9 @@ pub fn render(doc: &Doc<'_>, style: Style) -> String {
 
             Doc::Group(inner) => {
                 /*
-                The one decision this whole file exists to make. A group is
-                flat when it has no forced break and what remains of it fits in
-                the columns left on this line.
+                This is the one decision this file exists to make. A group is
+                flat when it has no forced break and its remaining content fits
+                in the columns left on this line.
                 */
                 let mode = if !inner.must_break() && fits(inner, style, column) {
                     Mode::Flat
@@ -293,7 +296,7 @@ pub fn render(doc: &Doc<'_>, style: Style) -> String {
     out
 }
 
-/// No trailing whitespace, ever, so every break trims what comes before it
+/// The output must never have trailing whitespace. So each break trims the text before it.
 fn trim_end(out: &mut String) {
     while out.ends_with(' ') || out.ends_with('\t') {
         out.pop();
@@ -312,11 +315,12 @@ fn newline(out: &mut String, style: Style, depth: usize, column: &mut usize) {
 }
 
 /*
-Whether a document printed flat still lands inside the width.
+Reports if a document printed flat stays inside the width.
 
-Measured from `column`, so the same group can be flat in one place and broken
-in another, which is the behaviour people expect from a formatter and the
-reason a naive "is this node short" check produces bad output.
+The function measures from `column`. So the same group can be flat in one
+place and broken in another place. Users expect this behavior from a
+formatter. A simple check of only the node length produces bad output for
+this reason.
 */
 fn fits(doc: &Doc<'_>, style: Style, column: usize) -> bool {
     let mut remaining = style.width.saturating_sub(column);
@@ -348,10 +352,10 @@ fn fits(doc: &Doc<'_>, style: Style, column: usize) -> bool {
                 remaining -= 1;
             }
 
-            // a forced break means the flat question is already answered
+            // A forced break already answers the flat question.
             Doc::Hard | Doc::Blank => return false,
 
-            // measuring flat, so only the flat side is ever reached
+            // The function measures flat mode, so it only reaches the flat side.
             Doc::IfBreak(flat, _) => stack.push(flat),
 
             Doc::Group(inner) | Doc::Indent(inner) => stack.push(inner),
@@ -368,12 +372,12 @@ fn fits(doc: &Doc<'_>, style: Style, column: usize) -> bool {
 }
 
 /*
-Display width of a string.
+Returns the display width of a string.
 
-Counting bytes would break every file with a non-ASCII string literal in it,
-and counting `char`s is close enough without pulling in a full grapheme table:
-the cases it gets wrong, wide CJK and combining marks, cost a column or two in
-a comment rather than producing wrong code.
+A byte count would break each file that has a non-ASCII string literal. A
+`char` count is close enough and does not need a full grapheme table. The
+cases it gets wrong are wide CJK characters and combining marks. Those cases
+cost one or two columns in a comment. They do not produce wrong code.
 */
 fn width_of(s: &str) -> usize {
     s.chars().count()
@@ -418,7 +422,7 @@ mod tests {
         assert_eq!(render(&doc, narrow(10)), "f(\n  aaaa,\n  bbbb\n)");
     }
 
-    /// The decision is per group, so an outer break does not force an inner one
+    /// The renderer decides per group. An outer break does not force an inner break.
     #[test]
     fn an_inner_group_stays_flat_when_it_can() {
         let doc = call(
@@ -465,7 +469,7 @@ mod tests {
         assert_eq!(render(&doc, narrow(80)), "a\n\nb");
     }
 
-    /// Trailing whitespace is the most common formatter complaint, so never emit it
+    /// Trailing whitespace is the most common formatter complaint. The renderer never emits it.
     #[test]
     fn no_line_ever_ends_in_whitespace() {
         let doc = Doc::concat([
@@ -509,7 +513,7 @@ mod tests {
         assert_eq!(render(&doc, style), "a\r\nb");
     }
 
-    /// Width is measured in characters, so a non-ASCII literal does not break early
+    /// The renderer measures width in characters. So a non-ASCII literal does not break early.
     #[test]
     fn width_counts_characters_and_not_bytes() {
         assert_eq!(width_of("héllo"), 5);

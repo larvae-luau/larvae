@@ -1,13 +1,13 @@
 /*!
 `larvae lint`.
 
-Shaped like `larvae fmt` on purpose: the same path handling, the same default
-target, the same parallel walk. Someone who has run one should not have to
-learn the other.
+The command has the same shape as `larvae fmt` by design: the same path
+handling, the same default target, the same parallel walk. A user who ran one
+command does not have to learn the other.
 
-The exit code is the part worth stating. A warning reports and exits zero, an
-error exits one, so a project decides what fails CI by setting levels rather
-than by choosing a different command.
+The exit code is important. A warning reports and exits zero. An error exits
+one. So a project decides what fails CI with severity levels and not with a
+different command.
 */
 
 use std::io::Read;
@@ -37,7 +37,7 @@ pub fn run(
 
     let cfg = discover(root, config.clone())?;
 
-    // stdin has no filepath to route to a worm by, so it stays Luau only
+    // Stdin has no file path that routes to a worm, so stdin lints only Luau.
     if stdin {
         return from_stdin(&cfg);
     }
@@ -70,13 +70,13 @@ pub fn run(
 }
 
 /*
-One file's diagnostics, by whoever owns its extension.
+The diagnostics of one file, from the owner of its extension.
 
-A claimed file is linted by its worm when the worm declares lints, and skipped
-quietly otherwise: the walk only turns claimed files up for lint-capable
-worms, so reaching the quiet arm means the file was named, and naming a file
-at a linter with nothing to say about it is not an error the way naming one
-at a formatter is — there is simply nothing to report.
+The worm lints a claimed file when the worm declares lints. Otherwise the
+function skips the file without a message. The walk returns claimed files
+only for worms that lint, so only a named file reaches the quiet arm. A named
+file that a linter cannot check is not an error, unlike the same case in the
+formatter. The linter simply has nothing to report.
 */
 fn one(path: &Path, src: &str, cfg: &LintConfig, pool: &Pool) -> Result<Vec<Diag>, Diag> {
     let Some(index) = pool.frontend_for(path) else {
@@ -108,7 +108,7 @@ fn discover(root: &Path, config: Option<PathBuf>) -> Result<LintConfig> {
     LintConfig::discover(root, larvae.as_ref())
 }
 
-/// One file over the pipes, which is how an editor asks
+/// One file over stdin and stdout; an editor uses this path
 fn from_stdin(cfg: &LintConfig) -> Result<ExitCode> {
     let mut src = String::new();
     std::io::stdin()
@@ -126,7 +126,7 @@ fn from_stdin(cfg: &LintConfig) -> Result<ExitCode> {
     report(&diags, 1)
 }
 
-/// `--explain <name>`, so a finding can be looked up without leaving the terminal
+/// `--explain <name>` shows the details of a finding in the terminal
 fn explain_lint(name: &str) -> Result<ExitCode> {
     if let Some(found) = crate::lint::find(name) {
         println!("{}\n  {}", found.name(), found.about());
@@ -138,7 +138,7 @@ fn explain_lint(name: &str) -> Result<ExitCode> {
     ui::print_error(&format!("no lint called {name}"));
     println!("\navailable lints:");
 
-    // sorted for looking one up, and sized so the second column stays a column
+    // The list is sorted for lookup, and the width keeps the second column aligned.
     let mut all: Vec<_> = registry().iter().collect();
     all.sort_by_key(|l| l.name());
 
@@ -163,12 +163,12 @@ fn report(diags: &[Diag], scanned: usize) -> Result<ExitCode> {
     let color = ui::want_color();
 
     /*
-    Rendered into one buffer and written once.
+    The report renders into one buffer, and one write sends it.
 
-    A `println!` per diagnostic takes the stdout lock each time, and a run over
-    a large project produces thousands of them. Measured on a 367 file corpus
-    producing 3952 diagnostics: 74ms to 44ms, for a change that touches only
-    how the text reaches the terminal.
+    A `println!` for each diagnostic takes the stdout lock each time. A run
+    over a large project produces thousands of diagnostics. A measurement on a
+    367 file corpus with 3952 diagnostics went from 74ms to 44ms. The change
+    affects only how the text reaches the terminal.
     */
     let mut buffer = String::with_capacity(diags.len() * 128);
 
@@ -183,7 +183,7 @@ fn report(diags: &[Diag], scanned: usize) -> Result<ExitCode> {
         let stdout = std::io::stdout();
         let mut out = stdout.lock();
 
-        // a closed pipe, `larvae lint | head`, is an ordinary end and not a failure
+        // A closed pipe, for example `larvae lint | head`, is a normal end and not a failure.
         if let Err(e) = out.write_all(buffer.as_bytes())
             && e.kind() != std::io::ErrorKind::BrokenPipe
         {
@@ -208,8 +208,8 @@ fn report(diags: &[Diag], scanned: usize) -> Result<ExitCode> {
 
     /*
     Only an error fails the run. A project that wants a warning to fail CI
-    raises it to deny in its config, which keeps the decision in one place
-    rather than splitting it between the config and the command line.
+    raises the warning to deny in its config. This keeps the decision in one
+    place and does not split it between the config and the command line.
     */
     match errors {
         0 => Ok(ExitCode::SUCCESS),

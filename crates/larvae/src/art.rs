@@ -1,18 +1,20 @@
-//! Logo art and its brand gradient, regenerate from assets/larvae.png with ImageMagick if the logo changes
+//! The logo art and its brand gradient. Regenerate the art from
+//! assets/larvae.png with ImageMagick when the logo changes.
 
 use crate::ui::{BRAND, RESET, fg};
 
-/// The full-size logo with the brand gradient (see [`render_gradient`])
+/// The full size logo with the brand gradient. See [`render_gradient`].
 pub fn logo(color: bool) -> String {
     render_gradient(LOGO, color)
 }
 
-/// The compact logo used for the fastfetch style side by side help layout
+/// The compact logo for the fastfetch style side by side help layout
 pub fn logo_small(color: bool) -> String {
     render_gradient(LOGO_SMALL, color)
 }
 
-/// Gradient row color, pale mint down through brand to deep green
+/// The color of one gradient row. The ramp goes from pale mint, through
+/// the brand color, to deep green.
 pub fn row_color(row: usize, rows: usize) -> (u8, u8, u8) {
     const TOP: (u8, u8, u8) = (0xDE, 0xFF, 0xF0); // near white mint
     const BOTTOM: (u8, u8, u8) = (0x0F, 0x9E, 0x6D); // deep green, matches ui::DEEP_FG
@@ -41,7 +43,8 @@ pub fn row_color(row: usize, rows: usize) -> (u8, u8, u8) {
     }
 }
 
-/// Paint art with the gradient, denser ramp chars glow brighter, plain when color is off
+/// Paint the art with the gradient. A denser ramp character is brighter.
+/// The output is plain text when color is off.
 fn render_gradient(art: &str, color: bool) -> String {
     let art = art.trim_matches('\n');
 
@@ -49,7 +52,7 @@ fn render_gradient(art: &str, color: bool) -> String {
         return art.to_owned();
     }
 
-    // Density shading, brighter for denser ramp characters
+    // Density shading. A denser ramp character gets a brighter color.
     fn density(c: char) -> Option<u16> {
         match c {
             '.' => Some(45),
@@ -101,7 +104,7 @@ fn render_gradient(art: &str, color: bool) -> String {
         out.push('\n');
     }
 
-    // The art has no trailing newline, drop the one we just added
+    // The art has no final newline, so remove the newline added above.
     out.pop();
 
     out

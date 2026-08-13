@@ -1,10 +1,10 @@
 /*!
 Worms, the extensions named under `[worms]` in `larvae.toml`.
 
-A worm ships as a release zip holding a [`Manifest`] and one artifact, which is
-either Luau source or a `wasm32` module. Both forms answer the same contract, so
-everything above this module is written once and neither the pipeline nor the
-config layer knows which form it is talking to.
+A worm ships as a release zip that holds a [`Manifest`] and one artifact. The
+artifact is Luau source or a `wasm32` module. Both forms follow the same
+contract. Thus the code above this module is written once, and the pipeline
+and the config layer do not know which form they speak to.
 */
 
 pub mod ctx;
@@ -26,10 +26,10 @@ pub use host::{Outcome, WasmWorm};
 pub use luau::LuauWorm;
 pub use manifest::{Form, Frontend, Manifest, RequireOwner, RuleDecl};
 
-/// The ABI revision this host speaks, matching `api` in a worm's `worm.toml`
+/// The ABI revision this host speaks. It must match `api` in the `worm.toml` of a worm.
 pub const ABI_VERSION: u32 = 1;
 
-/// The manifest filename inside a worm's zip
+/// The manifest filename inside the zip of a worm
 pub const MANIFEST: &str = "worm.toml";
 
 /// A loaded worm of either form
@@ -39,27 +39,27 @@ enum Backend {
     Native(Box<native::NativeWorm>),
 }
 
-/// A worm, loaded and ready to be called once per file
+/// A worm, loaded and ready for one call per file
 pub struct Worm {
-    /// What the worm declared about itself
+    /// The declarations the worm made about itself
     pub manifest: Manifest,
     backend: Backend,
 }
 
 impl Worm {
-    /// Build a worm from a manifest and its artifact bytes, which is what a
-    /// worker does when it needs its own instance
+    /// Build a worm from a manifest and its artifact bytes. A worker does
+    /// this when it needs its own instance.
     pub fn from_parts(manifest: Manifest, artifact: &[u8]) -> Result<Self> {
         Self::build(manifest, artifact, None)
     }
 
     /*
-    Build a worm, given where it was unpacked when that matters.
+    Build a worm, with the unpack directory when the form needs it.
 
-    Only the native form needs the directory: the other two are handed their
-    bytes and run them in process, while a subprocess has to be a file the
+    Only the native form needs the directory. The other two forms get their
+    bytes and run them in process, while a subprocess must be a file that the
     operating system can execute. A caller with no directory can still build
-    the other two, which is what keeps `from_parts` usable.
+    the other two forms. This keeps `from_parts` usable.
     */
     pub fn build(manifest: Manifest, artifact: &[u8], dir: Option<&Path>) -> Result<Self> {
         let backend = match manifest.form {
@@ -90,7 +90,7 @@ impl Worm {
         Ok(Self { manifest, backend })
     }
 
-    /// Load a worm from an unpacked directory holding `worm.toml` and its artifact
+    /// Load a worm from an unpacked directory that holds `worm.toml` and its artifact
     pub fn load(dir: &Path) -> Result<Self> {
         let path = dir.join(MANIFEST);
         let text = std::fs::read_to_string(&path)
@@ -106,7 +106,7 @@ impl Worm {
         Self::build(manifest, &artifact, Some(dir))
     }
 
-    /// Read a worm's manifest and artifact without instantiating either
+    /// Read the manifest and artifact of a worm, without an instance of either
     pub fn read_parts(dir: &Path) -> Result<(Manifest, Vec<u8>)> {
         let path = dir.join(MANIFEST);
         let text = std::fs::read_to_string(&path)
@@ -122,7 +122,7 @@ impl Worm {
         Ok((manifest, artifact))
     }
 
-    /// Hand settings over once, before any file is seen
+    /// Give the settings to the worm once, before the worm sees a file
     pub fn init(
         &mut self,
         config: &toml::Value,
@@ -133,12 +133,12 @@ impl Worm {
 
             Backend::Wasm(worm) => worm.init(&toml_text(config), &toml_text_map(rules)),
 
-            // same text as wasm gets, since neither can be handed a table
+            // the same text as the wasm form gets, because neither form can take a table
             Backend::Native(worm) => worm.init(&toml_text(config), &toml_text_map(rules)),
         }
     }
 
-    /// Run one of the worm's rules over the nodes its filter matched
+    /// Run one rule of the worm over the nodes that its filter matched
     pub fn run_rule(
         &mut self,
         rule: &str,
@@ -152,12 +152,12 @@ impl Worm {
             Backend::Wasm(worm) => worm.run_rule(index, file, matched),
 
             /*
-            Not built, and deliberately not faked.
+            This is not built, and by intent it is not simulated.
 
-            The rule protocol crosses once per node, which is the shape this
-            form exists to get away from: 120 crossings a file over a pipe
-            would be slower than the wasm path it is meant to beat. Rules for
-            a native worm land with the batched protocol, not before it.
+            The rule protocol crosses once per node. The native form exists to
+            avoid that shape: 120 crossings per file over a pipe would be
+            slower than the wasm path this form must beat. Rules for a native
+            worm arrive with the batched protocol, not before it.
             */
             Backend::Native(_) => {
                 let _ = (rule, index, file, matched);
@@ -170,12 +170,12 @@ impl Worm {
         }
     }
 
-    /// The worm's name, which is also its key under `[worms]` and `[config]`
+    /// The name of the worm, which is also its key under `[worms]` and `[config]`
     pub fn name(&self) -> &str {
         &self.manifest.name
     }
 
-    /// Whether this worm claims `path`'s extension as a front-end
+    /// Report if this worm claims the extension of `path` as a front-end
     pub fn claims(&self, path: &Path) -> bool {
         let Some(frontend) = &self.manifest.frontend else {
             return false;
@@ -191,7 +191,7 @@ impl Worm {
             .any(|claim| claim.strip_prefix('.').is_some_and(|c| c == ext))
     }
 
-    /// Run the worm's front-end over one file, with `[worms.<name>.config]` as TOML
+    /// Run the front-end of the worm over one file, with `[worms.<name>.config]` as TOML
     pub fn transform(&mut self, source: &str, config: &str) -> Result<Outcome> {
         match &mut self.backend {
             Backend::Luau(worm) => worm.transform(source, config),
@@ -199,9 +199,9 @@ impl Worm {
             Backend::Wasm(worm) => worm.transform(source, config),
 
             /*
-            A native worm reports failure in its reply rather than by trapping,
-            so a message that arrives at all arrived intact and is output.
-            Anything that went wrong came back as an error from the call.
+            A native worm reports a failure in its reply and does not trap.
+            Thus a message that arrives is intact and is output. Each problem
+            comes back as an error from the call.
             */
             Backend::Native(worm) => worm
                 .transform(source)
@@ -210,15 +210,15 @@ impl Worm {
         .with_context(|| format!("worm `{}`", self.manifest.name))
     }
 
-    /// Lay one claimed file out, for the host to render in the project style
+    /// Format one claimed file, for the host to render in the project style
     pub fn format(&mut self, source: &str) -> Result<proto::FormatReply> {
         match &mut self.backend {
             Backend::Native(worm) => worm.format(source),
 
             /*
-            The payload types are transport independent, so these arms are
-            waiting on guest-side work rather than a redesign: a wasm export
-            returning the reply as JSON bytes, and a Luau table contract.
+            The payload types do not depend on the transport. Thus these arms
+            wait on guest-side work and not on a redesign: a wasm export that
+            returns the reply as JSON bytes, and a Luau table contract.
             */
             Backend::Luau(_) | Backend::Wasm(_) => bail!(
                 "worm `{}` is {}, which cannot format yet — only native worms format for now",
@@ -229,7 +229,7 @@ impl Worm {
         .with_context(|| format!("worm `{}`", self.manifest.name))
     }
 
-    /// Report one claimed file's problems, severity left to the host
+    /// Report the problems of one claimed file. The host decides the severity.
     pub fn lint(&mut self, source: &str) -> Result<proto::LintReply> {
         match &mut self.backend {
             Backend::Native(worm) => worm.lint(source),
@@ -245,9 +245,10 @@ impl Worm {
 }
 
 /*
-Settings cross to a wasm worm as TOML text, since that is what its ABI takes.
-A Luau worm gets real tables instead, which is why this only appears on one
-side. We build toml without its serializer, so scalars are written by hand.
+Settings cross to a wasm worm as TOML text, because the ABI of that form takes
+text. A Luau worm gets real tables instead. For this reason the function
+appears on one side only. Larvae builds toml without its serializer, so this
+code writes the scalars by hand.
 */
 pub fn toml_text(value: &toml::Value) -> String {
     match value.as_table() {
@@ -260,7 +261,7 @@ pub fn toml_text(value: &toml::Value) -> String {
     }
 }
 
-/// The same, for the resolved rule map
+/// The same conversion, for the resolved rule map
 pub fn toml_text_map(rules: &std::collections::BTreeMap<String, toml::Value>) -> String {
     rules
         .iter()
@@ -300,7 +301,7 @@ mod tests {
         std::fs::write(dir.join(name), body).unwrap();
     }
 
-    /// The same contract, reached through the form that needs no toolchain
+    /// The same contract, through the form that needs no toolchain
     fn luau_worm(dir: &Path) {
         write(
             dir,

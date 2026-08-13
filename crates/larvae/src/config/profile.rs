@@ -1,14 +1,14 @@
 /*!
 Build profiles
 
-`[profile.release]` holds the same keys the root does, and picking one with
-`--profile release` merges it over the base before anything is typed. Doing
-it on the raw toml is what lets a profile touch any key without every config
-struct growing an optional twin
+`[profile.release]` holds the same keys as the root. A selection with
+`--profile release` merges the profile over the base before type checks. The
+merge works on the raw toml. So a profile can change any key, and no config
+struct needs an optional twin.
 
-Tables merge key by key so a profile can change one rule and leave the rest.
-Arrays and scalars replace outright, because a profile that wanted to append
-to a list would have no way to say it did not
+Tables merge key by key, so a profile can change one rule and keep the rest.
+Arrays and scalars replace in full. If the merge appended to a list, a
+profile could not express a replacement.
 */
 
 use anyhow::{Result, bail};
@@ -19,7 +19,7 @@ pub fn apply(base: &mut toml::Value, name: &str) -> Result<()> {
         bail!("the config is not a table");
     };
 
-    // the profile block itself never survives into the merged config
+    // The profile block does not stay in the merged config.
     let Some(profiles) = table.remove("profile") else {
         bail!("no [profile.{name}] in this config, there are no profiles at all");
     };
@@ -42,7 +42,7 @@ pub fn apply(base: &mut toml::Value, name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Deep merge for tables, replace for everything else
+/// Deep merge for tables, replacement for all other values
 fn merge(base: &mut toml::Value, over: &toml::Value) {
     match (base.as_table_mut(), over.as_table()) {
         (Some(b), Some(o)) => {
@@ -83,7 +83,7 @@ mod tests {
         );
         let process = v.get("process").unwrap();
 
-        // only the key the profile named moved
+        // Only the key that the profile named changed.
         assert_eq!(process.get("output").unwrap().as_str(), Some("build"));
         assert_eq!(process.get("input").unwrap().as_str(), Some("src"));
     }

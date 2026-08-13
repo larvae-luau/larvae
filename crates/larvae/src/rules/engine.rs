@@ -1,11 +1,11 @@
 /*!
 Shared machinery for ast rules
 
-A rule walks the parsed tree and pushes byte edits, the same shape the token
-rules and the require rewriter already use, so everything lands in one sorted
-splice at the end. Edits apply to the original source in a single pass and a
-rule never sees another rule's output. Two rules reaching for the same bytes
-is handled in `edits.rs`, the first one stands and the second is reported
+A rule walks the parsed tree and pushes byte edits. The token rules and the
+require rewriter use the same shape. Thus all edits land in one sorted
+splice at the end. The edits apply to the original source in a single pass.
+A rule never sees the output of another rule. When two rules select the
+same bytes, `edits.rs` applies the first edit and reports the second edit.
 */
 
 use std::collections::{HashMap, HashSet};
@@ -16,33 +16,34 @@ use crate::syntax::scan::RequireSite;
 
 pub use super::edits::Edit;
 
-/// Everything a rule gets to look at
+/// The full set of data that a rule can examine.
 pub struct RuleCtx<'a> {
     pub src: &'a str,
     pub toks: &'a [Tok],
     pub chunk: &'a Chunk,
-    /// Byte ranges of every comment in the file
+    /// The byte ranges of each comment in the file.
     pub comments: &'a [(u32, u32)],
-    /// Each require site paired with its final emitted form, so a rule can
-    /// tell that two requires point at the same module without resolving
-    /// anything itself
+    /// Each require site with its final emitted form. With this, a rule can
+    /// see that two requires point at the same module. The rule does not
+    /// resolve the path itself.
     pub require_forms: &'a [(RequireSite, String)],
-    /// The file's datamodel path when a mount covers it, ex @game/ReplicatedStorage/shared/util
+    /// The file's datamodel path when a mount covers it, for example
+    /// @game/ReplicatedStorage/shared/util
     pub dm_path: Option<&'a str>,
-    /// Quote char the config asked for, use it in generated strings
+    /// The quote character from the config. Use it in generated strings.
     pub quote: char,
-    /// Compile time constants from [defines], empty when none are configured
+    /// The compile time constants from [defines]. Empty when the config has none.
     pub defines: &'a HashMap<String, crate::rules::defines::Value>,
     /*
-    Token indexes of name references the source never bound. Only filled in
-    when there are defines to look up, a rule must not treat a local named
-    DEBUG as the global one
+    The token indexes of name references that the source did not bind.
+    Larvae fills this only when there are defines to look up. A rule must
+    not treat a local named DEBUG as the global name.
     */
     pub globals: &'a HashSet<u32>,
 }
 
 impl<'a> RuleCtx<'a> {
-    /// Byte range covered by a token span, half open
+    /// The byte range that a token span covers. The range is half open.
     pub fn bytes(&self, span: TokSpan) -> (u32, u32) {
         if span.is_empty() {
             let at = self
@@ -59,19 +60,19 @@ impl<'a> RuleCtx<'a> {
         (first.start, last.end)
     }
 
-    /// Source text covered by a token span
+    /// The source text that a token span covers.
     pub fn text(&self, span: TokSpan) -> &'a str {
         let (a, b) = self.bytes(span);
 
         &self.src[a as usize..b as usize]
     }
 
-    /// Text of one token
+    /// The text of one token.
     pub fn tok_text(&self, index: u32) -> &'a str {
         self.toks[index as usize].text(self.src)
     }
 
-    /// The constant a name stands for, if it is a define and not a local
+    /// The constant for a name, if the name is a define and not a local.
     pub fn define_at(&self, span: TokSpan) -> Option<&crate::rules::defines::Value> {
         if self.defines.is_empty() || !self.globals.contains(&span.start) {
             return None;
@@ -81,9 +82,9 @@ impl<'a> RuleCtx<'a> {
     }
 
     /*
-    Delete a span but keep its newlines, retain-lines output must not shift
-    line numbers, a removed multiline construct leaves blank lines behind
-    the same way remove_comments does
+    Delete a span but keep its newlines. Retain-lines output must not
+    shift line numbers. A removed multiline construct leaves blank lines
+    behind, in the same way as remove_comments.
     */
     pub fn delete_keep_lines(&self, span: TokSpan, edits: &mut Vec<Edit>) {
         let (a, b) = self.bytes(span);
@@ -98,7 +99,7 @@ impl<'a> RuleCtx<'a> {
         edits.push((from, to, "\n".repeat(newlines)));
     }
 
-    /// Replace a token span with new text
+    /// Replace a token span with new text.
     pub fn replace(&self, span: TokSpan, text: String, edits: &mut Vec<Edit>) {
         let (a, b) = self.bytes(span);
         edits.push((a, b, text));
@@ -106,25 +107,27 @@ impl<'a> RuleCtx<'a> {
 }
 
 /*
-What the walk does after a callback returns
+The action that the walk takes after a callback returns.
 
-Skip is how a rule says it already dealt with everything under this node,
-ex: a rule that rewrites a whole function head does not want its own hooks
-firing again on the pieces it just claimed. It is also the cheap way for a
-statement level rule to stay out of expressions it will never care about
+With Skip, a rule tells the walk that it already processed each node
+under this node. For example, a rule that rewrites a whole function head
+must not receive its own hooks again on the pieces that it claimed. Skip
+is also a cheap way for a statement level rule to stay out of expressions
+that it does not examine.
 */
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Flow {
-    /// Carry on into this node's children
+    /// Continue into the children of this node.
     Next,
-    /// Leave this node's children alone
+    /// Do not visit the children of this node.
     Skip,
 }
 
 /*
-Depth first walk with one callback per node family, default bodies do
-nothing so a rule only overrides what it cares about, blocks are visited
-before their statements and statements before their expressions
+A depth first walk with one callback per node family. The default bodies
+do nothing, so a rule overrides only the callbacks that it needs. The
+walk visits blocks before their statements, and statements before their
+expressions.
 */
 pub trait Visit {
     fn block(&mut self, _b: &Block) -> Flow {
@@ -370,7 +373,7 @@ return function(...) return ... end
         };
 
         walk_chunk(&chunk, &mut c);
-        // the exact counts matter less than nothing being skipped
+        // The test makes sure that the walk skips no nodes. The exact counts are secondary.
         assert!(c.blocks >= 5, "blocks {}", c.blocks);
         assert!(c.stmts >= 7, "stmts {}", c.stmts);
         assert!(c.exprs >= 20, "exprs {}", c.exprs);

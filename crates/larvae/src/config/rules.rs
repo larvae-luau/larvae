@@ -1,4 +1,4 @@
-//! The [rules] table, darklua's names verbatim plus larvae's own
+//! The [rules] table holds the darklua names verbatim, plus the rules of larvae.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -8,9 +8,9 @@ use serde::Deserialize;
 use super::process::default_true;
 
 /*
-Builtin transforms, all off by default, every darklua rule name is accepted
-so configs port over 1:1, names that are not implemented yet error with the
-milestone they land in instead of being silently ignored
+Builtin transforms, all off by default. larvae accepts every darklua rule
+name, so a config ports over 1:1. A name that is not implemented gives an
+error that names its milestone; larvae does not ignore it without a message.
 */
 #[derive(Debug, Default, Deserialize)]
 pub struct RulesConfig {
@@ -111,7 +111,7 @@ pub struct RulesConfig {
     pub rename_variables: bool,
 
     // --- larvae only, no darklua rule does any of these ---
-    /// Statement position calls to drop, ex: ["print", "debug.profilebegin"]
+    /// Calls in statement position to remove, ex: ["print", "debug.profilebegin"]
     #[serde(default)]
     pub remove_calls: Option<RemoveCalls>,
 
@@ -119,11 +119,11 @@ pub struct RulesConfig {
     #[serde(default)]
     pub use_get_service: bool,
 
-    /// Top level requires of the same module collapse onto the first one
+    /// Top level requires of the same module merge into the first one
     #[serde(default)]
     pub dedupe_requires: bool,
 
-    /// Name of a constant holding this file's datamodel path
+    /// The name of a constant that holds the datamodel path of this file
     #[serde(default)]
     pub inject_module_path: Option<String>,
 
@@ -132,21 +132,21 @@ pub struct RulesConfig {
     pub freeze_module: bool,
 
     #[serde(flatten)]
-    /// Names we do not own, which is where a worm rule lands
+    /// Names that larvae does not own; a worm rule lands here
     pub rest: HashMap<String, toml::Value>,
 }
 
 /*
-`remove_assertions = true` or a table carrying darklua's
-`preserve_arguments_side_effects`, shared by remove_debug_profiling because
-darklua spells the option the same way in both rules
+`remove_assertions = true`, or a table with the darklua option
+`preserve_arguments_side_effects`. remove_debug_profiling shares this type,
+because darklua spells the option the same way in both rules.
 */
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum PreserveSideEffects {
     Enabled(bool),
     Options {
-        /// Keep calls whose arguments might do something, on by default
+        /// Keep calls whose arguments can have side effects; on by default
         #[serde(default = "default_true")]
         preserve_arguments_side_effects: bool,
     },
@@ -173,7 +173,7 @@ impl PreserveSideEffects {
 pub enum RemoveAttribute {
     Enabled(bool),
     Options {
-        /// Regexes tested against the attribute name, empty means every one
+        /// Regexes that larvae tests against the attribute name; empty means all attributes
         #[serde(default, rename = "match")]
         patterns: Vec<String>,
     },
@@ -229,14 +229,14 @@ impl RemoveInterpolatedString {
 pub enum RemoveComments {
     Enabled(bool),
     Options {
-        /// Regexes for comments to keep, defaults to Luau directives
+        /// Regexes for the comments to keep; the default is the Luau directives
         #[serde(default = "default_comment_except")]
         except: Vec<String>,
     },
 }
 
 fn default_comment_except() -> Vec<String> {
-    // keep --!strict and friends, dropping them changes how Luau runs
+    // Keep --!strict and related directives; their removal changes how Luau runs.
     vec!["^--!".to_string()]
 }
 
@@ -263,7 +263,7 @@ pub enum RemoveCalls {
     Options {
         functions: Vec<String>,
 
-        /// Keep calls whose arguments call something, that call may matter
+        /// Keep calls whose arguments call a function; that call can have an effect
         #[serde(default = "default_true")]
         preserve_arguments_side_effects: bool,
     },
@@ -307,21 +307,21 @@ fn default_location() -> String {
     "start".to_string()
 }
 
-/// Where a rule name lives in larvae
+/// The status of a rule name in larvae
 pub enum RuleStatus {
     /// Works today
     Done,
 
-    /// Designed, lands in this milestone
+    /// Designed; it arrives in this milestone
     Planned(&'static str),
 
-    /// Not a rule here, this is where it lives instead
+    /// Not a larvae rule; the message names the correct location
     Elsewhere(&'static str),
 }
 
 /*
-Every darklua rule name (32 of them) plus larvae's own, so a ported
-darklua config gets a useful message rather than "unknown key"
+Every darklua rule name (32 of them) plus the larvae rules. So a ported
+darklua config gets a useful message and not "unknown key".
 */
 pub fn rule_status(name: &str) -> Option<RuleStatus> {
     use RuleStatus::*;
@@ -337,7 +337,7 @@ pub fn rule_status(name: &str) -> Option<RuleStatus> {
         | "dedupe_requires"
         | "inject_module_path"
         | "freeze_module" => Done,
-        // darklua parity lives in ast engine
+        // The darklua parity rules live in the ast engine.
         "compute_expression"
         | "convert_function_to_assignment"
         | "convert_index_to_field"
@@ -365,7 +365,7 @@ pub fn rule_status(name: &str) -> Option<RuleStatus> {
         | "remove_unused_variable"
         | "rename_variables"
         | "remove_unused_while" => Done,
-        // not rules in larvae
+        // These are not rules in larvae.
         "convert_require" => Elsewhere("the [requires] section handles requires"),
 
         "inject_global_value" => Elsewhere("use [defines] instead"),

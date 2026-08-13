@@ -1,9 +1,9 @@
 /*!
-Every lint, grouped by the kind of mistake it catches.
+Every lint, grouped by the kind of mistake that it catches.
 
-The grouping is for reading, not for behaviour. A lint's name is what a user
-configures and it is the same wherever the lint lives, so moving one between
-these files changes nothing a project can see.
+The grouping helps the reader and does not change behavior. A user configures
+a lint by its name, and the name stays the same in every file. Thus to move a
+lint between these files changes nothing that a project can see.
 */
 
 pub mod configured;
@@ -18,12 +18,12 @@ use super::Lint;
 /*
 The registry.
 
-Order decides only which finding is listed first when two land on the same
-byte, so it follows severity of consequence: something that is wrong before
-something that is merely untidy.
+The order decides only which finding larvae lists first when two findings
+land on the same byte. Thus the order follows the severity of the
+consequence: a wrong thing comes before an untidy thing.
 */
 pub static ALL: &[&dyn Lint] = &[
-    // correctness
+    // Correctness.
     &correctness::AlmostSwapped,
     &correctness::CompareNan,
     &correctness::ConstantTableComparison,
@@ -37,27 +37,27 @@ pub static ALL: &[&dyn Lint] = &[
     &configured::BadStringEscape,
     &configured::MismatchedArgCount,
     &configured::MustUse,
-    // names
+    // Names.
     &names::UndefinedVariable,
     &names::UnscopedVariables,
     &names::UnusedVariable,
     &names::Shadowing,
     &names::GlobalUsage,
-    // what a project tunes
+    // The lints that a project tunes.
     &configured::Deprecated,
     &configured::RestrictedModulePaths,
     &configured::HighCyclomaticComplexity,
     &configured::ManualTableClone,
-    // roblox data types
+    // Roblox data types.
     &roblox::RobloxIncorrectColor3NewBounds,
     &roblox::RobloxSuspiciousUdim2New,
     &roblox::RobloxManualFromScaleOrOffset,
-    // beyond selene
+    // The lints that selene does not have.
     &original::UnreachableCode,
     &original::SelfAssignment,
     &original::StringConcatInLoop,
     &original::ShadowedLoopWork,
-    // style
+    // Style.
     &style::EmptyIf,
     &style::EmptyLoop,
     &style::MixedTable,
@@ -66,11 +66,12 @@ pub static ALL: &[&dyn Lint] = &[
 ];
 
 /*
-The boilerplate every lint shares.
+The boilerplate that every lint shares.
 
-Each entry declares the unit type, the name a user writes, whether it is on by
-default, and the one line explanation. The lint itself is the `check` function,
-written normally, so only the part that differs is written per lint.
+Each entry declares the unit type, the name that a user writes, the default
+level, and the one-line explanation. The lint itself is the `check` function,
+which the author writes as normal code. Thus the author writes only the part
+that differs per lint.
 */
 #[macro_export]
 macro_rules! lints {

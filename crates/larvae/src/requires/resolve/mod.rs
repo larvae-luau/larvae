@@ -1,7 +1,8 @@
 /*!
-Require resolution and rewrite emission, input follows the Luau RFCs and
-output is the configured target, bad aliases and realm violations always
-error, missing targets warn unless strict
+Require resolution and rewrite emission. The input follows the Luau RFCs,
+and the output is the configured target. A bad alias or a realm violation
+always gives an error. A missing target gives a warning, unless strict is
+set.
 */
 
 use std::collections::HashMap;
@@ -27,27 +28,27 @@ use spec::*;
 pub struct Resolver<'a> {
     /// Absolute project root
     pub root: &'a Path,
-    /// `larvae.toml` aliases, lowercased keys
+    /// `larvae.toml` aliases, with lowercase keys
     pub toml_aliases: &'a HashMap<String, String>,
     pub luaurc: &'a LuaurcIndex,
     pub mounts: &'a MountTable,
     pub target: Target,
     /// Child indexing for the roblox-instance target
     pub style: IndexingStyle,
-    /// Quote char for generated string literals
+    /// The quote character for generated string literals
     pub quote: char,
     pub strict: bool,
 }
 
-/// Per-file context, computed once
+/// The context for one file, computed once
 pub struct FileCtx<'a> {
-    /// Absolute path of the file being processed
+    /// The absolute path of the file in work
     pub path: &'a Path,
     pub dir: PathBuf,
     pub is_init: bool,
     pub kind: ScriptKind,
     pub dm: Option<DmPath>,
-    /// Output form for this file, an override can move it off the default
+    /// The output form for this file; an override can move it off the default
     pub target: Target,
     pub style: IndexingStyle,
 }
@@ -69,7 +70,7 @@ impl<'a> FileCtx<'a> {
         }
     }
 
-    /// Directory ./ resolves against, init files resolve from their dir's parent
+    /// The directory that ./ resolves against; an init file resolves from the parent of its directory
     fn dot_base(&self) -> &Path {
         if self.is_init {
             self.dir.parent().unwrap_or(&self.dir)
@@ -78,7 +79,7 @@ impl<'a> FileCtx<'a> {
         }
     }
 
-    /// Effective runtime realm of this file
+    /// The effective runtime realm of this file
     fn realm(&self) -> Option<Realm> {
         match self.kind {
             ScriptKind::Server => Some(Realm::ServerOnly),
@@ -98,12 +99,12 @@ pub enum Rewrite {
     Expr(String),
 }
 
-/// The filesystem node a require resolved to
+/// The filesystem node that a require resolved to
 #[derive(Debug, PartialEq, Eq)]
 enum ModuleNode {
     /// A plain module file (`foo.luau`)
     File(PathBuf),
-    /// A directory module (`foo/init.luau` exists), the *directory* is the node
+    /// A directory module (`foo/init.luau` exists); the *directory* is the node
     Dir(PathBuf),
 }
 
@@ -116,7 +117,7 @@ impl ModuleNode {
 }
 
 impl<'a> Resolver<'a> {
-    /// Resolve one require spec, returns the rewrite decision and pushes diagnostics
+    /// Resolve one require spec; returns the rewrite decision and pushes diagnostics
     pub fn resolve(
         &self,
         ctx: &FileCtx,

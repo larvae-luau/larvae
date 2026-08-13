@@ -1,10 +1,10 @@
 /*!
-Lints a project tunes, and the ones that need a table of known functions.
+Lints that a project tunes, and lints that need a table of known functions.
 
-selene keeps the tables in its standard library files, so a project that wants
-`must_use` on its own function writes a library. larvae ships the tables here
-and lets a project add to them under `[lint.options]`, which is a smaller thing
-to learn and covers what people actually reach for.
+selene keeps the tables in its standard library files. Thus a project that
+wants `must_use` on its own function writes a library. larvae ships the
+tables here, and a project adds to them under `[lint.options]`. That is a
+smaller thing to learn, and it covers what users need in practice.
 */
 
 use serde::Deserialize;
@@ -38,9 +38,9 @@ impl BadStringEscape {
     /*
     `"\q"`.
 
-    Luau defines a fixed set of escapes and rejects the rest, so an undefined
-    one is a syntax error rather than a literal backslash. The usual cause is a
-    Windows path written without doubling the separators.
+    Luau defines a fixed set of escapes and rejects the rest. Thus an
+    undefined escape is a syntax error, not a literal backslash. The usual
+    cause is a Windows path whose separators are not doubled.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         for (i, tok) in ctx.toks.iter().enumerate() {
@@ -52,7 +52,7 @@ impl BadStringEscape {
                 continue;
             };
 
-            // a long string has no escapes, its content is literal
+            // A long string has no escapes. Its content is literal.
             if ctx.tok(i as u32).starts_with('[') {
                 continue;
             }
@@ -75,7 +75,7 @@ impl BadStringEscape {
     }
 }
 
-/// Every undefined escape in this string's content, with where it starts
+/// Returns every undefined escape in this string's content, with its start offset.
 fn bad_escapes(inner: &str) -> Vec<(u32, String)> {
     let bytes = inner.as_bytes();
     let mut out = Vec::new();
@@ -93,14 +93,14 @@ fn bad_escapes(inner: &str) -> Vec<(u32, String)> {
         };
 
         match next {
-            // the simple ones, and a backslash before a newline continues the line
+            // The simple escapes. A backslash before a newline continues the line.
             b'a' | b'b' | b'f' | b'n' | b'r' | b't' | b'v' | b'\\' | b'"' | b'\'' | b'\n'
             | b'\r' => i += 2,
 
-            // `\z` skips the whitespace that follows it
+            // `\z` skips the whitespace that follows it.
             b'z' => i += 2,
 
-            // `\xFF`, exactly two hex digits
+            // `\xFF`, with exactly two hex digits.
             b'x' => {
                 let ok = bytes
                     .get(i + 2..i + 4)
@@ -127,7 +127,7 @@ fn bad_escapes(inner: &str) -> Vec<(u32, String)> {
                 i += 2;
             }
 
-            // `\ddd`, one to three decimal digits
+            // `\ddd`, with one to three decimal digits.
             b'0'..=b'9' => {
                 i += 2;
 
@@ -152,12 +152,12 @@ fn bad_escapes(inner: &str) -> Vec<(u32, String)> {
 // --- must_use --------------------------------------------------------------
 
 /*
-Functions whose only effect is what they return.
+Functions whose only effect is their return value.
 
-Calling one as a statement computes something and throws it away, which is
-never what anyone meant. The list is short on purpose: everything on it is
-pure by definition, so there is no argument about whether a particular call
-site was relying on a side effect.
+A call to one of these as a statement computes a value and discards it, and
+no author means that. The list is short by design. Every entry is pure by
+definition, so there is no doubt about if a call site relied on a side
+effect.
 */
 const PURE: &[&str] = &[
     "math.abs",
@@ -234,16 +234,16 @@ impl MustUse {
 }
 
 /*
-The dotted path of an expression, when it is rooted at a global.
+The dotted path of an expression, when its root is a global.
 
-Rooted at a global matters: a local named `string` is somebody's own table and
-saying anything about `string.format` on it would be a guess about code we
+The global root matters. A local named `string` is the author's own table. A
+report about `string.format` on it would be a guess about code that larvae
 cannot see.
 */
 fn global_path(ctx: &LintCtx<'_>, e: &Expr) -> Option<String> {
     match e {
         Expr::Name(span) => {
-            // a name nothing bound is a global, which is what these tables are
+            // A name that nothing bound is a global, and these tables are globals.
             ctx.names
                 .is_global(span.start)
                 .then(|| ctx.text(*span).to_string())
@@ -265,7 +265,7 @@ fn global_path(ctx: &LintCtx<'_>, e: &Expr) -> Option<String> {
 
 // --- deprecated ------------------------------------------------------------
 
-/// What Roblox replaced, and what with
+/// The functions that Roblox replaced, and their replacements.
 const REPLACED: &[(&str, &str)] = &[
     ("delay", "task.delay"),
     ("elapsedTime", "os.clock"),
@@ -277,13 +277,13 @@ const REPLACED: &[(&str, &str)] = &[
 ];
 
 /*
-Methods Roblox replaced, matched by name because the receiver's type is not
-something larvae knows.
+The methods that Roblox replaced. The lint matches them by name, because
+larvae does not know the type of the receiver.
 
-Which is why `remove` is not on the list. `Instance:remove()` is deprecated and
-`Queue:remove(1)` is somebody's own collection, the two are spelled identically,
-and reporting the second is worse than missing the first. What is left is the
-legacy camelCase that only Roblox ever had.
+For that reason, `remove` is not on the list. `Instance:remove()` is
+deprecated, and `Queue:remove(1)` is the author's own collection. The two
+have the same spelling. To report the second is worse than to miss the
+first. The list keeps the legacy camelCase names that only Roblox had.
 */
 const REPLACED_METHODS: &[(&str, &str)] = &[
     ("Remove", "Destroy"),
@@ -295,7 +295,7 @@ const REPLACED_METHODS: &[(&str, &str)] = &[
 #[derive(Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct DeprecatedOptions {
-    /// Names the project has deprecated of its own, as `old = "new"`
+    /// The names that the project itself deprecated, as `old = "new"`.
     pub additional: std::collections::BTreeMap<String, String>,
 }
 
@@ -314,7 +314,7 @@ impl Deprecated {
             if let Some(m) = method {
                 let name = ctx.text(*m);
 
-                // these names mean nothing outside Roblox
+                // These names mean nothing outside Roblox.
                 if ctx.cfg.std != crate::lint::config::StdLib::Roblox {
                     return;
                 }
@@ -360,18 +360,19 @@ impl Deprecated {
 #[derive(Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct RestrictedOptions {
-    /// Require paths the project forbids, as `path = "why"`
+    /// The require paths that the project forbids, as `path = "why"`.
     pub paths: std::collections::BTreeMap<String, String>,
 }
 
 impl RestrictedModulePaths {
     /*
-    Entirely config driven, and quiet until a project fills it in.
+    This lint is fully config driven, and it is silent until a project
+    fills the config in.
 
-    The use is architectural: a shared module that must not reach into a
-    server only package, or a deprecated package being retired one call site
-    at a time. Nothing about a path is wrong in general, so there is no
-    built in list and could not be one.
+    The use is architectural. One example is a shared module that must not
+    reach into a server-only package. Another is a deprecated package that
+    the project retires one call site at a time. No path is wrong in
+    general, so a built-in list does not exist and cannot exist.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         let options: RestrictedOptions = ctx.cfg.options_for("restricted_module_paths");
@@ -431,7 +432,7 @@ pub struct ComplexityOptions {
 
 impl Default for ComplexityOptions {
     fn default() -> Self {
-        // selene's default, kept so a project moving over gets the same answers
+        // selene's default. larvae keeps it so a project that moves over gets the same results.
         Self {
             maximum_complexity: 40,
         }
@@ -440,13 +441,13 @@ impl Default for ComplexityOptions {
 
 impl HighCyclomaticComplexity {
     /*
-    Off by default.
+    This lint is off by default.
 
-    The number counts branches, and a number is not the same thing as a
-    problem: a long dispatch table scores high and reads fine, while a short
-    function with three nested conditions scores low and does not. It is worth
-    having as a ratchet a project sets deliberately, not as an opinion shipped
-    on by default.
+    The score counts branches, and a number is not the same as a problem.
+    A long dispatch table scores high and reads well. A short function
+    with three nested conditions scores low and does not read well. The
+    lint has value as a limit that a project sets with intent, not as an
+    opinion that ships on by default.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         let options: ComplexityOptions = ctx.cfg.options_for("high_cyclomatic_complexity");
@@ -483,7 +484,7 @@ impl HighCyclomaticComplexity {
     }
 }
 
-/// One per place control could go two ways
+/// Returns one count per place where control can go two ways.
 fn branches_in(ctx: &LintCtx<'_>, block: &Block) -> u32 {
     let mut score = 0;
 
@@ -515,7 +516,7 @@ fn branches_in(ctx: &LintCtx<'_>, block: &Block) -> u32 {
     score
 }
 
-/// `and` and `or` are branches too, each one is a path not taken
+/// `and` and `or` are also branches. Each one is a path that control can skip.
 fn conditions_in(ctx: &LintCtx<'_>, e: &Expr) -> u32 {
     match e {
         Expr::Binary { op, lhs, rhs, .. } => {
@@ -542,20 +543,21 @@ impl ManualTableClone {
     end
     ```
 
-    `table.clone` does this in one call, in C, without the per key dispatch.
-    Only reported when the body is exactly that one assignment, since anything
-    else in the loop means the copy is not the whole point.
+    `table.clone` does this in one call, in C, without the per-key dispatch.
+    The lint reports only a body that is exactly this one assignment.
+    Anything else in the loop means that the copy is not the whole purpose.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         each_block(ctx, out, |ctx, block, out| {
             for pair in block.stmts.windows(2) {
                 /*
-                The destination has to be a table this block just created.
+                The destination must be a table that this block just created.
 
-                Without that check a merge, `for k, v in pairs(source) do
-                target[k] = v end` inside a function taking `target`, is
-                reported, and the advice is worse than the code: `table.clone`
-                would discard everything already in `target`.
+                Without that check, the lint reports a merge:
+                `for k, v in pairs(source) do target[k] = v end` inside a
+                function that takes `target`. There the advice is worse than
+                the code, because `table.clone` would discard everything
+                already in `target`.
                 */
                 let Stmt::Local(local) = &pair[0] else {
                     continue;
@@ -607,12 +609,12 @@ impl ManualTableClone {
                 return;
             };
 
-            // the assigned value has to be the loop's value variable
+            // The assigned value must be the loop's value variable.
             if !matches!(assigned, Expr::Name(n) if ctx.text(*n) == ctx.text(value.name)) {
                 return;
             }
 
-            // and the target has to be indexed by the loop's key variable
+            // The index of the target must be the loop's key variable.
             let Expr::Index {
                 object,
                 key: IndexKey::Computed(index),
@@ -626,7 +628,7 @@ impl ManualTableClone {
                 return;
             }
 
-            // and it has to be the table declared empty just above
+            // The target must be the table declared empty directly above.
             if !matches!(object.as_ref(), Expr::Name(n) if ctx.text(*n) == fresh) {
                 return;
             }
@@ -643,7 +645,7 @@ impl ManualTableClone {
     }
 }
 
-/// The table an iterator walks, when the iterator is `pairs(t)`
+/// Returns the table that an iterator walks, when the iterator is `pairs(t)`.
 fn pairs_over<'a>(ctx: &LintCtx<'a>, e: &Expr) -> Option<&'a str> {
     let Expr::Call { func, args, .. } = e else {
         return None;
@@ -668,17 +670,17 @@ fn pairs_over<'a>(ctx: &LintCtx<'a>, e: &Expr) -> Option<&'a str> {
 
 impl MismatchedArgCount {
     /*
-    Calling a function declared in this file with the wrong number of
+    A call to a function declared in this file with the wrong number of
     arguments.
 
-    Only functions bound to a local, and only calls through that local, so the
-    declaration and the call site are both in view. A function reached through
-    a table could be reassigned by anything, and a lint that assumed otherwise
-    would be wrong on exactly the codebases that need it.
+    The lint checks only functions bound to a local, and only calls through
+    that local. Then the declaration and the call site are both in view.
+    Anything can reassign a function reached through a table. A lint that
+    assumed otherwise would be wrong on exactly the codebases that need it.
 
-    Too few arguments is reported and too many is too, though the second is
-    legal and merely discarded: passing an argument that goes nowhere means
-    somebody expected it to be read.
+    The lint reports too few arguments, and also too many. The second case
+    is legal, and Lua discards the extra values. But an argument that goes
+    nowhere means that a person expected the function to read it.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         let mut arity: std::collections::HashMap<usize, (usize, usize)> =
@@ -702,9 +704,9 @@ impl MismatchedArgCount {
             };
 
             /*
-            A vararg parameter accepts anything past the named ones, and a
-            binding written after its declaration may hold a different
-            function entirely, so neither can be checked.
+            A vararg parameter accepts any count past the named parameters.
+            A binding that is written after its declaration can hold a
+            different function. Thus the lint cannot check either case.
             */
             if body.params.iter().any(|p| p.is_vararg)
                 || !ctx.names.bindings[index].writes.is_empty()
@@ -713,11 +715,12 @@ impl MismatchedArgCount {
             }
 
             /*
-            Passing fewer arguments than a function declares is legal and
-            idiomatic, and an optional parameter, `level: string?`, says so
-            outright. So too few is only reported when every parameter carries
-            a type and none of them is optional, which is the author stating
-            that all of them are required.
+            To pass fewer arguments than a function declares is legal and
+            normal Luau, and an optional parameter, `level: string?`, states
+            that directly. Thus the lint reports too few arguments only when
+            every parameter carries a type and no parameter is optional.
+            That form is the author's statement that all parameters are
+            required.
             */
             let all_required = !body.params.is_empty()
                 && body.params.iter().all(|p| {
@@ -762,7 +765,7 @@ impl MismatchedArgCount {
                 return;
             };
 
-            // a call or a vararg in last position can supply any number
+            // A call or a vararg in the last position can supply any number of values.
             if list
                 .last()
                 .is_some_and(|e| matches!(e, Expr::Call { .. } | Expr::Vararg(_)))

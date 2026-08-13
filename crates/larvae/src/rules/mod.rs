@@ -1,9 +1,9 @@
 /*!
 Builtin rules
 
-Token level rules live in this file, everything that needs the tree goes
-through the engine, darklua parity rules in one submodule and larvae's
-own in the other
+The token level rules live in this file. Each rule that needs the tree
+goes through the engine. The darklua parity rules live in one submodule.
+The larvae rules live in the other submodule.
 */
 
 pub mod darklua;
@@ -23,15 +23,15 @@ use crate::syntax::scan::RequireSite;
 
 pub use edits::{Conflict, Edits, Family, Rule, splice};
 
-/// True when any enabled rule needs a parse
+/// True when one or more enabled rules need a parse.
 pub fn wants_ast(cfg: &RulesConfig, defines: &HashMap<String, defines::Value>) -> bool {
     !defines.is_empty() || darklua::wants(cfg) || native::wants(cfg)
 }
 
 /*
-Parse once and hand the tree to both rule families, a file that will not
-parse cannot be transformed so that is an error rather than a silent skip,
-the user asked for rules we cannot run
+Parse once, then give the tree to both rule families. Larvae cannot
+transform a file that does not parse. The user asked for rules that
+larvae cannot run, so a parse failure is an error and not a silent skip.
 */
 #[allow(clippy::too_many_arguments)]
 pub fn apply_ast_rules(
@@ -66,9 +66,9 @@ pub fn apply_ast_rules(
     };
 
     /*
-    Resolving locals from globals costs a walk, so only pay it when there
-    are defines to look up. Without it a local named DEBUG would get
-    substituted like the global one
+    The split of locals from globals costs a walk. Larvae does the walk
+    only when there are defines to look up. Without the walk, larvae
+    would substitute a local named DEBUG like the global name.
     */
     let globals = if defines.is_empty() {
         HashSet::new()
@@ -98,16 +98,17 @@ pub fn apply_ast_rules(
         globals: &globals,
     };
 
-    // defines go first, the folding rules want the literals already in place
+    // The defines run first. The folding rules need the literals in place.
     edits.run("defines", |e| defines::apply(&ctx, e));
     darklua::apply(cfg, &ctx, edits, diags, path);
     native::apply(cfg, &ctx, edits, diags, path);
 }
 
 /*
-const_requires, turn `local X = require(...)` into `const X = require(...)`
-so single assignment requires get Luau's const treatment, conservative on
-purpose, multi bindings and annotated locals are left alone
+const_requires: change `local X = require(...)` to `const X = require(...)`.
+Then single assignment requires get Luau's const treatment. The rule is
+conservative by design. It does not change multi bindings or annotated
+locals.
 */
 pub fn const_requires(
     src: &str,
@@ -117,7 +118,7 @@ pub fn const_requires(
 ) {
     for site in sites {
         let i = site.require_idx;
-        // pattern looking backward, local <name> = require
+        // The rule looks backward for the pattern: local <name> = require
         if i < 3 {
             continue;
         }
@@ -136,9 +137,10 @@ pub fn const_requires(
 }
 
 /*
-remove_comments, delete comment spans while keeping their newlines so
-retain-lines output stays on the same line numbers, `except` patterns keep
-matching comments, Luau directives like --!strict are kept by default
+remove_comments: delete the comment spans but keep their newlines. Then
+retain-lines output stays on the same line numbers. A comment that matches
+an `except` pattern stays. Luau directives such as --!strict stay by
+default.
 */
 pub fn remove_comments(
     src: &str,
@@ -155,7 +157,7 @@ pub fn remove_comments(
             continue;
         }
 
-        // eat the horizontal space in front so no trailing blanks are left
+        // Remove the horizontal space in front, so no trailing blanks remain.
         let mut from = start as usize;
 
         while from > 0 && matches!(bytes[from - 1], b' ' | b'\t') {
@@ -168,14 +170,15 @@ pub fn remove_comments(
 }
 
 /*
-strip_flags, drop the comments that were talking to larvae.
+strip_flags: remove the comments that give instructions to larvae.
 
-A `-- larvae: allow(...)` is an instruction to the linter, not something the
-game needs to carry, so it goes the way every other build time instruction
-goes. Notes to a reader stay: only what [`crate::flags`] recognises is touched.
+A `-- larvae: allow(...)` comment is an instruction to the linter. The
+game does not need it, so larvae removes it like each other build time
+instruction. Notes to a reader stay. The rule removes only the comments
+that [`crate::flags`] recognises.
 
-Newlines are kept the way remove_comments keeps them, so retain-lines output
-stays on the same line numbers.
+The rule keeps newlines in the same way as remove_comments. Then
+retain-lines output stays on the same line numbers.
 */
 pub fn strip_flags(src: &str, comments: &[(u32, u32)], replacements: &mut Vec<(u32, u32, String)>) {
     let bytes = src.as_bytes();
@@ -185,7 +188,7 @@ pub fn strip_flags(src: &str, comments: &[(u32, u32)], replacements: &mut Vec<(u
             continue;
         }
 
-        // eat the horizontal space in front so no trailing blanks are left
+        // Remove the horizontal space in front, so no trailing blanks remain.
         let mut from = start as usize;
 
         while from > 0 && matches!(bytes[from - 1], b' ' | b'\t') {
@@ -202,9 +205,9 @@ pub fn strip_flags(src: &str, comments: &[(u32, u32)], replacements: &mut Vec<(u
 }
 
 /*
-add_luau_directive, make sure every file opts into a Luau mode, an existing
-directive of the same kind is left alone and so is a different mode, an
-explicit choice in the source always wins
+add_luau_directive: make sure that each file selects a Luau mode. The rule
+does not change an existing directive of the same kind, or a different
+mode. An explicit choice in the source always wins.
 */
 pub fn add_luau_directive(src: &str, directive: &str) -> Option<(u32, u32, String)> {
     let wanted = format!("--!{directive}");
@@ -217,7 +220,7 @@ pub fn add_luau_directive(src: &str, directive: &str) -> Option<(u32, u32, Strin
         }
 
         if let Some(rest) = line.strip_prefix("--!") {
-            // same family, ex: strict vs nonstrict, respect what is there
+            // The same family, for example strict and nonstrict. Keep the existing choice.
             let head = |s: &str| s.split_whitespace().next().unwrap_or("").to_string();
 
             if line == wanted || mode_family(&head(rest)) == mode_family(&head(directive)) {
@@ -237,7 +240,7 @@ pub fn add_luau_directive(src: &str, directive: &str) -> Option<(u32, u32, Strin
     Some((0, 0, format!("{wanted}\n")))
 }
 
-/// Directives that contradict each other, one per family
+/// Directives that contradict each other. Each family holds one choice.
 fn mode_family(word: &str) -> &'static str {
     match word {
         "strict" | "nonstrict" | "nocheck" => "typecheck",
@@ -250,7 +253,7 @@ fn mode_family(word: &str) -> &'static str {
     }
 }
 
-/// append_text_comment, add a comment at the start or end of the file
+/// append_text_comment: add a comment at the start or the end of the file.
 pub fn append_text_comment(src: &str, text: &str, at_start: bool) -> Option<(u32, u32, String)> {
     let comment: String = text
         .lines()
@@ -308,19 +311,19 @@ mod tests {
 
     #[test]
     fn leaves_tricky_forms_alone() {
-        // multi binding
+        // A multi binding.
         assert_eq!(
             apply("local a, b = require(\"./x\"), 2"),
             "local a, b = require(\"./x\"), 2"
         );
-        // type annotation
+        // A type annotation.
         assert_eq!(
             apply("local x: Foo = require(\"./x\")"),
             "local x: Foo = require(\"./x\")"
         );
-        // not a local at all
+        // Not a local.
         assert_eq!(apply("x = require(\"./x\")"), "x = require(\"./x\")");
-        // dynamic require has no site
+        // A dynamic require has no site.
         assert_eq!(apply("local x = require(p)"), "local x = require(p)");
     }
 
@@ -344,7 +347,7 @@ mod tests {
         }
 
         out.push_str(&src[cursor..]);
-        // directive kept, others gone, line count unchanged
+        // The directive stays, the other comments go, and the line count does not change.
         assert!(out.starts_with("--!strict"));
         assert!(!out.contains("trailing"));
         assert!(!out.contains("spans lines"));
@@ -395,18 +398,18 @@ mod tests {
             add_luau_directive("return 1\n", "strict").unwrap().2,
             "--!strict\n"
         );
-        // already there
+        // The directive is already there.
         assert!(add_luau_directive("--!strict\nreturn 1\n", "strict").is_none());
-        // a different typecheck mode is an explicit choice
+        // A different typecheck mode is an explicit choice.
         assert!(add_luau_directive("--!nonstrict\nreturn 1\n", "strict").is_none());
-        // an unrelated directive does not block it
+        // An unrelated directive does not block it.
         assert_eq!(
             add_luau_directive("--!native\nreturn 1\n", "strict")
                 .unwrap()
                 .2,
             "--!strict\n"
         );
-        // plain leading comments do not block it either
+        // Plain leading comments also do not block it.
         assert_eq!(
             add_luau_directive("-- header\nreturn 1\n", "strict")
                 .unwrap()

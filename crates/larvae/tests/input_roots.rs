@@ -1,4 +1,4 @@
-//! One input root flattens, several keep their own directory
+//! One input root flattens. Several roots each keep their own directory.
 
 use larvae::config::Config;
 use larvae::pipeline;
@@ -25,7 +25,7 @@ fn a_single_root_still_flattens() {
     assert!(root.join("dist/a/b.luau").exists());
 }
 
-/// The list form, which is what a project with vendored code needs
+/// This is the list form, which a project with vendored code needs.
 #[test]
 fn several_roots_each_keep_their_directory() {
     let dir = tempfile::tempdir().unwrap();
@@ -36,7 +36,7 @@ fn several_roots_each_keep_their_directory() {
         "larvae.toml",
         "[process]\ninput = [\"src\", \"vendor\"]\noutput = \"dist\"\n\n[requires]\ntarget = \"path\"\n",
     );
-    // the same file name under both, which is exactly what flattening would lose
+    // The same file name exists under both roots. A flat output would lose one file.
     write(root, "src/init.luau", "return require(\"./helper\")\n");
     write(root, "src/helper.luau", "return 1\n");
     write(root, "vendor/init.luau", "return 2\n");
@@ -48,7 +48,7 @@ fn several_roots_each_keep_their_directory() {
     assert!(root.join("dist/src/init.luau").exists());
     assert!(root.join("dist/vendor/init.luau").exists());
     assert_eq!(read(root, "dist/vendor/init.luau"), "return 2\n");
-    // relative requires still resolve inside their own root
+    // Relative requires still resolve inside their own root.
     assert!(read(root, "dist/src/init.luau").contains("./helper"));
 }
 
@@ -92,7 +92,7 @@ fn a_nested_root_owns_its_own_files() {
 
     assert!(!out.has_errors(), "{:?}", out.diags);
     assert!(root.join("dist/src/a.luau").exists());
-    // claimed by the deeper root, so it is not also under dist/src/vendor
+    // The deeper root claims the file, so the file does not appear a second time.
     assert!(root.join("dist/src/vendor/b.luau").exists());
     assert_eq!(out.stats.files_processed, 2);
 }

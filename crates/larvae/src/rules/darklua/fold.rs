@@ -1,10 +1,10 @@
 /*!
 compute_expression
 
-Fold constant expressions to their value. The evaluator refuses anything it
-cannot print exactly, so the rule's own job is small, find the outermost
-node that folds, write the value in its place, and never look inside a node
-that already folded
+Fold constant expressions to their value. The evaluator rejects each
+value that it cannot print exactly, so the rule itself has a small job.
+The rule finds the outermost node that folds. It writes the value in the
+node's place. It never looks inside a node that already folded.
 */
 
 use super::eval;
@@ -16,14 +16,15 @@ pub fn compute_expression(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     struct V<'a, 'b> {
         ctx: &'a RuleCtx<'b>,
         edits: &'a mut Vec<Edit>,
-        /// Ranges already folded, the walk hits parents first so anything
-        /// inside one of these is part of a value we have already written
+        /// The ranges that already folded. The walk visits parents first,
+        /// so each node inside one of these ranges is part of a value that
+        /// the rule already wrote.
         done: Vec<(u32, u32)>,
     }
 
     impl Visit for V<'_, '_> {
         fn expr(&mut self, e: &Expr) -> Flow {
-            // only composites are worth folding, a literal is already itself
+            // Only composite nodes are worth a fold. A literal is already its own value.
             if !matches!(
                 e,
                 Expr::Binary { .. } | Expr::Unary { .. } | Expr::Paren { .. }
@@ -50,8 +51,8 @@ pub fn compute_expression(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
             }
 
             /*
-            a negative result butting up against a minus would read as a
-            comment, `a-(1-3)` must not collapse to `a--2`
+            A negative result directly after a minus would read as a
+            comment. `a-(1-3)` must not become `a--2`.
             */
             if text.starts_with('-') && a > 0 && self.ctx.src.as_bytes()[a as usize - 1] == b'-' {
                 text.insert(0, ' ');
@@ -98,7 +99,7 @@ mod tests {
 
     #[test]
     fn only_the_outermost_node_is_written() {
-        // the inner 1 + 2 must not also produce an edit
+        // The inner 1 + 2 must not also produce an edit.
         let out = run("local x = (1 + 2) * 4\n", compute_expression);
         assert_eq!(out, "local x = 12\n");
     }
@@ -133,10 +134,10 @@ mod tests {
         assert_eq!(run(src, compute_expression), src);
         let src = "local x = f() + 1\n";
         assert_eq!(run(src, compute_expression), src);
-        // a fraction has no exact printed form we want to commit to
+        // A fraction has no exact printed form that larvae accepts.
         let src = "local x = 10 / 4\n";
         assert_eq!(run(src, compute_expression), src);
-        // already folded, no edit
+        // The value is already folded, so there is no edit.
         let src = "local x = 3\n";
         assert_eq!(run(src, compute_expression), src);
     }

@@ -1,10 +1,10 @@
 /*!
-Lints for code that works but reads badly.
+Lints for code that works but is hard to read.
 
-The bar here is different from correctness: the reported code does what the
-author meant, and the complaint is that the next reader will have to work to
-see it. That makes these easier to disagree with, so each one says what it
-wants instead rather than only what it dislikes.
+The standard here differs from correctness. The reported code does what the
+author meant. The complaint is that the next reader must work to see it.
+Thus users disagree with these lints more easily, so each lint says what it
+wants instead, and not only what it dislikes.
 */
 
 use crate::lint::ctx::{Finding, LintCtx};
@@ -30,10 +30,10 @@ lints! {
 
 impl EmptyIf {
     /*
-    An empty branch is either a stub or a leftover.
+    An empty branch is a stub or a leftover.
 
-    A branch holding only a comment is neither, since the comment is the point,
-    so the check is for a branch with nothing in it at all.
+    A branch that holds only a comment is neither, because the comment is
+    the purpose. Thus the check reports only a branch with no content at all.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         each_stmt(ctx, out, |ctx, s, out| {
@@ -96,10 +96,10 @@ impl MixedTable {
     /*
     `{ 1, 2, a = 3 }`.
 
-    Legal, and two different data structures sharing one value. `#t` counts
-    only the array part and `pairs` walks both, so which half a reader gets
-    depends on how they ask, and the mistake is usually that they did not know
-    there were two halves.
+    This is legal, and it is two different data structures that share one
+    value. `#t` counts only the array part, and `pairs` walks both parts.
+    Thus the half that a reader gets depends on how they ask. The usual
+    mistake is that the author did not know there were two halves.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         each_expr(ctx, out, |ctx, e, out| {
@@ -133,21 +133,21 @@ impl MixedTable {
 
 impl MultipleStatements {
     /*
-    Off by default, unlike the rest.
+    This lint is off by default, unlike the rest.
 
-    `if x then return end` on one line is idiomatic Luau and this would report
-    every one of them, so a project has to ask for it. It is here because for
-    a project that has decided one statement per line, having it checked is
-    worth more than the noise costs.
+    `if x then return end` on one line is normal Luau, and this lint would
+    report every such line. Thus a project must turn the lint on. The lint
+    exists for a project that decided on one statement per line. For that
+    project, the check is worth more than the noise.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         /*
-        Compared within a block, not across the file.
+        The lint compares within a block, not across the file.
 
-        `if x then return end` has the `return` on the same line as the `if`,
-        but in a different block, and reporting that would report the very
-        idiom this lint is off by default to avoid arguing about. Two
-        statements only count when they are siblings.
+        `if x then return end` has the `return` on the same line as the
+        `if`, but in a different block. To report that would report the
+        exact form that keeps this lint off by default. Two statements
+        count only when they are siblings.
         */
         each_block(ctx, out, |ctx, block, out| {
             let mut previous: Option<u32> = None;
@@ -182,8 +182,9 @@ impl ParentheseConditions {
     /*
     `if (x) then`.
 
-    A habit carried in from a language that requires them. Luau does not, and
-    the parentheses hide where the condition actually ends when it grows.
+    This is a habit from a language that requires the parentheses. Luau does
+    not require them. When the condition grows, the parentheses hide where
+    the condition ends.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         each_stmt(ctx, out, |ctx, s, out| {
@@ -215,10 +216,10 @@ impl ParentheseConditions {
 
 // --- shared ----------------------------------------------------------------
 
-/// Whether a comment sits inside this span, which makes an empty block deliberate
+/// Returns true if a comment sits inside this span. A comment makes an empty block intentional.
 fn holds_comment(ctx: &LintCtx<'_>, span: TokSpan) -> bool {
     let (lo, hi) = match span.is_empty() {
-        // an empty block has no tokens, so look between the ones around it
+        // An empty block has no tokens, so look between the tokens around it.
         true => {
             let before = span
                 .start

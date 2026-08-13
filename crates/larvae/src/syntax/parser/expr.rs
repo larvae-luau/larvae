@@ -1,4 +1,4 @@
-//! Expressions, precedence climbing and the suffixed chain
+//! Expressions: precedence climbing and the suffixed chain.
 
 use crate::syntax::lexer::TokKind;
 
@@ -123,7 +123,7 @@ impl<'a> Parser<'a> {
             },
         };
 
-        // `expr :: T` binds tighter than any binary operator
+        // `expr :: T` binds more tightly than any binary operator.
         while self.at("::") {
             self.bump();
             let ty = self.type_()?;
@@ -190,7 +190,7 @@ impl<'a> Parser<'a> {
 
                     let method = self.expect_name()?;
 
-                    // a method call takes type arguments too, `obj:m<<T>>()`
+                    // A method call also takes type arguments: `obj:m<<T>>()`.
                     let type_args = if self.at("<") && self.text_at(1) == "<" {
                         Some(self.angle_span()?)
                     } else {
@@ -209,18 +209,19 @@ impl<'a> Parser<'a> {
                 }
 
                 /*
-                Explicit type instantiation, `f<<T>>()`, which Luau calls a
-                turbofish. This is the only place two `<` sit next to each
-                other: no expression starts with `<`, and Luau has no shift
-                operator, so there is nothing to disambiguate against.
+                This is an explicit type instantiation, `f<<T>>()`, which
+                Luau calls a turbofish. It is the only place where two `<`
+                sit next to each other. No expression starts with `<`, and
+                Luau has no shift operator. So there is no other reading to
+                separate this from.
 
-                The argument is a type or a type pack, so `<<number>>`,
+                The argument is a type or a type pack. So `<<number>>`,
                 `<<(number, string)>>`, `<<()>>` and `<<...number>>` are all
-                legal. `angle_span` already depth counts brackets, which is why
-                the nested pair needs no special case.
+                legal. `angle_span` already counts bracket depth. That is the
+                reason the nested pair needs no special case.
 
-                A turbofish only ever precedes a call, so `call_args` is
-                required rather than optional, and reports it when missing.
+                A turbofish always comes before a call. So `call_args` is
+                required, not optional, and the parser reports a missing one.
                 */
                 "<" if self.text_at(1) == "<" => {
                     let type_args = Some(self.angle_span()?);

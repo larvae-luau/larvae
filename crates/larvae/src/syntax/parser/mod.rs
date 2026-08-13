@@ -1,10 +1,12 @@
 /*!
-Recursive descent parser for the full Luau grammar, modeled on the official
-Parser.cpp, it produces the token span tree in [`crate::syntax::ast`]
+A recursive descent parser for the full Luau grammar, modeled on the
+official Parser.cpp. It produces the token span tree in
+[`crate::syntax::ast`].
 
-Types are parsed for their extent but not interpreted, that is deliberate,
-a rule that needs type structure can parse the span later, recursion is
-depth guarded so pathological nesting is a clean error and never a crash
+The parser reads types for their extent, but it does not interpret them.
+That is intentional. A rule that needs type structure can parse the span
+later. The recursion has a depth guard. So pathological nesting is a clean
+error and never a crash.
 */
 
 use crate::syntax::ast::*;
@@ -19,8 +21,8 @@ pub struct ParseError {
     pub message: String,
 }
 
-/// Nesting limit, deep enough for real code and shallow enough to not blow
-/// the stack, darklua's crash class does not exist here
+/// The nesting limit. It is deep enough for real code, and shallow enough to
+/// protect the stack. The crash class of darklua does not exist here.
 const MAX_DEPTH: u32 = 180;
 const UNARY_PRIORITY: u8 = 12;
 
@@ -41,8 +43,9 @@ pub fn parse(src: &str, toks: &[Tok]) -> Result<Chunk, ParseError> {
     Ok(Chunk { block })
 }
 
-/// Parse one expression covering the whole token stream, for a source slice
-/// somebody else cut, like a worm's `host` span holding an attribute value
+/// Parses one expression that covers the whole token stream. Use this for a
+/// source slice that another caller cut, for example the `host` span of a
+/// worm that holds an attribute value.
 pub fn parse_expr(src: &str, toks: &[Tok]) -> Result<Expr, ParseError> {
     let mut p = Parser {
         src,
@@ -202,7 +205,8 @@ fn is_compound_op(s: &str) -> bool {
     matches!(s, "+=" | "-=" | "*=" | "/=" | "%=" | "^=" | "..=" | "//=")
 }
 
-/// Left and right binding power, right lower than left means right associative
+/// The left and right binding power. A right value lower than the left value
+/// means the operator is right associative.
 fn binop_priority(s: &str) -> Option<(u8, u8)> {
     Some(match s {
         "or" => (1, 1),

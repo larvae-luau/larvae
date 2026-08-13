@@ -1,4 +1,4 @@
-//! `larvae worm <command>`, for developing a worm before anyone can install it
+//! `larvae worm <command>` supports worm development before a user can install the worm.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -9,52 +9,52 @@ use clap::Subcommand;
 use crate::ui;
 use crate::worm::Worm;
 
-/// Luau type definitions for the worm API, written by `larvae worm types`
+/// Luau type definitions for the worm API; `larvae worm types` writes them
 pub const TYPES: &str = include_str!("../worm/worm.d.luau");
 
-/// Where `types` writes when nothing is asked for
+/// The path where `types` writes when the user gives no path
 const TYPES_FILE: &str = "worm.d.luau";
 
-/// luau-lsp's definition files, a map of package name to path
+/// The definition files setting of luau-lsp, a map of package name to path
 const DEFINITIONS: &str = "luau-lsp.types.definitionFiles";
 
-/// The package name our types load under, so a second tool's entry sits beside it
+/// The package name for the types, so the entry of a second tool can sit beside it
 const PACKAGE: &str = "larvae-worm";
 
 #[derive(Subcommand)]
 pub enum WormCommand {
-    /// Run a worm from a directory over one file, no project or install needed
+    /// Run a worm from a directory over one file; the run needs no project or install
     Run {
-        /// Directory holding worm.toml and its artifact
+        /// Directory that holds worm.toml and its artifact
         worm: PathBuf,
         /// File to pass through the worm
         file: PathBuf,
-        /// TOML handed to the worm as its [worms.<name>.config] table
+        /// TOML given to the worm as its [worms.<name>.config] table
         #[arg(long)]
         config: Option<PathBuf>,
         /// Write the result here instead of to stdout
         #[arg(long, short)]
         out: Option<PathBuf>,
-        /// Format the file instead of transforming it
+        /// Format the file; do not transform it
         #[arg(long)]
         fmt: bool,
-        /// Lint the file instead of transforming it
+        /// Lint the file; do not transform it
         #[arg(long, conflicts_with = "fmt")]
         lint: bool,
     },
 
-    /// Report what a worm declares, without running it
+    /// Report what a worm declares; do not run it
     Info {
-        /// Directory holding worm.toml and its artifact
+        /// Directory that holds worm.toml and its artifact
         worm: PathBuf,
     },
 
     /// Write the Luau type definitions for worm authors
     Types {
-        /// Where to write, defaults to ./worm.d.luau
+        /// The output path; the default is ./worm.d.luau
         #[arg(long, short)]
         out: Option<PathBuf>,
-        /// Print to stdout instead of writing a file
+        /// Print to stdout; do not write a file
         #[arg(long)]
         stdout: bool,
     },
@@ -99,8 +99,8 @@ fn run_worm(
 
     let mut worm = Worm::load(dir)?;
 
-    // the same handover a project run does, so a worm reading its config at
-    // init sees it here too
+    // The same handover as a project run, so a worm that reads its config at
+    // init sees the config here too.
     worm.init(&value, &Default::default())?;
 
     if fmt {
@@ -120,9 +120,9 @@ fn run_worm(
     }
 
     /*
-    Line preservation is the property most easily broken by accident and the
-    hardest to notice, so say it every run rather than making an author think
-    to check.
+    An accident breaks line preservation most easily, and the break is hard
+    to see. So the command reports the line counts on every run, and the
+    author does not have to remember a check.
     */
     let (before, after) = (source.lines().count(), outcome.text.lines().count());
 
@@ -149,13 +149,13 @@ fn run_worm(
 }
 
 /*
-`--fmt`, the formatting half of the dev loop.
+`--fmt`, the format half of the dev loop.
 
-Rendering uses the default style since there is no project here to read one
-from. The output is then formatted a second time and compared, because
-idempotence is the worm's own guarantee — larvae never double-formats at run
-time — and the dev loop is where breaking it should surface, not a user's
-diff.
+The render uses the default style, because no project supplies a style here.
+The command then formats the output a second time and compares the results.
+Idempotence is a guarantee that the worm gives, because larvae never formats
+twice at run time. A break of that guarantee must appear in the dev loop and
+not in the diff of a user.
 */
 fn fmt_worm(worm: &mut Worm, source: &str, out: Option<&Path>) -> Result<ExitCode> {
     let cfg = crate::fmt::FmtConfig::default();
@@ -195,11 +195,11 @@ fn fmt_worm(worm: &mut Worm, source: &str, out: Option<&Path>) -> Result<ExitCod
 }
 
 /*
-`--lint`, the linting half.
+`--lint`, the lint half.
 
-Levels come from the manifest's own defaults, since there is no project and
-no `[lint.rules]` here. The exit code answers the same way `larvae lint`
-would, so a worm author's fixture files can assert on it.
+The levels come from the defaults of the manifest, because there is no
+project and no `[lint.rules]` here. The exit code follows the same rule as
+`larvae lint`, so the fixture files of a worm author can assert on it.
 */
 fn lint_worm(worm: &mut Worm, file: &Path, source: &str) -> Result<ExitCode> {
     let reply = worm.lint(source)?;
@@ -287,8 +287,8 @@ fn info(dir: &Path) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Render a rule default for display. We build toml without the serializer,
-/// so there is no Display to lean on and scalars are all a default can be.
+/// Render a rule default for display. The code builds toml without the
+/// serializer, so no Display exists, and a default can only be a scalar.
 fn scalar(value: &Option<toml::Value>) -> String {
     match value {
         None => "unset".to_owned(),
@@ -326,11 +326,12 @@ fn types(out: Option<&Path>, stdout: bool) -> Result<ExitCode> {
 }
 
 /*
-Add the definitions file to the project's luau-lsp settings.
+Add the definitions file to the luau-lsp settings of the project.
 
-Project settings this time, not the user's. A definitions file lives beside the
-worm it describes, so the setting belongs to the repo and travels with it,
-unlike the TOML schema which is one URL good for every project at once.
+This function writes project settings and not user settings. A definitions
+file sits beside the worm that it describes. So the setting belongs to the
+repository and moves with it. The TOML schema differs: one URL covers every
+project.
 */
 fn wire_luau_lsp(types: &Path) -> Result<()> {
     let settings = PathBuf::from(".vscode/settings.json");
@@ -339,9 +340,9 @@ fn wire_luau_lsp(types: &Path) -> Result<()> {
 
     let changed = crate::commands::code::edit_settings(&settings, move |table| {
         /*
-        A map of package name to path, not a list. The neighbouring
-        documentationFiles is an array, which is an easy thing to assume this
-        one is too.
+        A map of package name to path, not a list. The adjacent
+        documentationFiles is an array, so it is easy to assume that this
+        setting is also an array.
         */
         let files = table
             .entry(DEFINITIONS)
@@ -385,8 +386,8 @@ mod tests {
     }
 
     /*
-    The Kind union is written by hand so it reads well, which means it can drift
-    from the enum. Every name has to exist on both sides, in both directions.
+    The author writes the Kind union by hand for readability, so it can drift
+    from the enum. Every name must exist on both sides, in both directions.
     */
     #[test]
     fn the_kind_union_matches_the_ast() {
@@ -420,9 +421,10 @@ mod tests {
     }
 
     /*
-    luau-lsp declares definitionFiles as an object of package name to path,
-    while documentationFiles beside it is an array. Getting that backwards
-    produces settings the extension silently ignores, so pin the shape.
+    luau-lsp declares definitionFiles as an object of package name to path.
+    The adjacent documentationFiles is an array. A swap of the two shapes
+    produces settings that the extension ignores without a message, so the
+    test pins the shape.
     */
     #[test]
     fn the_luau_lsp_entry_is_a_map_and_not_a_list() {
@@ -445,7 +447,7 @@ mod tests {
         assert_eq!(json[DEFINITIONS][PACKAGE], "worm.d.luau");
     }
 
-    /// The definitions have to be Luau a language server can actually load
+    /// The definitions must be valid Luau that a language server can load
     #[test]
     fn the_definitions_parse_as_luau() {
         let lua = mlua::Lua::new();

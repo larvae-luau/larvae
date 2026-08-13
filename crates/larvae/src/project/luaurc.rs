@@ -1,4 +1,5 @@
-//! .luaurc discovery and alias lookup per the Luau RFCs, parsed once up front, lookup walks upward and nearest wins
+//! .luaurc discovery and alias lookup, as the Luau RFCs specify. The module
+//! parses each file once. A lookup walks upward, and the nearest entry wins.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -9,12 +10,12 @@ use serde::Deserialize;
 struct LuaurcFile {
     #[serde(default)]
     aliases: HashMap<String, String>,
-    // other .luaurc fields are not our business, tolerate them
+    // larvae does not own the other .luaurc fields, so it accepts them.
     #[serde(flatten)]
     _rest: HashMap<String, serde_json::Value>,
 }
 
-/// Aliases defined by the `.luaurc` in one directory (keys lowercased)
+/// Aliases that the `.luaurc` in one directory defines (keys in lowercase)
 #[derive(Debug, Default)]
 pub struct DirAliases {
     /// Alias name (lowercase) -> (value, directory that defined it)
@@ -23,7 +24,7 @@ pub struct DirAliases {
 
 #[derive(Debug, Default)]
 pub struct LuaurcIndex {
-    /// Directory -> aliases defined by the `.luaurc` directly in it
+    /// Directory -> aliases that the `.luaurc` directly in it defines
     dirs: HashMap<PathBuf, DirAliases>,
     root: PathBuf,
 }
@@ -36,11 +37,11 @@ impl LuaurcIndex {
         }
     }
 
-    /// Parse and register a .luaurc, a bad file is skipped with an error message
+    /// Parse and register a .luaurc; a bad file gets an error message and no entry
     pub fn add_file(&mut self, path: &Path) -> Result<(), String> {
         let text = std::fs::read_to_string(path)
             .map_err(|e| format!("failed to read {}: {e}", crate::ui::rel(path)))?;
-        // .luaurc is JSON-with-comments, json5 accepts a superset of that
+        // .luaurc is JSON with comments; json5 accepts a superset of that.
         let parsed: LuaurcFile = json5::from_str(&text)
             .map_err(|e| format!("invalid .luaurc at {}: {e}", crate::ui::rel(path)))?;
         let dir = path.parent().unwrap_or(Path::new("")).to_owned();
@@ -54,7 +55,8 @@ impl LuaurcIndex {
         Ok(())
     }
 
-    /// Look up an alias for a file, walking upward to the root, returns the value and its defining dir
+    /// Look up an alias for a file with a walk up to the root; returns the value
+    /// and the directory that defines it
     pub fn lookup(&self, from_dir: &Path, alias: &str) -> Option<(&str, &Path)> {
         let mut dir = from_dir;
 
@@ -70,7 +72,7 @@ impl LuaurcIndex {
             }
 
             dir = dir.parent()?;
-            // Never walk above the project root
+            // The walk never goes above the project root.
             if !dir.starts_with(&self.root) && dir != self.root {
                 return None;
             }
@@ -110,7 +112,7 @@ mod tests {
         idx.add_file(&root.join(".luaurc")).unwrap();
         idx.add_file(&root.join("src/.luaurc")).unwrap();
 
-        // Nearest wins per key, missing keys inherit from parents
+        // The nearest entry wins for each key; a missing key inherits from a parent.
         let (v, d) = idx.lookup(&root.join("src/deep"), "util").unwrap();
         assert_eq!(v, "./local-util");
         assert_eq!(d, root.join("src"));

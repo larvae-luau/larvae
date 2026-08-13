@@ -1,13 +1,13 @@
 /*!
-Getting a worm out of a GitHub release and onto disk.
+This module fetches a worm from a GitHub release and writes it to disk.
 
-A worm is code somebody else wrote, fetched from a URL, so this is the part
-where being careful matters more than being clever. Everything is pinned by
-tag, verified against a recorded hash on every later build, and unpacked with
-paths we refuse to trust.
+A worm is code that an other author wrote, fetched from a URL. Thus this
+module applies strict checks. Larvae pins each worm by tag. Larvae verifies
+the recorded hash on every later build. Larvae does not trust the paths in the
+archive.
 
-Unpacked worms live in the project's cache directory, one per name and version,
-so a second build does no network at all.
+Unpacked worms live in the project's cache directory, one directory for each
+name and version. Thus a second build uses no network at all.
 */
 
 use std::io::Read;
@@ -18,21 +18,21 @@ use anyhow::{Context, Result, bail};
 use crate::config::worms::Source;
 use crate::net::{github, http};
 
-/// A worm archive is a manifest and one artifact, nothing near this big
+/// A worm archive is a manifest and one artifact, much smaller than this limit
 const MAX_ARCHIVE: u64 = 64 * 1024 * 1024;
 
-/// Where an unpacked worm lives, `<cache>/worms/<name>/<version>`
+/// The directory of an unpacked worm, `<cache>/worms/<name>/<version>`
 pub fn install_dir(cache: &Path, name: &str, version: &str) -> PathBuf {
     cache.join("worms").join(name).join(version)
 }
 
 /*
-Resolve a pinned worm to a directory, fetching only if it is not already there.
+Resolve a pinned worm to a directory. Fetch only if the worm is not there.
 
-The hash is recorded on first fetch and checked on every build after, so a
-release asset that changes under a tag is caught rather than silently trusted.
-GitHub allows replacing an asset without moving the tag, which is exactly the
-case a pin alone does not cover.
+Larvae records the hash on the first fetch and checks it on every later build.
+Thus larvae catches a release asset that changes under a tag and does not
+trust it silently. GitHub permits an author to replace an asset without a move
+of the tag. A pin alone does not cover that case.
 */
 pub fn ensure(cache: &Path, name: &str, source: &Source) -> Result<PathBuf> {
     let Source::Release {
@@ -101,7 +101,7 @@ pub fn ensure(cache: &Path, name: &str, source: &Source) -> Result<PathBuf> {
     Ok(dir)
 }
 
-/// Whether an installed worm still hashes to what it did when it was fetched
+/// Check if an installed worm still hashes to the value recorded at fetch time
 pub fn verify(dir: &Path, expected: &str) -> Result<()> {
     let stamp = dir.join(".sha256");
     let recorded = std::fs::read_to_string(&stamp).unwrap_or_default();
@@ -118,12 +118,12 @@ pub fn verify(dir: &Path, expected: &str) -> Result<()> {
 }
 
 /*
-Unpack every file, refusing any path that would land outside the directory.
+Unpack every file. Refuse each path that points outside the directory.
 
-A zip entry names its own path, so a crafted archive can say `../../..` and
-write wherever it likes. We take the base name components ourselves rather
-than trusting the entry, which is the only version of this that is not a
-running argument with an attacker.
+A zip entry names its own path. Thus a crafted archive can say `../../..` and
+write to any location. Larvae builds the path from the plain name components
+and does not trust the entry. This approach removes the attack instead of an
+attempt to clean each bad path.
 */
 fn unpack(archive: &[u8], dir: &Path) -> Result<()> {
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(archive))
@@ -169,9 +169,10 @@ fn unpack(archive: &[u8], dir: &Path) -> Result<()> {
 }
 
 /*
-A relative path built only from ordinary components. Anything absolute, any
-`..`, any drive prefix and any empty result is refused rather than sanitised,
-because a half understood path is not one worth writing to.
+Build a relative path from plain components only. Larvae refuses an absolute
+path, a `..` component, a drive prefix, and an empty result. Larvae does not
+sanitize these paths, because a path that is not fully understood is not safe
+to write to.
 */
 fn safe_path(name: &str) -> Option<PathBuf> {
     let mut out = PathBuf::new();
@@ -191,7 +192,7 @@ fn safe_path(name: &str) -> Option<PathBuf> {
     (!out.as_os_str().is_empty()).then_some(out)
 }
 
-/// Hex sha256, so a recorded digest is comparable and readable
+/// Compute a hex sha256, so a recorded digest is comparable and readable
 fn sha256(bytes: &[u8]) -> String {
     let digest = <sha2::Sha256 as sha2::Digest>::digest(bytes);
 
@@ -211,7 +212,7 @@ mod tests {
         );
     }
 
-    /// The whole reason we do not trust an entry's own path
+    /// This test shows the reason larvae does not trust the path of an entry
     #[test]
     fn traversal_is_refused_rather_than_cleaned() {
         assert_eq!(safe_path("../../etc/passwd"), None);
@@ -279,7 +280,7 @@ mod tests {
         assert!(dir.path().join("sub/init.luau").exists());
     }
 
-    /// A crafted archive must not be able to write outside its directory
+    /// A crafted archive must not write outside its directory
     #[test]
     fn an_archive_cannot_write_outside_its_directory() {
         let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));

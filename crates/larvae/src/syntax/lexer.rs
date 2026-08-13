@@ -1,26 +1,28 @@
 /*!
-A small fast Luau lexer, tokens carry byte spans into the source, trivia
-is skipped since the rewriter splices ranges and never touches the rest,
-the token surface covers require scanning and grows with the parser later
+A small, fast Luau lexer. Tokens carry byte spans into the source. The lexer
+skips trivia, because the rewriter splices ranges and never touches the rest.
+The token surface covers require scanning, and it grows with the parser
+later.
 */
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokKind {
     Ident,
-    /// A string literal, inner is the content between the quotes, what the rewriter replaces
+    /// A string literal. The inner range is the content between the quotes.
+    /// The rewriter replaces that content.
     Str {
         inner_start: u32,
         inner_end: u32,
     },
 
-    /// Backtick interpolated string (treated as a single opaque token)
+    /// A backtick interpolated string. The lexer treats it as one opaque token.
     InterpStr,
     Number,
     LParen,
     RParen,
     Dot,
     Colon,
-    /// Any other operator or punctuation, multi char ops are one token
+    /// Any other operator or punctuation. A multi-character operator is one token.
     Symbol,
 }
 
@@ -43,11 +45,11 @@ pub struct LexError {
     pub message: String,
 }
 
-/// Significant tokens plus the comment spans the rewriter may want to touch
+/// The significant tokens, plus the comment spans that the rewriter can touch.
 #[derive(Debug, Default)]
 pub struct Lexed {
     pub toks: Vec<Tok>,
-    /// Byte ranges of every comment, line and long form
+    /// The byte ranges of every comment, in the line form and the long form.
     pub comments: Vec<(u32, u32)>,
 }
 
@@ -70,7 +72,7 @@ pub fn lex(src: &str) -> Result<Lexed, LexError> {
             b' ' | b'\t' | b'\r' | b'\n' => i += 1,
 
             b'-' if i + 1 < b.len() && b[i + 1] == b'-' => {
-                // Comment, long form `--[=*[` or line comment
+                // This is a comment: the long form `--[=*[` or a line comment.
                 let start = i;
 
                 match try_long_bracket(b, i + 2) {
@@ -90,7 +92,7 @@ pub fn lex(src: &str) -> Result<Lexed, LexError> {
 
             b'[' => match try_long_bracket(b, i) {
                 LongBracket::Ends(end) => {
-                    // Long string, inner range excludes the brackets
+                    // This is a long string. The inner range excludes the brackets.
                     let level = level_of(b, i);
                     toks.push(Tok {
                         kind: TokKind::Str {
@@ -172,7 +174,8 @@ pub fn lex(src: &str) -> Result<Lexed, LexError> {
                             i += 1;
                         }
 
-                        // skip nested strings inside braces so their contents can't unbalance us
+                        // Skip nested strings inside braces. Their contents
+                        // must not unbalance the depth count.
                         b'"' | b'\'' if brace_depth > 0 => {
                             let q = b[i];
                             i += 1;
@@ -214,7 +217,7 @@ pub fn lex(src: &str) -> Result<Lexed, LexError> {
             }
 
             b'.' if i + 1 < b.len() && b[i + 1].is_ascii_digit() => {
-                // `.5` is a number, every other dot is an operator
+                // `.5` is a number. Every other dot is an operator.
                 let start = i;
                 i = scan_number(b, i);
                 toks.push(Tok {
@@ -239,14 +242,14 @@ pub fn lex(src: &str) -> Result<Lexed, LexError> {
             }
 
             /*
-            A byte with the high bit set is the start of a character that only
-            Luau string and comment content may hold, and both are consumed
-            whole above. Reaching here means it sits in code, where Luau does
-            not allow it either.
+            A byte with the high bit set starts a character that only Luau
+            string and comment content can hold. The code above consumes both
+            whole. So a byte that reaches this arm sits in code, and Luau
+            does not allow it there either.
 
-            It is reported rather than tokenised because a token one byte long
-            would cut the character in half, and every later slice of that span
-            would panic on the boundary.
+            The lexer reports it instead of a token, because a one-byte token
+            would cut the character in half. Every later slice of that span
+            would then panic on the character boundary.
             */
             _ if c >= 0x80 => {
                 let ch = src[i..]
@@ -273,7 +276,7 @@ pub fn lex(src: &str) -> Result<Lexed, LexError> {
     Ok(Lexed { toks, comments })
 }
 
-/// Longest operator or punctuation at `pos`, returns its length and kind
+/// Finds the longest operator or punctuation at `pos`. It returns the length and the kind.
 fn symbol_at(b: &[u8], pos: usize) -> (usize, TokKind) {
     const THREE: [&[u8]; 3] = [b"...", b"..=", b"//="];
     const TWO: [&[u8]; 14] = [
@@ -330,14 +333,13 @@ fn level_of(b: &[u8], open: usize) -> usize {
     level
 }
 
-/// Offset just past the matching close bracket when pos starts a long bracket
-/// What sits at a position that might open a `[[` or `--[==[` bracket
+/// Describes what sits at a position that can open a `[[` or `--[==[` bracket.
 enum LongBracket {
-    /// Not a long bracket, so `[` is punctuation and `--` starts a line comment
+    /// This is not a long bracket. So `[` is punctuation, and `--` starts a line comment.
     No,
-    /// Closes just past this byte
+    /// The bracket closes just past this byte.
     Ends(usize),
-    /// Opened and never closed, which Luau rejects and so does larvae
+    /// The bracket opened and never closed. Luau rejects this, and larvae rejects it too.
     Unterminated,
 }
 
@@ -374,11 +376,12 @@ fn try_long_bracket(b: &[u8], pos: usize) -> LongBracket {
     }
 
     /*
-    Running to the end of the file was once treated as one token reaching EOF.
-    That reported no error and produced a token whose inner range was two bytes
-    short of its own content, so the text came back truncated and formatting the
-    result grew a line every pass. An unterminated bracket is a syntax error and
-    is now reported as one.
+    An earlier version treated a run to the end of the file as one token that
+    reached EOF. That version reported no error. It produced a token whose
+    inner range was two bytes short of its own content. So the text came back
+    truncated, and each format pass added one line to the result. An
+    unterminated bracket is a syntax error, and the lexer now reports it as
+    one.
     */
     LongBracket::Unterminated
 }
@@ -406,7 +409,7 @@ fn scan_number(b: &[u8], mut i: usize) -> usize {
             }
 
             b'.' => {
-                // Stop before `..` (concat operator after a number)
+                // Stop before `..`, the concatenation operator after a number.
                 if i + 1 < b.len() && b[i + 1] == b'.' {
                     break;
                 }

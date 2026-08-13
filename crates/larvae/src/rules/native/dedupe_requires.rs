@@ -1,10 +1,12 @@
 /*!
-dedupe_requires, two top level `local X = require(...)` that end up pointing
-at the same module collapse, the later one becomes an alias of the first
+dedupe_requires: when two top level `local X = require(...)` statements
+point at the same module, the rule folds them. The later local becomes an
+alias of the first local.
 
-Aliasing beats renaming every use, the first local is always in scope at top
-level so the rewrite is local to one statement, and require caching means the
-second call was never doing work anyway, only the lookup cost goes away
+An alias is better than a rename of each use. The first local is always
+in scope at top level, so the rewrite stays local to one statement.
+Require caching means that the second call did no work. Only the lookup
+cost goes away.
 */
 
 use std::collections::HashMap;
@@ -22,7 +24,7 @@ pub fn apply(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
         };
 
         let (start, end) = ctx.bytes(value.span());
-        // the site inside this value carries the form the rewriter settled on
+        // The site inside this value carries the form that the rewriter selected.
         let Some((_, form)) = ctx
             .require_forms
             .iter()
@@ -36,7 +38,7 @@ pub fn apply(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
             continue;
         };
 
-        // a second local of the same name would alias itself, leave it alone
+        // A second local with the same name would alias itself. Keep it.
         if kept == name {
             continue;
         }
@@ -47,9 +49,9 @@ pub fn apply(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
 }
 
 /*
-`local NAME = require(...)`, nothing else, a type annotation or a second
-binding changes what the alias would mean, and const would make the alias a
-constant of a value that is not one
+Match `local NAME = require(...)` and nothing else. A type annotation or
+a second binding changes the meaning of the alias. A const would make the
+alias a constant of a value that is not constant.
 */
 fn simple_require_local<'a, 'src>(
     ctx: &'a RuleCtx<'src>,
@@ -99,7 +101,7 @@ mod tests {
             ),
             "local A = require(\"@pkg/x\")\nlocal B = A\nreturn A, B\n"
         );
-        // three of them all fold onto the first
+        // All three fold onto the first.
         assert_eq!(
             run(
                 ON,
@@ -107,7 +109,7 @@ mod tests {
             ),
             "local A = require(\"./x\")\nlocal B = A\nlocal C = A\n"
         );
-        // a multi line duplicate keeps its line count
+        // A multi line duplicate keeps its line count.
         assert_eq!(
             run(
                 ON,
@@ -119,20 +121,20 @@ mod tests {
 
     #[test]
     fn leaves_everything_it_cannot_prove_alone() {
-        // different modules
+        // Different modules.
         let two = "local A = require(\"./x\")\nlocal B = require(\"./y\")\n";
         assert_eq!(run(ON, two), two);
-        // not top level
+        // Not top level.
         let nested = "local A = require(\"./x\")\ndo\n    local B = require(\"./x\")\nend\n";
         assert_eq!(run(ON, nested), nested);
-        // annotated, const and multi binding forms
+        // Annotated, const, and multi binding forms.
         let annotated = "local A = require(\"./x\")\nlocal B: any = require(\"./x\")\n";
         assert_eq!(run(ON, annotated), annotated);
         let konst = "local A = require(\"./x\")\nconst B = require(\"./x\")\n";
         assert_eq!(run(ON, konst), konst);
         let multi = "local A = require(\"./x\")\nlocal B, C = require(\"./x\"), 1\n";
         assert_eq!(run(ON, multi), multi);
-        // same name twice, aliasing would be a no op
+        // The same name twice. An alias would have no effect.
         let shadow = "local A = require(\"./x\")\nlocal A = require(\"./x\")\n";
         assert_eq!(run(ON, shadow), shadow);
     }

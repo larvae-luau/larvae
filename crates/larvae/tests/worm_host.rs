@@ -1,8 +1,9 @@
-//! Both halves of the worm ABI against each other, over a real wasm module
+//! These tests run both halves of the worm ABI against each other, over a
+//! real wasm module.
 //!
-//! `tests/fixtures/echo_worm.wasm` is built from `crates/echo-worm`, which uses
-//! the `larvae_worm::frontend!` macro a real worm would. Rebuild instructions
-//! are at the top of that crate's manifest.
+//! `tests/fixtures/echo_worm.wasm` comes from `crates/echo-worm`, which uses
+//! the `larvae_worm::frontend!` macro in the same way as a real worm. The
+//! rebuild instructions are at the top of that crate's manifest.
 
 use larvae::worm::WasmWorm;
 
@@ -37,7 +38,8 @@ fn an_empty_file_is_not_a_special_case() {
     assert_eq!(out.text, "|");
 }
 
-/// Nothing here should grow the guest heap without bound, so hammer one instance
+/// Nothing here can grow the guest heap without a limit, so the test runs one
+/// instance many times.
 #[test]
 fn one_instance_serves_many_files() {
     let mut worm = load();
@@ -70,8 +72,8 @@ fn into_source_turns_a_reported_problem_into_one() {
     assert!(err.to_string().contains("refused"));
 }
 
-/// A worm bug reaches us as a trap, and must stay recoverable so one bad file
-/// does not take down a watch session
+/// A worm bug reaches larvae as a trap. The trap must stay recoverable, so
+/// that one bad file does not stop a watch session.
 #[test]
 fn a_trap_is_an_error_and_not_a_crash() {
     let err = load().transform("TRAP", "").unwrap_err();
@@ -85,7 +87,7 @@ fn a_trap_does_not_poison_the_rest_of_the_build() {
 
     assert!(worm.transform("TRAP", "").is_err());
 
-    // the same instance keeps working, which is what makes per file recovery viable
+    // The same instance continues to work. This makes per-file recovery possible.
     let out = worm.transform("after", "cfg").unwrap();
 
     assert_eq!(out.text, "after|cfg");
@@ -139,7 +141,7 @@ mod rules {
             .collect()
     }
 
-    /// rule 0 reads kind, text, span and children back across the boundary
+    /// Rule 0 reads kind, text, span, and children back across the boundary.
     #[test]
     fn a_wasm_rule_reads_the_real_tree() {
         let mut worm = WasmWorm::load(FIXTURE).unwrap();
@@ -152,7 +154,7 @@ mod rules {
         assert_eq!(edits[0].2, "CallExpr|print(\"a\", 2)|0:13|3");
     }
 
-    /// rule 1 deletes, and larvae is the one that keeps the newlines
+    /// Rule 1 deletes a node, and larvae keeps the newlines.
     #[test]
     fn a_wasm_rule_removing_a_node_preserves_lines() {
         let src = "local f = function()\n  return 1\nend\n";
@@ -169,7 +171,7 @@ mod rules {
         );
     }
 
-    /// rule 2 walks up
+    /// Rule 2 walks up to the parent.
     #[test]
     fn a_wasm_rule_can_reach_a_parent() {
         let mut worm = WasmWorm::load(FIXTURE).unwrap();
@@ -195,9 +197,9 @@ mod rules {
     }
 
     /*
-    The epoch guard itself is exercised through Luau, where a worm can stash a
-    handle in an upvalue. Here we only check that two files never share one, so
-    a stashed epoch could not pass by luck.
+    The Luau tests exercise the epoch guard itself, because a Luau worm can
+    store a handle in an upvalue. This test only checks that two files never
+    share an epoch, so a stored epoch cannot pass by chance.
     */
     #[test]
     fn no_two_files_share_an_epoch() {

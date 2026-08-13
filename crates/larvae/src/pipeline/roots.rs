@@ -1,14 +1,14 @@
 /*!
 Input roots
 
-One root is the common case and it flattens, `src/a.luau` lands at
-`dist/a.luau`, which is what every existing project already expects
+One root is the common case, and it flattens: `src/a.luau` lands at
+`dist/a.luau`. Every existing project expects this layout.
 
-More than one root cannot flatten, two roots would collide the moment both
-held an `init.luau`. So each keeps its own directory, `src/a.luau` becomes
-`dist/src/a.luau` and `vendor/x.luau` becomes `dist/vendor/x.luau`. The rule
-is worth stating plainly because it is the one place output layout depends
-on how many roots there are
+More than one root cannot flatten; two roots would collide when both hold an
+`init.luau`. So each root keeps its own directory: `src/a.luau` becomes
+`dist/src/a.luau`, and `vendor/x.luau` becomes `dist/vendor/x.luau`. This is
+the one place where the output layout depends on the root count, so the rule
+is written here in plain words.
 */
 
 use std::path::{Path, PathBuf};
@@ -17,11 +17,11 @@ use anyhow::{Context, Result};
 
 use crate::config::Config;
 
-/// One input directory and where its files land under the output
+/// One input directory and the location of its files under the output
 pub struct Root {
     /// Absolute path on disk
     pub dir: PathBuf,
-    /// Prefix added under the output directory, empty for a single root
+    /// The prefix under the output directory; empty for a single root
     pub prefix: PathBuf,
 }
 
@@ -43,7 +43,7 @@ pub fn resolve(project_root: &Path, config: &Config) -> Result<Vec<Root>> {
 
         out.push(Root {
             dir,
-            // keeping the root's own path apart is what stops two roots colliding
+            // The prefix keeps the path of the root, and this stops a collision.
             prefix: if many { rel.clone() } else { PathBuf::new() },
         });
     }
@@ -52,7 +52,7 @@ pub fn resolve(project_root: &Path, config: &Config) -> Result<Vec<Root>> {
 }
 
 impl Root {
-    /// Where a file under this root lands, relative to the output directory
+    /// The destination of a file under this root, relative to the output directory
     pub fn dest(&self, path: &Path) -> Result<PathBuf> {
         let rel = path
             .strip_prefix(&self.dir)
@@ -62,7 +62,7 @@ impl Root {
     }
 }
 
-/// The root a discovered file came from, deepest first so nesting works
+/// The root that owns a discovered file; the deepest root wins, so nested roots work
 pub fn owner<'a>(roots: &'a [Root], path: &Path) -> Option<&'a Root> {
     roots
         .iter()
@@ -70,7 +70,7 @@ pub fn owner<'a>(roots: &'a [Root], path: &Path) -> Option<&'a Root> {
         .max_by_key(|r| r.dir.components().count())
 }
 
-/// Output relative path for a file, or None when no root covers it
+/// The output relative path for a file, or None when no root covers it
 pub fn dest_of(roots: &[Root], path: &Path) -> Option<PathBuf> {
     owner(roots, path).and_then(|r| r.dest(path).ok())
 }

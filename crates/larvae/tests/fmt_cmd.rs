@@ -1,4 +1,4 @@
-//! `larvae fmt`, the three ways it can be run
+//! These tests cover `larvae fmt` and the three ways to run it.
 
 use std::io::Write;
 use std::path::Path;
@@ -62,7 +62,8 @@ fn a_directory_is_walked() {
     assert!(out.contains("2 files"), "{out}");
 }
 
-/// A build output is not the project's to format
+/// A build output does not belong to the project, so the command does not
+/// format it.
 #[test]
 fn generated_directories_are_skipped() {
     let dir = tempfile::tempdir().unwrap();
@@ -101,7 +102,7 @@ fn check_succeeds_on_an_already_formatted_tree() {
     assert!(ok, "{out}");
 }
 
-/// The path an editor calls on every save
+/// An editor calls this path on each save.
 #[test]
 fn stdin_writes_the_result_to_stdout() {
     let mut child = Command::new(bin())
@@ -139,7 +140,7 @@ fn a_file_that_does_not_parse_is_reported_and_left_alone() {
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "local = = =\n");
 }
 
-/// One bad file must not stop the rest of the run
+/// One bad file must not stop the rest of the run.
 #[test]
 fn a_broken_file_does_not_block_its_neighbours() {
     let dir = tempfile::tempdir().unwrap();
@@ -183,7 +184,7 @@ fn the_fmt_table_in_larvae_toml_is_used() {
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "do\n  x()\nend\n");
 }
 
-/// A project already using stylua should switch without editing anything
+/// A project that already uses stylua can switch without an edit to its config.
 #[test]
 fn an_existing_stylua_config_is_honoured() {
     let dir = tempfile::tempdir().unwrap();
@@ -219,7 +220,7 @@ fn larvae_toml_wins_over_stylua_toml() {
     );
 }
 
-/// Without arguments the project's own input directory is what gets formatted
+/// Without arguments, the command formats the project's own input directory.
 #[test]
 fn the_project_input_is_the_default_target() {
     let dir = tempfile::tempdir().unwrap();
@@ -241,8 +242,8 @@ fn the_project_input_is_the_default_target() {
     );
 }
 
-/// A walk passes over what [fmt] excluded, whether it starts at the project
-/// input or at a directory somebody named
+/// The walk skips the paths that [fmt] excludes. This applies when the walk
+/// starts at the project input, and when it starts at a named directory.
 #[test]
 fn an_excluded_path_is_walked_past() {
     let dir = tempfile::tempdir().unwrap();
@@ -281,7 +282,7 @@ fn an_excluded_path_is_walked_past() {
     );
 }
 
-/// Naming the file is saying you meant it, exclude or no exclude
+/// A named file is an explicit request, so the exclude list does not apply.
 #[test]
 fn an_excluded_file_is_still_formatted_when_named() {
     let dir = tempfile::tempdir().unwrap();

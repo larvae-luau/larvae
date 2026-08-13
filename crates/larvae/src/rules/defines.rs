@@ -1,14 +1,14 @@
 /*!
 Compile time constants
 
-`[defines]` in the config names globals and what they stand for, and every
-global reference to one is replaced with its literal. This is the one
-mechanism for build time values, darklua's `inject_global_value` maps onto
-it, and pairing it with compute_expression and remove_unused_if_branch is
-what turns `if DEBUG then` into nothing at all
+The `[defines]` table in the config maps global names to values. Larvae
+replaces each global reference to a defined name with its literal. This is
+the only mechanism for build time values. darklua's `inject_global_value`
+maps onto it. When the user also enables compute_expression and
+remove_unused_if_branch, larvae removes `if DEBUG then` blocks completely.
 
-A name the source bound itself is never touched, which is why this needs
-the scope pass rather than a text match
+Larvae does not change a name that the source binds itself. For this
+reason, the rule uses the scope pass and not a text match.
 */
 
 use std::collections::HashMap;
@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use crate::rules::edits::Edit;
 use crate::rules::engine::RuleCtx;
 
-/// A value a define can stand for, kept to what a Luau literal can express
+/// A value for a define. Larvae limits the set to values that a Luau literal can express.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Bool(bool),
@@ -26,7 +26,7 @@ pub enum Value {
 }
 
 impl Value {
-    /// The literal to write into the output
+    /// The literal that larvae writes into the output.
     pub fn literal(&self, quote: char) -> String {
         match self {
             Value::Bool(b) => b.to_string(),
@@ -40,7 +40,7 @@ impl Value {
     }
 }
 
-/// Read the `[defines]` table, rejecting anything with no literal form
+/// Read the `[defines]` table. Reject each value that has no literal form.
 pub fn parse(table: &toml::Value) -> Result<HashMap<String, Value>, String> {
     let Some(map) = table.as_table() else {
         return Err("[defines] must be a table of names and values".to_string());
@@ -76,7 +76,7 @@ pub fn parse(table: &toml::Value) -> Result<HashMap<String, Value>, String> {
     Ok(out)
 }
 
-/// Replace every global reference to a defined name with its value
+/// Replace each global reference to a defined name with its value.
 pub fn apply(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     if ctx.defines.is_empty() {
         return;
@@ -146,7 +146,7 @@ mod tests {
             run("DEBUG = false", "local function f(DEBUG) return DEBUG end"),
             "local function f(DEBUG) return DEBUG end"
         );
-        // a field of the same name is not the global
+        // A field with the same name is not the global.
         assert_eq!(run("DEBUG = false", "return t.DEBUG"), "return t.DEBUG");
     }
 

@@ -1,4 +1,4 @@
-//! [defines], compile time constants
+//! These tests cover [defines], the table of compile-time constants.
 
 use larvae::config::Config;
 use larvae::pipeline;
@@ -53,7 +53,7 @@ fn a_name_the_source_bound_is_never_touched() {
     let out = pipeline::run(root, &config, true).unwrap();
 
     assert!(!out.has_errors(), "{:?}", out.diags);
-    // nothing changed, every DEBUG here is either a local or a field
+    // The pipeline changes nothing, because each DEBUG here is a local or a field.
     assert!(!read(root, "dist/main.luau").contains("false"));
 }
 
@@ -75,7 +75,7 @@ fn shadowing_only_covers_its_own_block() {
     );
 }
 
-/// The point of defines, a branch folds away entirely
+/// This test shows the main use of defines: the rules remove a full branch.
 #[test]
 fn folding_and_pruning_compose_with_defines() {
     let tmp = project(
@@ -94,7 +94,7 @@ fn folding_and_pruning_compose_with_defines() {
     let got = read(root, "dist/main.luau");
     assert!(!got.contains("dev"), "{got}");
     assert!(got.contains("live"), "{got}");
-    // retain-lines still holds
+    // The output keeps the same line count (retain-lines).
     assert_eq!(got.lines().count(), 5, "{got}");
 }
 

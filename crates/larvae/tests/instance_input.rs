@@ -1,4 +1,5 @@
-//! Reading require(script.Parent.Foo) style requires, the migration path
+//! larvae reads require(script.Parent.Foo) style requires. This is the
+//! migration path.
 
 use larvae::config::Config;
 use larvae::pipeline;
@@ -6,7 +7,7 @@ use larvae::pipeline;
 mod common;
 use common::*;
 
-/// A tree with shared, server and client mounts, the shape legacy games have
+/// A tree with shared, server, and client mounts. Legacy games have this shape.
 fn legacy() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -47,7 +48,7 @@ fn script_relative_chains_resolve() {
     let tmp = legacy();
     let root = tmp.path();
 
-    // an init module, so `script` is the util directory itself
+    // This is an init module, so `script` is the util directory itself.
     write(
         root,
         "src/shared/util/init.luau",
@@ -60,9 +61,9 @@ fn script_relative_chains_resolve() {
     assert!(!out.has_errors(), "{:?}", out.diags);
 
     let got = read(root, "dist/shared/util/init.luau");
-    // a child of the init module's own directory
+    // This target is a child of the init module's own directory.
     assert!(got.contains("require(\"@self/math\")"), "{got}");
-    // up one, so a sibling of the directory
+    // This target is one level up, so it is a sibling of the directory.
     assert!(got.contains("require(\"./config\")"), "{got}");
 }
 
@@ -91,7 +92,7 @@ fn absolute_chains_resolve() {
         got.contains("require(\"@game/ReplicatedStorage/Packages/Signal\")"),
         "{got}"
     );
-    // GetService reads the same as a plain index
+    // GetService reads the same as a plain index.
     assert!(got.contains("require(\"./config\")"), "{got}");
 }
 
@@ -131,9 +132,9 @@ fn a_chain_it_cannot_follow_is_left_alone() {
         root,
         "src/shared/main.luau",
         concat!(
-            // a local standing in for a service, we do not track locals
+            // A local replaces a service here. larvae does not track locals.
             "local a = require(ReplicatedStorage.Packages.Signal)\n",
-            // a computed child
+            // This is a computed child.
             "local b = require(script.Parent[name])\n",
             "return { a, b }\n",
         ),
@@ -150,7 +151,7 @@ fn a_chain_it_cannot_follow_is_left_alone() {
         "{got}"
     );
     assert!(got.contains("require(script.Parent[name])"), "{got}");
-    // both still counted so check can report the blind spot
+    // larvae still counts both, so the check can report the requires it cannot follow.
     assert_eq!(out.stats.requires_dynamic, 2);
 }
 
@@ -175,7 +176,7 @@ fn realm_violations_are_caught_through_a_chain() {
         .find(|d| d.message.contains("keys"))
         .unwrap()
         .message;
-    // the expression is quoted the way it was written, not as a string
+    // The message shows the expression as the author wrote it, not as a string.
     assert!(
         msg.contains("require(game.ServerScriptService.server.keys)"),
         "{msg}"

@@ -1,18 +1,19 @@
 /*!
 A very small constant evaluator
 
-It only has to answer one question, does this expression have a value we can
-write back into the source without changing what the program does. So it
-folds nothing it cannot print exactly, numbers have to land on a whole f64
-inside the range doubles represent exactly, and strings have to be literals
-with no escapes so the bytes going out are the bytes that came in
+The evaluator answers one question: does this expression have a value that
+larvae can write back into the source without a change in program
+behavior? Thus it folds only values that it can print exactly. A number
+must be a whole f64 inside the range that doubles represent exactly. A
+string must be a literal with no escapes. Then the output bytes equal the
+input bytes.
 */
 
 use super::support;
 use crate::rules::engine::RuleCtx;
 use crate::syntax::ast::*;
 
-/// The largest whole number an f64 still represents exactly
+/// The largest whole number that an f64 represents exactly.
 const SAFE_INT: f64 = 9_007_199_254_740_992.0;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -24,13 +25,13 @@ pub enum Value {
 }
 
 impl Value {
-    /// Lua truthiness, only nil and false are false, zero is not
+    /// Lua truthiness. Only nil and false are false. Zero is not false.
     pub fn truthy(&self) -> bool {
         !matches!(self, Value::Nil | Value::Bool(false))
     }
 }
 
-/// Value of an expression when it is a compile time constant
+/// The value of an expression when it is a compile time constant.
 pub fn eval(ctx: &RuleCtx, e: &Expr) -> Option<Value> {
     match e {
         Expr::Nil(_) => Some(Value::Nil),
@@ -45,7 +46,7 @@ pub fn eval(ctx: &RuleCtx, e: &Expr) -> Option<Value> {
             support::plain_string_value(ctx, *span).map(|s| Value::Str(s.to_string()))
         }
 
-        // a define is a constant, so folding and branch pruning see through it
+        // A define is a constant, so folding and branch pruning see through it.
         Expr::Name(span) => match ctx.define_at(*span)? {
             crate::rules::defines::Value::Bool(b) => Some(Value::Bool(*b)),
 
@@ -69,14 +70,14 @@ pub fn eval(ctx: &RuleCtx, e: &Expr) -> Option<Value> {
                 },
 
                 "not" => Some(Value::Bool(!v.truthy())),
-                // `#` would need to know the length of a real value
+                // `#` would need the length of a real value.
                 _ => None,
             }
         }
 
         Expr::Binary { op, lhs, rhs, .. } => {
             let name = ctx.text(*op);
-            // the short circuit operators only need the left side to decide
+            // The short circuit operators need only the left side to decide.
             if name == "and" || name == "or" {
                 let l = eval(ctx, lhs)?;
                 let r = eval(ctx, rhs)?;
@@ -114,7 +115,7 @@ fn binary(op: &str, l: Value, r: Value) -> Option<Value> {
                 "*" => a * b,
 
                 "/" => a / b,
-                // Lua's modulo follows the divisor's sign, Rust's does not
+                // Lua's modulo follows the sign of the divisor. Rust's modulo does not.
                 "%" => a - (a / b).floor() * b,
 
                 _ => a.powf(b),
@@ -157,7 +158,7 @@ fn binary(op: &str, l: Value, r: Value) -> Option<Value> {
     }
 }
 
-/// Lua equality never coerces across types
+/// Lua equality never coerces across types.
 fn equal(l: &Value, r: &Value) -> bool {
     match (l, r) {
         (Value::Num(a), Value::Num(b)) => a == b,
@@ -172,13 +173,13 @@ fn equal(l: &Value, r: &Value) -> bool {
     }
 }
 
-/// Every numeric literal Luau writes, separators included
+/// Parse each numeric literal form that Luau writes, with separators included.
 pub fn parse_number(text: &str) -> Option<f64> {
     let cleaned: String = text.chars().filter(|&c| c != '_').collect();
     let lower = cleaned.to_ascii_lowercase();
 
     if let Some(hex) = lower.strip_prefix("0x") {
-        // a hex float carries a binary exponent, not worth the rounding risk
+        // A hex float carries a binary exponent. The rounding risk is too large.
         if hex.is_empty() || hex.contains('p') || hex.contains('.') {
             return None;
         }
@@ -198,8 +199,9 @@ pub fn parse_number(text: &str) -> Option<f64> {
 }
 
 /*
-Print a value back as Luau source, None when the result would not round
-trip, that is the whole safety story for compute_expression
+Print a value back as Luau source. Return None when the result would not
+round trip. This check is the full safety condition for
+compute_expression.
 */
 pub fn print(v: &Value, quote: char) -> Option<String> {
     match v {
@@ -210,7 +212,7 @@ pub fn print(v: &Value, quote: char) -> Option<String> {
         Value::Bool(false) => Some("false".to_string()),
 
         Value::Num(n) => {
-            // fractions would need a rounding policy, whole numbers do not
+            // A fraction would need a rounding policy. A whole number does not.
             if !n.is_finite() || n.fract() != 0.0 || n.abs() > SAFE_INT {
                 return None;
             }
@@ -273,11 +275,11 @@ mod tests {
 
     #[test]
     fn fractions_and_nonsense_do_not_fold() {
-        // a fraction would need a rounding policy we do not want to guess
+        // A fraction would need a rounding policy, and larvae does not guess one.
         assert_eq!(shown("10 / 4"), None);
         assert_eq!(shown("1 / 0"), None);
         assert_eq!(shown("0 / 0"), None);
-        // beyond exact doubles the printed form would lie
+        // Above the exact double range, the printed form would not equal the value.
         assert_eq!(shown("9007199254740992 * 2"), None);
     }
 
@@ -292,7 +294,7 @@ mod tests {
         assert_eq!(shown("\"a\" == \"a\"").as_deref(), Some("true"));
         assert_eq!(shown("1 == \"1\"").as_deref(), Some("false"));
         assert_eq!(shown("not nil").as_deref(), Some("true"));
-        // zero is truthy in Lua
+        // Zero is truthy in Lua.
         assert_eq!(shown("not 0").as_deref(), Some("false"));
         assert_eq!(shown("true and 2").as_deref(), Some("2"));
         assert_eq!(shown("false and 2").as_deref(), Some("false"));
@@ -302,7 +304,7 @@ mod tests {
     #[test]
     fn string_concat_folds_only_for_plain_literals() {
         assert_eq!(shown("\"a\" .. \"b\"").as_deref(), Some("\"ab\""));
-        // an escape means the bytes are not what they look like
+        // With an escape, the source bytes do not equal the string bytes.
         assert_eq!(shown("\"a\\n\" .. \"b\""), None);
         assert_eq!(shown("1 .. 2"), None);
     }

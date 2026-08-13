@@ -1,11 +1,12 @@
 /*!
-use_get_service, `game.Players` becomes `game:GetService("Players")`, the
-property form breaks when a service is renamed or not yet created, GetService
-always returns the live one
+use_get_service: `game.Players` becomes `game:GetService("Players")`. The
+property form breaks when a service has a new name or does not exist yet.
+GetService always returns the live service.
 
-There is no scope tracking yet, so a file that binds the name `game` anywhere
-turns the rule off for that whole file, shadowing `game` is vanishingly rare
-and skipping the file beats rewriting somebody else's table
+The rule has no scope tracking yet. Thus a file that binds the name
+`game` anywhere turns the rule off for that whole file. A shadow of
+`game` is very rare, and a skip of the file is better than a rewrite of
+another table.
 */
 
 use crate::requires::resolve::lua_quote;
@@ -14,8 +15,8 @@ use crate::rules::native::name_text;
 use crate::syntax::ast::{Expr, IndexKey, Stmt};
 
 /*
-Services people actually reference in code, the list is curated rather than
-generated, an unknown name stays a plain property access
+Services that authors reference in code. The list is curated and not
+generated. An unknown name stays a plain property access.
 */
 const SERVICES: &[&str] = &[
     "Players",
@@ -77,7 +78,7 @@ pub fn apply(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     engine::walk_chunk(ctx.chunk, &mut rewriter);
 }
 
-/// True when anything in the file binds the name `game`, ex: a local or a param
+/// True when the file binds the name `game` anywhere. Example: a local or a param.
 fn binds_game(ctx: &RuleCtx) -> bool {
     struct Shadow<'a, 'src> {
         ctx: &'a RuleCtx<'src>,
@@ -149,7 +150,7 @@ fn binds_game(ctx: &RuleCtx) -> bool {
 struct Rewriter<'a, 'src> {
     ctx: &'a RuleCtx<'src>,
     edits: &'a mut Vec<Edit>,
-    /// Byte starts of assignment targets, `game.Players = x` is not an expression
+    /// The byte starts of assignment targets. `game.Players = x` is not an expression.
     targets: Vec<u32>,
 }
 
@@ -184,7 +185,7 @@ impl Visit for Rewriter<'_, '_> {
     }
 }
 
-/// The service name when this is exactly `game.SomeService`
+/// The service name when this expression is exactly `game.SomeService`.
 fn service_of<'src>(ctx: &RuleCtx<'src>, expr: &Expr) -> Option<&'src str> {
     let Expr::Index {
         object,
@@ -216,12 +217,12 @@ mod tests {
             run(ON, "local rs = game.ReplicatedStorage\n"),
             "local rs = game:GetService(\"ReplicatedStorage\")\n"
         );
-        // deeper chains rewrite the service and keep the rest
+        // In a deeper chain, the rule rewrites the service and keeps the rest.
         assert_eq!(
             run(ON, "local p = game.Players.LocalPlayer\n"),
             "local p = game:GetService(\"Players\").LocalPlayer\n"
         );
-        // call and argument positions too
+        // Call and argument positions also rewrite.
         assert_eq!(
             run(ON, "game.Debris:AddItem(part, 1)\n"),
             "game:GetService(\"Debris\"):AddItem(part, 1)\n"
@@ -234,19 +235,19 @@ mod tests {
 
     #[test]
     fn leaves_non_services_alone() {
-        // not a service name
+        // Not a service name.
         let child = "local x = game.SomeFolder\n";
         assert_eq!(run(ON, child), child);
-        // the receiver is not the global game
+        // The receiver is not the global game.
         let other = "local x = other.Players\n";
         assert_eq!(run(ON, other), other);
-        // computed index, the key is not a name
+        // A computed index. The key is not a name.
         let computed = "local x = game[\"Players\"]\n";
         assert_eq!(run(ON, computed), computed);
-        // assignment targets would become a call on the left hand side
+        // An assignment target would become a call on the left hand side.
         let target = "game.Lighting = nil\n";
         assert_eq!(run(ON, target), target);
-        // a property under a service still rewrites only the service
+        // For a property under a service, the rule still rewrites only the service.
         assert_eq!(
             run(ON, "game.Lighting.Ambient = c\n"),
             "game:GetService(\"Lighting\").Ambient = c\n"
@@ -255,10 +256,10 @@ mod tests {
 
     #[test]
     fn a_shadowed_game_turns_the_file_off() {
-        // the local wins over the global, this game is somebody else's table
+        // The local wins over the global. This game is a different table.
         let local = "local game = fake\nreturn game.Players\n";
         assert_eq!(run(ON, local), local);
-        // same for a parameter, anywhere in the file
+        // The same applies to a parameter, anywhere in the file.
         let param = "local function f(game)\n    return game.Players\nend\nreturn game.Workspace\n";
         assert_eq!(run(ON, param), param);
     }

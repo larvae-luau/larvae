@@ -7,12 +7,13 @@ use crate::rules::engine::{Edit, Flow, RuleCtx, Visit, walk_chunk};
 use crate::syntax::ast::*;
 
 /*
-remove_if_expression, `if c then a else b` becomes `c and a or b`
+remove_if_expression: `if c then a else b` becomes `c and a or b`.
 
-The and/or trick only reproduces the if expression when the then value can
-never be false or nil, otherwise the or arm would take over and the wrong
-value comes out. darklua wraps those cases in a helper function, larvae
-would rather leave them readable, so anything unprovable is skipped
+The and/or form matches the if expression only when the then value can
+never be false or nil. In the other cases, the or arm would win and give
+the wrong value. darklua wraps those cases in a helper function. Larvae
+keeps them readable instead, so the rule skips each case that it cannot
+prove.
 */
 pub fn remove_if_expression(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     struct V<'a, 'b> {
@@ -62,7 +63,7 @@ fn build_and_or(
     }
 
     let tail = build_and_or(ctx, branches, else_value, idx + 1)?;
-    // a nested chain has to stay one operand of the or above it
+    // A nested chain must stay one operand of the or above it.
     let tail = if idx + 1 < branches.len() {
         format!("({tail})")
     } else {
@@ -78,9 +79,9 @@ fn build_and_or(
 }
 
 /*
-convert_index_to_field, `t["field"]` becomes `t.field`, and the same for a
-table constructor key, only when the literal spells a name Luau accepts
-after a dot
+convert_index_to_field: `t["field"]` becomes `t.field`. A table
+constructor key changes in the same way. The rule applies only when the
+literal spells a name that Luau accepts after a dot.
 */
 pub fn convert_index_to_field(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     struct V<'a, 'b> {
@@ -120,7 +121,7 @@ pub fn convert_index_to_field(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     walk_chunk(ctx.chunk, &mut V { ctx, edits });
 }
 
-/// The `[` to `]` byte range around a string key, plus the name it spells
+/// The `[` to `]` byte range around a string key, and the name that the key spells.
 fn bracket_swap<'a>(ctx: &RuleCtx<'a>, key: &Expr) -> Option<(u32, u32, &'a str)> {
     let Expr::String(span) = key else { return None };
     let name = support::plain_string_value(ctx, *span)?;
@@ -140,8 +141,8 @@ fn bracket_swap<'a>(ctx: &RuleCtx<'a>, key: &Expr) -> Option<(u32, u32, &'a str)
 }
 
 /*
-convert_luau_number, spell binary literals in hex and drop digit separators,
-both are Luau only syntax that plain Lua would reject
+convert_luau_number: write binary literals in hex and remove digit
+separators. Both forms are Luau only syntax that plain Lua rejects.
 */
 pub fn convert_luau_number(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     struct V<'a, 'b> {
@@ -186,8 +187,8 @@ fn rewrite_number(text: &str) -> Option<String> {
 }
 
 /*
-remove_function_call_parens, `f("x")` becomes `f"x"` and `f({})` becomes
-`f{}`, Luau's parenless call forms take exactly one string or table
+remove_function_call_parens: `f("x")` becomes `f"x"`, and `f({})` becomes
+`f{}`. Luau's parenless call forms accept exactly one string or table.
 */
 pub fn remove_function_call_parens(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     struct V<'a, 'b> {
@@ -239,17 +240,18 @@ pub fn remove_function_call_parens(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
 }
 
 /*
-convert_square_root_call, `math.sqrt(x)` becomes `(x ^ 0.5)`
+convert_square_root_call: `math.sqrt(x)` becomes `(x ^ 0.5)`.
 
-The result is always parenthesised. A bare `x ^ 0.5` would re-associate as
-the base of another power and would not survive being indexed or called, and
-proving which of those applies costs more than the parentheses do
+The rule always adds parentheses around the result. A bare `x ^ 0.5`
+would re-associate as the base of another power. It would also break as
+the target of an index or a call. A proof of which case applies costs
+more than the parentheses.
 */
 pub fn convert_square_root_call(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     struct V<'a, 'b> {
         ctx: &'a RuleCtx<'b>,
         edits: &'a mut Vec<Edit>,
-        /// Calls used as statements, an expression cannot replace those
+        /// Calls used as statements. An expression cannot replace those.
         statement_calls: Vec<TokSpan>,
     }
 
@@ -355,12 +357,12 @@ mod tests {
 
     #[test]
     fn falsy_then_values_are_left_alone() {
-        // `c and nil or 2` would always give 2, the rewrite is not equivalent
+        // `c and nil or 2` would always give 2. The rewrite is not equivalent.
         let src = "local x = if c then nil else 2\n";
         assert_eq!(run(src, remove_if_expression), src);
         let src = "local x = if c then false else 2\n";
         assert_eq!(run(src, remove_if_expression), src);
-        // a plain name could be nil at runtime
+        // A plain name can be nil at runtime.
         let src = "local x = if c then a else b\n";
         assert_eq!(run(src, remove_if_expression), src);
     }
@@ -381,12 +383,12 @@ mod tests {
     fn keys_that_are_not_names_stay_indexed() {
         let src = "local v = t[\"two words\"]\n";
         assert_eq!(run(src, convert_index_to_field), src);
-        // a reserved word cannot follow a dot
+        // A reserved word cannot follow a dot.
         let src = "local v = t[\"end\"]\n";
         assert_eq!(run(src, convert_index_to_field), src);
         let src = "local v = t[\"1st\"]\n";
         assert_eq!(run(src, convert_index_to_field), src);
-        // an escape means the bytes are not what they look like
+        // With an escape, the source bytes do not equal the string bytes.
         let src = "local v = t[\"a\\98c\"]\n";
         assert_eq!(run(src, convert_index_to_field), src);
         let src = "local v = t[k]\n";
@@ -445,7 +447,7 @@ mod tests {
             run("local d = math.sqrt(a + b)\n", convert_square_root_call),
             "local d = ((a + b) ^ 0.5)\n"
         );
-        // the parens keep it correct as the base of another power
+        // The parens keep it correct as the base of another power.
         assert_eq!(
             run("local d = math.sqrt(x) ^ 2\n", convert_square_root_call),
             "local d = (x ^ 0.5) ^ 2\n"
@@ -458,10 +460,10 @@ mod tests {
         assert_eq!(run(src, convert_square_root_call), src);
         let src = "local d = sqrt(x)\n";
         assert_eq!(run(src, convert_square_root_call), src);
-        // two arguments is not the sqrt we know
+        // A call with two arguments is not the known sqrt form.
         let src = "local d = math.sqrt(x, y)\n";
         assert_eq!(run(src, convert_square_root_call), src);
-        // an expression cannot stand in for a statement
+        // An expression cannot replace a statement.
         let src = "math.sqrt(x)\n";
         assert_eq!(run(src, convert_square_root_call), src);
     }

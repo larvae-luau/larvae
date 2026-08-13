@@ -7,17 +7,17 @@ use super::support::{self, insert, tok_bytes};
 use crate::rules::engine::{Edit, Flow, RuleCtx, Visit, walk_chunk};
 use crate::syntax::ast::*;
 
-/// Last statement that actually does something, the trailing `;` does not count
+/// The last statement with an effect. A trailing `;` does not count.
 fn last_real(b: &Block) -> Option<&Stmt> {
     b.stmts.iter().rev().find(|s| !matches!(s, Stmt::Empty(_)))
 }
 
 /*
-filter_after_early_return, a `do ... return ... end` makes the rest of the
-enclosing block unreachable, so it goes
+filter_after_early_return: a `do ... return ... end` makes the rest of
+the enclosing block unreachable, so the rule removes the rest.
 
-A type alias among the dead statements stops the whole thing, an exported
-one is visible outside the block and deleting it would be observable
+A type alias among the dead statements stops the rule. An exported alias
+is visible outside the block, so its removal would be observable.
 */
 pub fn filter_after_early_return(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     struct V<'a, 'b> {
@@ -55,7 +55,7 @@ pub fn filter_after_early_return(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     walk_chunk(ctx.chunk, &mut V { ctx, edits });
 }
 
-/// remove_unused_while, drop a loop whose condition is a constant false
+/// remove_unused_while: remove a loop whose condition is a constant false.
 pub fn remove_unused_while(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     struct V<'a, 'b> {
         ctx: &'a RuleCtx<'b>,
@@ -83,14 +83,14 @@ pub fn remove_unused_while(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
 }
 
 /*
-remove_continue, turn a loop body into `repeat ... until true` so `continue`
-can be spelled `break`
+remove_continue: change a loop body into `repeat ... until true`. Then
+the rule can write `continue` as `break`.
 
-Only loops whose own level has no `break` qualify. With both in play the
-inner repeat would swallow the break and the flag variable that fixes it
-needs statements this retain-lines pass has nowhere to put. `repeat` loops
-are skipped outright, their until condition can read locals from the body
-and wrapping would take those out of scope
+Only a loop whose own level has no `break` qualifies. With both present,
+the inner repeat would capture the break. The flag variable that repairs
+this needs new statements, and this retain-lines pass has no place for
+them. The rule skips `repeat` loops completely. Their until condition can
+read locals from the body, and a wrap would take those out of scope.
 */
 pub fn remove_continue(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     struct V<'a, 'b> {
@@ -148,8 +148,9 @@ fn rewrite(ctx: &RuleCtx, block: &Block, span: TokSpan, edits: &mut Vec<Edit>) {
 }
 
 /*
-Collect the `continue` statements that belong to this loop, plus whether it
-owns a `break`, nested loops own theirs so the walk stops at them
+Collect the `continue` statements that belong to this loop, and record if
+the loop owns a `break`. A nested loop owns its own statements, so the
+walk stops at it.
 */
 fn scan_level(b: &Block, continues: &mut Vec<TokSpan>, has_break: &mut bool) {
     for s in &b.stmts {
@@ -176,11 +177,12 @@ fn scan_level(b: &Block, continues: &mut Vec<TokSpan>, has_break: &mut bool) {
 }
 
 /*
-remove_unused_if_branch, prune branches whose condition is a known constant
+remove_unused_if_branch: prune each branch whose condition is a known
+constant.
 
-A branch that is definitely taken and has no bindings of its own is
-unwrapped to its contents, one that declares locals becomes a `do` block
-instead so the bindings keep their scope
+The rule unwraps a branch to its contents when the branch always runs and
+has no bindings of its own. A branch that declares locals becomes a `do`
+block instead. Then the bindings keep their scope.
 */
 pub fn remove_unused_if_branch(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     struct V<'a, 'b> {
@@ -201,7 +203,7 @@ pub fn remove_unused_if_branch(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     walk_chunk(ctx.chunk, &mut V { ctx, edits });
 }
 
-/// Token index of the keyword that opens branch `i`
+/// The token index of the keyword that opens branch `i`.
 fn branch_keyword(ctx: &RuleCtx, n: &If, i: usize) -> Option<u32> {
     if i == 0 {
         return (ctx.tok_text(n.span.start) == "if").then_some(n.span.start);
@@ -212,7 +214,7 @@ fn branch_keyword(ctx: &RuleCtx, n: &If, i: usize) -> Option<u32> {
     (ctx.tok_text(idx) == "elseif").then_some(idx)
 }
 
-/// Token index of the `then` that closes branch `i`'s condition
+/// The token index of the `then` that closes the condition of branch `i`.
 fn branch_then(ctx: &RuleCtx, n: &If, i: usize) -> Option<u32> {
     let idx = n.branches[i].1.span.start.checked_sub(1)?;
 
@@ -240,7 +242,7 @@ fn prune(ctx: &RuleCtx, n: &If, edits: &mut Vec<Edit>) {
         .collect();
 
     if survivors.len() == n.branches.len() && truthy_at.is_none() {
-        // nothing is known, leave the statement alone
+        // No condition is known. Keep the statement.
         return;
     }
 
@@ -252,7 +254,7 @@ fn prune(ctx: &RuleCtx, n: &If, edits: &mut Vec<Edit>) {
 
     let if_start = tok_bytes(ctx, n.span.start).0;
 
-    // every branch is dead, the else block is all that is left
+    // Each branch is dead. Only the else block remains.
     if survivors.is_empty() {
         match &n.else_block {
             Some(block) => {
@@ -280,7 +282,7 @@ fn prune(ctx: &RuleCtx, n: &If, edits: &mut Vec<Edit>) {
         return;
     }
 
-    // exactly one branch survives and it is the one that always runs
+    // Exactly one branch survives, and it always runs.
     if let Some(t) = truthy_at
         && survivors == [t]
         && let Some(then_tok) = branch_then(ctx, n, t)
@@ -297,7 +299,7 @@ fn prune(ctx: &RuleCtx, n: &If, edits: &mut Vec<Edit>) {
         return;
     }
 
-    // otherwise take the dead branches out one at a time
+    // In the other cases, remove the dead branches one at a time.
     for i in 0..n.branches.len() {
         if survivors.contains(&i) {
             continue;
@@ -320,7 +322,7 @@ fn prune(ctx: &RuleCtx, n: &If, edits: &mut Vec<Edit>) {
         ctx.delete_bytes_keep_lines(tok_bytes(ctx, else_tok).0, to, edits);
     }
 
-    // the first branch left standing has to spell itself `if`
+    // The first branch that remains must use the keyword `if`.
     if let Some(&first) = survivors.first()
         && first > 0
         && let Some(kw) = branch_keyword(ctx, n, first)
@@ -331,8 +333,8 @@ fn prune(ctx: &RuleCtx, n: &If, edits: &mut Vec<Edit>) {
 }
 
 /*
-Keep one block and drop the `if` scaffolding around it, a block that binds
-names becomes `do ... end` so those names stay where they were
+Keep one block and remove the `if` structure around it. A block that
+binds names becomes `do ... end`. Then those names keep their scope.
 */
 fn unwrap_block(
     ctx: &RuleCtx,
@@ -355,7 +357,7 @@ fn unwrap_block(
 }
 
 /*
-remove_empty_do, drop `do end` blocks that contain nothing
+remove_empty_do: remove `do end` blocks that contain nothing.
 */
 pub fn remove_empty_do(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     struct V<'a, 'b> {
@@ -386,10 +388,10 @@ mod tests {
     #[test]
     fn empty_do_blocks_go() {
         assert_eq!(run("do end\nprint(1)\n", remove_empty_do), "\nprint(1)\n");
-        // strict definition, a semicolon means someone typed something
+        // The definition is strict. A semicolon means that the author typed content.
         let src = "do ; end\n";
         assert_eq!(run(src, remove_empty_do), src);
-        // nested empties shed one layer per pass, the outer survives this run
+        // Nested empty blocks lose one layer per pass. The outer block survives this run.
         assert_eq!(run("do do end end\n", remove_empty_do), "do  end\n");
     }
 
@@ -407,7 +409,7 @@ mod tests {
     fn a_do_block_without_a_return_changes_nothing() {
         let src = "do print(0) end\nprint(1)\n";
         assert_eq!(run(src, filter_after_early_return), src);
-        // nothing follows, nothing to drop
+        // No statement follows, so there is nothing to remove.
         let src = "do return end\n";
         assert_eq!(run(src, filter_after_early_return), src);
     }
@@ -420,7 +422,7 @@ mod tests {
         assert!(!out.contains("print(1)"), "{out}");
         assert!(out.contains("print(2)"), "{out}");
         assert_lines_kept(src, &out);
-        // nil is falsy too
+        // nil is also falsy.
         assert!(!run("while nil do print(1) end\n", remove_unused_while).contains("print"));
     }
 
@@ -430,7 +432,7 @@ mod tests {
         assert_eq!(run(src, remove_unused_while), src);
         let src = "while cond do print(1) end\n";
         assert_eq!(run(src, remove_unused_while), src);
-        // zero is truthy in Lua
+        // Zero is truthy in Lua.
         let src = "while 0 do print(1) end\n";
         assert_eq!(run(src, remove_unused_while), src);
     }
@@ -449,7 +451,7 @@ mod tests {
 
     #[test]
     fn a_loop_that_also_breaks_is_left_alone() {
-        // the inner repeat would swallow the break
+        // The inner repeat would capture the break.
         let src = "for i = 1, 10 do\n    if a then continue end\n    if b then break end\nend\n";
         assert_eq!(run(src, remove_continue), src);
     }
@@ -458,7 +460,7 @@ mod tests {
     fn loops_without_continue_are_left_alone() {
         let src = "for i = 1, 10 do work(i) end\n";
         assert_eq!(run(src, remove_continue), src);
-        // a repeat loop can read body locals in its condition
+        // A repeat loop can read body locals in its condition.
         let src = "repeat\n    if a then continue end\nuntil done\n";
         assert_eq!(run(src, remove_continue), src);
     }
@@ -468,7 +470,7 @@ mod tests {
         let src = "for i = 1, 2 do\n    for j = 1, 2 do\n        if x then continue end\n    end\n    if y then break end\nend\n";
         let out = run(src, remove_continue);
 
-        // the inner loop is rewritten, the outer one breaks so it is not
+        // The rule rewrites the inner loop. The outer loop has a break, so it stays.
         assert_eq!(out.matches("repeat").count(), 1, "{out}");
         assert!(out.contains("if y then break end"), "{out}");
     }
@@ -485,7 +487,7 @@ mod tests {
 
     #[test]
     fn a_branch_with_locals_becomes_a_do_block() {
-        // unwrapping would leak x into the enclosing scope
+        // An unwrap would leak x into the enclosing scope.
         let src = "if true then\n    local x = 1\nend\n";
         let out = run(src, remove_unused_if_branch);
 

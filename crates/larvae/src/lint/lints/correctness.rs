@@ -1,9 +1,9 @@
 /*!
-Lints for code that is wrong rather than untidy.
+Lints for code that is wrong, not only untidy.
 
-Everything here reports something that does not do what it looks like it does,
-so all of them are on by default. The bar for adding one is that the reported
-code has no reading under which it is what the author meant.
+Every lint here reports code that does not do what it appears to do, so all
+of them are on by default. The rule for a new lint here is this: the
+reported code has no reading in which it is what the author meant.
 */
 
 use crate::lint::ctx::{Finding, LintCtx};
@@ -39,9 +39,9 @@ impl AlmostSwapped {
     /*
     `a = b` followed by `b = a`.
 
-    The second line reads the `a` the first line just overwrote, so both names
-    end up holding the old `b`. A real swap is `a, b = b, a`, which evaluates
-    both sides before assigning either.
+    The second line reads the `a` that the first line overwrote. Thus both
+    names hold the old `b`. A real swap is `a, b = b, a`, which evaluates
+    both sides before it assigns either side.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         each_block(ctx, out, |ctx, block, out| {
@@ -57,7 +57,7 @@ impl AlmostSwapped {
                 let (a, b) = (first.targets[0].span(), first.values[0].span());
                 let (c, d) = (second.targets[0].span(), second.values[0].span());
 
-                // `a = a` is a different mistake, and not this one
+                // `a = a` is a different mistake, and not this one.
                 if ctx.same_text(a, b) {
                     continue;
                 }
@@ -99,9 +99,9 @@ impl CompareNan {
     /*
     `x == 0/0`.
 
-    nan is not equal to anything, itself included, so a comparison against it
-    is constant. The check people mean is `x ~= x`, which is the only thing
-    true of nan alone.
+    nan is not equal to anything, itself included, so a comparison against
+    nan is constant. The check that users mean is `x ~= x`, which is the
+    only test that is true for nan alone.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         each_expr(ctx, out, |ctx, e, out| {
@@ -125,7 +125,7 @@ impl CompareNan {
     }
 }
 
-/// `0/0`, which is how nan is written when it is written at all
+/// `0/0`, which is the usual written form of nan.
 fn is_nan_literal(ctx: &LintCtx<'_>, e: &Expr) -> bool {
     let Expr::Binary { op, lhs, rhs, .. } = unwrap_parens(e) else {
         return false;
@@ -140,9 +140,9 @@ impl ConstantTableComparison {
     /*
     `x == {}`.
 
-    Tables compare by identity, and a literal on the right is a table nothing
-    else can be, so the answer is known before the comparison runs. To ask
-    whether a table is empty, look at `next(x)`.
+    Tables compare by identity, and a table literal is a new table that no
+    other value can be. Thus the result is fixed before the comparison
+    runs. To test if a table is empty, use `next(x)`.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         each_expr(ctx, out, |ctx, e, out| {
@@ -196,8 +196,9 @@ impl DivideByZero {
             }
 
             /*
-            `0/0` is nan and is the idiom for writing it, so it is left to
-            compare_nan rather than reported twice under two names.
+            `0/0` is nan, and it is the usual written form of nan. Thus
+            compare_nan handles it, and larvae does not report it twice
+            under two names.
             */
             if op_text == "/" && matches!(e, Expr::Binary { lhs, .. } if is_zero(ctx, lhs)) {
                 return;
@@ -217,8 +218,9 @@ impl DuplicateKeys {
     /*
     `{ a = 1, a = 2 }`.
 
-    Only the last one survives, so an earlier entry is dead. Almost always a
-    rename that missed one, or two merged tables that overlapped.
+    Only the last entry survives, so an earlier entry is dead. The cause is
+    almost always a rename that missed one key, or two merged tables that
+    overlapped.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         each_expr(ctx, out, |ctx, e, out| {
@@ -232,7 +234,7 @@ impl DuplicateKeys {
                 let (key, span) = match field {
                     TableField::Named { name, .. } => (ctx.text(*name).to_string(), *name),
 
-                    // only a literal key can be compared without running anything
+                    // The lint can compare only a literal key without evaluation.
                     TableField::Computed { key, .. } => match literal_key(ctx, key) {
                         Some(text) => (text, key.span()),
 
@@ -262,12 +264,12 @@ impl DuplicateKeys {
     }
 }
 
-/// A key that can be compared without evaluating anything
+/// A key that the lint can compare without evaluation.
 fn literal_key(ctx: &LintCtx<'_>, e: &Expr) -> Option<String> {
     match e {
         Expr::Number(s) => Some(ctx.text(*s).to_string()),
 
-        // the quotes are part of the text, so strip them before comparing
+        // The quotes are part of the text, so strip them before the comparison.
         Expr::String(s) => {
             let text = ctx.text(*s);
 
@@ -281,7 +283,7 @@ fn literal_key(ctx: &LintCtx<'_>, e: &Expr) -> Option<String> {
 // --- ifs_same_cond ---------------------------------------------------------
 
 impl IfsSameCond {
-    /// An `elseif` testing what an earlier branch already tested can never run
+    /// An `elseif` that tests what an earlier branch already tested can never run.
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         each_stmt(ctx, out, |ctx, s, out| {
             let Stmt::If(n) = s else {
@@ -311,7 +313,7 @@ impl IfsSameCond {
 // --- if_same_then_else -----------------------------------------------------
 
 impl IfSameThenElse {
-    /// Two branches of one `if` doing the same thing means one of them is wrong
+    /// When two branches of one `if` do the same thing, one of them is wrong.
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         each_stmt(ctx, out, |ctx, s, out| {
             let Stmt::If(n) = s else {
@@ -325,7 +327,7 @@ impl IfSameThenElse {
             }
 
             for (i, body) in bodies.iter().enumerate() {
-                // an empty branch is empty_if's business, not this one
+                // An empty branch belongs to empty_if, not to this lint.
                 if body.stmts.is_empty() {
                     continue;
                 }
@@ -355,9 +357,9 @@ impl SuspiciousReverseLoop {
     /*
     `for i = 10, 1 do`.
 
-    A numeric for steps by one unless told otherwise, so counting from a
-    higher number to a lower one runs zero times. The author meant to write
-    `-1` as the step.
+    A numeric for steps by one unless the author sets a step. Thus a count
+    from a higher number to a lower number runs zero times. The author
+    meant to write `-1` as the step.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         each_stmt(ctx, out, |ctx, s, out| {
@@ -374,21 +376,22 @@ impl SuspiciousReverseLoop {
             }
 
             /*
-            The step decides whether this is the bug or the correct spelling of
-            a countdown, so a step that cannot be evaluated has to suppress the
-            report rather than permit it: `for i = 10, 1, step do` with a
-            negative `step` is right, and nothing here can see its value.
+            The step decides if this is the bug or the correct form of a
+            countdown. Thus a step that the lint cannot evaluate must
+            suppress the report, not permit it. `for i = 10, 1, step do`
+            with a negative `step` is correct, and the lint cannot see the
+            value of `step`.
             */
             if let Some(step) = &n.step {
                 match number(ctx, step) {
                     Some(value) if value >= 0.0 => {}
 
-                    // negative, or not a literal, and either way not this bug
+                    // The step is negative or not a literal. In both cases, it is not this bug.
                     _ => return,
                 }
             }
 
-            // an explicit negative step is the correct spelling, not the bug
+            // An explicit negative step is the correct form, not the bug.
             if let Some(step) = &n.step
                 && number(ctx, step).is_some_and(|v| v < 0.0)
             {
@@ -413,9 +416,9 @@ impl TypeCheckInsideCall {
     /*
     `type(x == "number")`.
 
-    The comparison happens first and hands `type` a boolean, so the call
-    always returns "boolean" and the test always fails. The parenthesis is one
-    character from where it was meant to be.
+    The comparison runs first and gives `type` a boolean. Thus the call
+    always returns "boolean", and the test always fails. The parenthesis
+    is one character away from the intended position.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         each_expr(ctx, out, |ctx, e, out| {
@@ -469,12 +472,13 @@ impl UnbalancedAssignments {
     /*
     `local a, b = 1`, or `a, b = 1, 2, 3`.
 
-    Extra names get nil and extra values are discarded, both silently. A
-    declaration with no values at all is the normal way to declare something
-    before assigning it, so that is left alone.
+    Extra names get nil, and Lua discards extra values. Both cases are
+    silent. A declaration with no values is the normal way to declare a
+    name before an assignment, so the lint leaves it alone.
 
-    A call or a `...` in last position can produce any number of values, so a
-    count that does not match is expected there and not reported.
+    A call or a `...` in the last position can produce any number of
+    values. There, a count that does not match is expected, and the lint
+    does not report it.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         each_stmt(ctx, out, |ctx, s, out| {
@@ -511,7 +515,7 @@ impl UnbalancedAssignments {
     }
 }
 
-/// Whether an expression can stand for any number of values
+/// Returns true if an expression can stand for any number of values.
 fn spreads(e: Option<&Expr>) -> bool {
     matches!(e, Some(Expr::Call { .. } | Expr::Vararg(_)))
 }
@@ -530,7 +534,7 @@ fn number(ctx: &LintCtx<'_>, e: &Expr) -> Option<f64> {
     match unwrap_parens(e) {
         Expr::Number(s) => ctx.text(*s).parse().ok(),
 
-        // `-1` is a unary minus over a literal, not a negative literal
+        // `-1` is a unary minus over a literal, not a negative literal.
         Expr::Unary { op, operand, .. } if ctx.text(*op) == "-" => number(ctx, operand).map(|v| -v),
 
         _ => None,
@@ -542,13 +546,13 @@ fn is_zero(ctx: &LintCtx<'_>, e: &Expr) -> bool {
 }
 
 /*
-The three passes every lint here is written against.
+The three passes that every lint here uses.
 
-Each iterates the nodes [`LintCtx`] collected once for the file rather than
-walking the tree, so adding a lint costs a pass over a vector rather than
-another traversal. They take a closure rather than each lint defining its own
-visitor type, because a visitor per lint is thirty types that all do the same
-thing and differ only in one match arm.
+Each pass iterates the nodes that [`LintCtx`] collected once for the file,
+and it does not walk the tree. Thus a new lint costs a pass over a vector,
+not another traversal. Each pass takes a closure, and a lint does not define
+its own visitor type. A visitor per lint is thirty types that all do the
+same thing and differ only in one match arm.
 */
 pub fn each_expr(
     ctx: &LintCtx<'_>,

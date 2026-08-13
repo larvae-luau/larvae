@@ -1,4 +1,5 @@
-//! requires.sourcemap, rojo's own map as the authority
+//! These tests cover requires.sourcemap, which makes rojo's own map the
+//! authority.
 
 use larvae::config::Config;
 use larvae::pipeline;
@@ -7,9 +8,9 @@ mod common;
 use common::*;
 
 /*
-A tree the project file alone cannot describe. `src/vendor` is mounted at a
-name that does not match its directory, which is the sort of thing rojo
-resolves and a static read of $path entries does not
+This tree is one that the project file alone cannot describe. The fixture
+mounts `src/vendor` at a name that does not match its directory. rojo resolves
+this case, and a static read of $path entries does not.
 */
 fn project() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -62,12 +63,12 @@ fn a_sourcemap_drives_resolution() {
     assert!(!out.has_errors(), "{:?}", out.diags);
 
     let got = read(root, "dist/main.luau");
-    // a sibling stays relative
+    // A sibling stays relative.
     assert!(got.contains("require(\"./util\")"), "{got}");
     /*
-    src/vendor/lib.luau sits at ReplicatedStorage/Renamed/lib, a name only
-    the sourcemap knows. From shared/main that is one hop up and across,
-    and relative wins whenever the tree connects
+    src/vendor/lib.luau sits at ReplicatedStorage/Renamed/lib, a name that
+    only the sourcemap knows. From shared/main, the path goes one level up and
+    across. The relative form wins whenever the tree connects.
     */
     assert!(got.contains("require(\"../Renamed/lib\")"), "{got}");
 }
@@ -87,7 +88,7 @@ fn an_instance_chain_resolves_through_the_sourcemap() {
     let out = pipeline::run(root, &config, true).unwrap();
 
     assert!(!out.has_errors(), "{:?}", out.diags);
-    // the chain resolved through the sourcemap, then came back out relative
+    // The chain resolved through the sourcemap, and the output form is relative.
     assert!(
         read(root, "dist/main.luau").contains("require(\"../Renamed/lib\")"),
         "{}",
@@ -110,14 +111,14 @@ fn a_stale_sourcemap_invalidates_the_cache() {
         read(root, "dist/main.luau")
     );
 
-    // rojo regenerates it under a different name, nothing else changed
+    // rojo regenerates the map with a different name. Nothing else changed.
     let map = read(root, "sourcemap.json").replace("Renamed", "Moved");
     write(root, "sourcemap.json", &map);
 
     let out = pipeline::run(root, &config, true).unwrap();
 
     assert!(!out.has_errors(), "{:?}", out.diags);
-    // a cache that ignored the sourcemap would still say Renamed here
+    // A cache that ignored the sourcemap would still show Renamed here.
     assert!(
         read(root, "dist/main.luau").contains("Moved"),
         "{}",

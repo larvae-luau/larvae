@@ -1,4 +1,4 @@
-//! `worm.toml`, the manifest a worm ships beside its artifact
+//! `worm.toml`, the manifest that a worm ships beside its artifact
 
 use std::collections::BTreeMap;
 
@@ -7,21 +7,21 @@ use serde::Deserialize;
 
 use super::ABI_VERSION;
 
-/// Which of the two guest forms a worm ships
+/// The guest form that a worm ships, one of two
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Form {
-    /// Luau source, run in an embedded VM
+    /// Luau source, which larvae runs in an embedded VM
     Luau,
-    /// A `wasm32` module, run in the interpreter
+    /// A `wasm32` module, which larvae runs in the interpreter
     Wasm,
     /*
-    An ordinary executable, spoken to over a pipe.
+    An ordinary executable. Larvae speaks to it over a pipe.
 
-    Native speed, and no sandbox: it runs with everything the user can reach,
-    where a wasm worm cannot read a file we did not hand it. Worth it for a
-    worm doing real work that a project trusts, which is why it is opt in per
-    worm rather than the default.
+    This form has native speed and no sandbox. It runs with the full access of
+    the user, while a wasm worm cannot read a file the host did not give it.
+    The trade is good for a heavy worm that a project trusts. For this reason
+    the user must opt in per worm, and this form is not the default.
     */
     Native,
 }
@@ -40,28 +40,28 @@ impl Form {
 }
 
 /*
-Where a worm's rules sit relative to larvae's own.
+The position of the rules of a worm, relative to the native rules of larvae.
 
-An author should not have to know what number our native stage is, so they say
-which side of it they want and we work out the rest. A user writing an explicit
-number still wins over both.
+An author must not have to know the number of the native stage. The author
+names the side they want, and larvae computes the slot. An explicit number
+from the user wins over both.
 */
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(untagged)]
 pub enum Stage {
     /// `run_order = 2`, an explicit slot
     At(i64),
-    /// `run_order = "before"` or `"after"`, relative to our native rules
+    /// `run_order = "before"` or `"after"`, relative to the native rules of larvae
     Named(Side),
 }
 
-/// Which side of larvae's native rules a worm asked for
+/// The side of the native rules of larvae that a worm requested
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Side {
-    /// Runs first, so larvae's rules see this worm's output
+    /// The worm runs first, so the rules of larvae see the output of this worm
     Before,
-    /// Runs after our native rules, which is what you get by saying nothing
+    /// The worm runs after the native rules. This is the default when the author writes nothing.
     #[default]
     After,
 }
@@ -79,7 +79,7 @@ impl std::fmt::Display for Stage {
 }
 
 impl Stage {
-    /// The slot this resolves to, given where our own rules sit
+    /// The slot this stage resolves to, given the slot of the native rules
     pub fn slot(self, native: i64) -> i64 {
         match self {
             Self::At(n) => n,
@@ -91,62 +91,63 @@ impl Stage {
     }
 }
 
-/// Who owns the requires in a worm's output
+/// The owner of the requires in the output of a worm
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RequireOwner {
-    /// We process requires in the worm's output, the default and almost always right
+    /// Larvae processes the requires in the output of the worm. This default is correct in
+    /// almost all cases.
     #[default]
     Larvae,
-    /// Hands off, the worm resolves its own and we do not look
+    /// The worm resolves its own requires, and larvae does not touch them
     Worm,
 }
 
-/// The front-end role, which claims file extensions before the pipeline
+/// The front-end role. It claims file extensions before the pipeline runs.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Frontend {
-    /// Extensions this worm turns into Luau, ex: `[".luaux"]`
+    /// The extensions this worm turns into Luau, for example `[".luaux"]`
     pub claims: Vec<String>,
-    /// Whether this worm also lays claimed files out for `larvae fmt`
+    /// If true, this worm also formats the claimed files for `larvae fmt`
     #[serde(default)]
     pub fmt: bool,
 }
 
-/// One lint a worm declares, so `[lint.rules]` can set its level by name
+/// One lint that a worm declares, so `[lint.rules]` can set its level by name
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LintDecl {
-    /// Shown by `larvae lint --explain`, via the JSON schema
+    /// `larvae lint --explain` shows this text, via the JSON schema
     #[serde(default)]
     pub description: Option<String>,
-    /// The level when `[lint.rules]` says nothing, warn like most builtins
+    /// The level when `[lint.rules]` sets nothing. The default is warn, like most builtins.
     #[serde(default)]
     pub default: crate::lint::Level,
 }
 
-/// One rule a worm adds to our `[rules]` table
+/// One rule that a worm adds to the `[rules]` table of larvae
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuleDecl {
-    /// Value used when the user does not set one, and what "off" looks like
+    /// The value larvae uses when the user sets none. It also defines the "off" state.
     #[serde(default)]
     pub default: Option<toml::Value>,
-    /// Shown in editor hover, via the JSON schema
+    /// The editor hover shows this text, via the JSON schema
     #[serde(default)]
     pub description: Option<String>,
-    /// Node kinds that cross the boundary, everything else stays on the fast path
+    /// The node kinds that cross the boundary. All other kinds stay on the fast path.
     #[serde(default)]
     pub filter: Vec<String>,
 }
 
 impl RuleDecl {
-    /// Whether a resolved value means the rule is off, so we never register it
+    /// Report if a resolved value means the rule is off, so larvae does not register it
     pub fn is_off(value: Option<&toml::Value>) -> bool {
         matches!(value, None | Some(toml::Value::Boolean(false)))
     }
 
-    /// The value this rule runs with, given whatever the user wrote
+    /// The value this rule runs with, given the value the user wrote
     pub fn resolve<'a>(&'a self, user: Option<&'a toml::Value>) -> Option<&'a toml::Value> {
         user.or(self.default.as_ref())
     }
@@ -156,27 +157,27 @@ impl RuleDecl {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
-    /// Must match the key under `[worms]`, since it also namespaces the rules
+    /// The name must match the key under `[worms]`, because it also namespaces the rules
     pub name: String,
-    /// The extension API this worm was built against
+    /// The extension API the author built this worm against
     pub api: u32,
-    /// Which guest form `entry` is
+    /// The guest form of `entry`
     pub form: Form,
-    /// Artifact filename inside the zip
+    /// The artifact filename inside the zip
     pub entry: String,
-    /// Which side of our native rules this worm wants, overridable by the user
+    /// The side of the native rules this worm wants. The user can override it.
     #[serde(default)]
     pub run_order: Option<Stage>,
-    /// Who owns requires in this worm's output
+    /// The owner of the requires in the output of this worm
     #[serde(default)]
     pub requires: RequireOwner,
-    /// Present when the worm claims file extensions
+    /// This field is present when the worm claims file extensions
     #[serde(default)]
     pub frontend: Option<Frontend>,
-    /// Rules this worm creates, and nothing else
+    /// The rules this worm creates, and no other rules
     #[serde(default)]
     pub rules: BTreeMap<String, RuleDecl>,
-    /// Lints this worm reports on the files it claims
+    /// The lints this worm reports on the files it claims
     #[serde(default)]
     pub lints: BTreeMap<String, LintDecl>,
 }
@@ -191,7 +192,7 @@ impl Manifest {
         Ok(manifest)
     }
 
-    /// True when this worm takes a slot in the run order
+    /// This is true when the worm takes a slot in the run order
     pub fn has_rules(&self) -> bool {
         !self.rules.is_empty()
     }
@@ -202,9 +203,9 @@ impl Manifest {
         }
 
         /*
-        A wasm worm is a pinned artifact compiled against our host ABI, so a
-        mismatch has to be refused with a sentence rather than discovered as a
-        trap somewhere inside the module.
+        A wasm worm is a pinned artifact compiled against the host ABI. Thus
+        larvae must refuse a mismatch with a clear message. A mismatch must not
+        appear later as a trap inside the module.
         */
         if self.api != ABI_VERSION {
             bail!(
@@ -219,9 +220,9 @@ impl Manifest {
         }
 
         /*
-        run_order addresses the rule half. A worm with no rules has nothing in
-        the sequence to order, and quietly ignoring the key is the failure mode
-        we refuse everywhere else.
+        run_order applies to the rule half. A worm with no rules has no item in
+        the sequence to order. Larvae does not ignore the key silently, because
+        larvae refuses that failure mode in all other places.
         */
         if self.run_order.is_some() && !self.has_rules() {
             bail!(
@@ -238,9 +239,9 @@ impl Manifest {
         }
 
         /*
-        Lints run on the files a worm claims, so a lint with no claims has no
-        file it could ever see. Requiring the frontend up front reads better
-        than a lint silently never firing.
+        Lints run on the files a worm claims. Thus a lint with no claims has no
+        file it can see. Larvae requires the frontend at parse time. This is
+        clearer than a lint that silently does not fire.
         */
         if self.frontend.is_none() && !self.lints.is_empty() {
             bail!(
@@ -333,7 +334,7 @@ filter = ["Call"]
         assert_eq!(m.run_order, Some(Stage::At(2)));
     }
 
-    /// The author's default, when the user says nothing
+    /// The default from the author applies when the user sets nothing
     #[test]
     fn a_worm_declares_which_side_of_our_rules_it_wants() {
         let before = Manifest::parse(
@@ -354,7 +355,7 @@ default = true
 
         let after = Manifest::parse(&FRONTEND.replace("form  =", "run_order = \"after\"\nform  ="));
 
-        // still an error on a worm with no rules, whichever side it named
+        // this is still an error on a worm with no rules, for each named side
         assert!(after.is_err());
     }
 
@@ -366,7 +367,7 @@ default = true
         assert!(err.to_string().contains("luaux"), "{err}");
     }
 
-    /// The error case behind luaux's question 4
+    /// The error case behind question 4 from luaux
     #[test]
     fn run_order_on_a_worm_with_no_rules_is_an_error() {
         let text = FRONTEND.replace("form  =", "run_order = 1\nform  =");
@@ -441,7 +442,7 @@ default = false
 
         assert!(Manifest::parse(&text).unwrap().frontend.unwrap().fmt);
 
-        // and saying nothing means it does not
+        // when the manifest sets nothing, the worm does not format
         assert!(!Manifest::parse(FRONTEND).unwrap().frontend.unwrap().fmt);
     }
 
@@ -464,7 +465,7 @@ default = "deny"
             crate::lint::Level::Deny
         );
 
-        // an unset default warns, like most builtins
+        // an unset default warns, the same as most builtins
         assert_eq!(m.lints["luaux_untidy"].default, crate::lint::Level::Warn);
     }
 

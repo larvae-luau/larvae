@@ -1,14 +1,14 @@
 /*!
-`[worms]`, where a project names the extensions it wants.
+`[worms]`: the table where a project names the extensions that it wants.
 
-The key is the worm's name, which has to match `name` in its `worm.toml`,
-because it is also what namespaces the worm's rules and its settings. One
-identity rather than three that can drift.
+The key is the name of the worm, and it must match `name` in its `worm.toml`.
+The same name also namespaces the rules and the settings of the worm. One
+identity cannot drift; three identities can.
 
-Everything about one worm sits under its own key: where it comes from, when it
-runs, which of its rules are on, and the settings it reads. The settings stay a
-table of their own rather than loose keys, so a worm calling something `repo`
-cannot collide with the key that says where to fetch it from.
+All data about one worm sits under its own key: its source, its run position,
+its enabled rules, and the settings that it reads. The settings stay in their
+own table and not in loose keys. So a worm setting named `repo` cannot
+collide with the key that names the fetch source.
 */
 
 use std::collections::BTreeMap;
@@ -19,36 +19,38 @@ use serde::Deserialize;
 
 use crate::worm::manifest::Stage;
 
-/// One worm, as the project asked for it
+/// One worm, as the project requests it
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
     pub source: Source,
-    /// Where this worm's rules sit, the user's word being final
+    /// The position of the rules of this worm; the user setting wins
     pub run_order: Option<Stage>,
     /*
-    Rules the user switched on, by name. They live here rather than in [rules]
-    so a worm cannot shadow a builtin: a worm declaring const_requires would
-    otherwise be eaten by our typed config and never see it.
+    The rules that the user switched on, by name. They live here and not in
+    [rules], so a worm cannot shadow a builtin. Otherwise the typed config of
+    larvae would consume a worm declaration of const_requires, and the worm
+    would never see it.
     */
     pub rules: BTreeMap<String, toml::Value>,
-    /// The worm's own settings, handed over untouched. We never read inside one.
+    /// The settings of the worm, passed on unchanged. larvae never reads inside them.
     pub config: toml::Value,
 }
 
-/// Where one worm comes from
+/// The source of one worm
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
     /// A GitHub release, `owner/repo@version`
     Release {
         repo: String,
         version: String,
-        /// Asset to fetch, defaults to `<name>-worm.zip` then `worm.zip`
+        /// The asset to fetch; the default is `<name>-worm.zip`, then `worm.zip`
         asset: Option<String>,
     },
 
     /*
-    A directory on disk. Not how a worm ships, but a worm author has to be able
-    to run their own before publishing it, and so does anyone debugging one.
+    A directory on disk. A worm does not ship this way. But a worm author
+    must run their worm before publication, and a debug session needs the
+    same access.
     */
     Local {
         path: PathBuf,
@@ -56,7 +58,7 @@ pub enum Source {
 }
 
 impl Source {
-    /// The asset name to look for in a release, given the worm's key
+    /// The asset names to look for in a release, given the key of the worm
     pub fn asset_names(&self, name: &str) -> Vec<String> {
         match self {
             Self::Release {
@@ -70,7 +72,7 @@ impl Source {
     }
 }
 
-/// The shapes `[worms]` accepts, before validation
+/// The shapes that `[worms]` accepts, before validation
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum Raw {
@@ -98,12 +100,12 @@ struct Table {
     config: Option<toml::Value>,
 }
 
-/// Every worm a project asked for, by name
+/// Every worm that a project requests, by name
 #[derive(Debug, Default)]
 pub struct Worms(pub BTreeMap<String, Entry>);
 
 impl Worms {
-    /// Read the `[worms]` table, rejecting anything ambiguous
+    /// Read the `[worms]` table, and reject each ambiguous entry
     pub fn parse(value: &toml::Value) -> Result<Self> {
         let entries: BTreeMap<String, Raw> = value
             .clone()
@@ -181,7 +183,7 @@ fn empty_table() -> toml::Value {
     toml::Value::Table(toml::map::Map::new())
 }
 
-/// `owner/repo@version`, which is the form almost every worm uses
+/// `owner/repo@version`, the form that almost every worm uses
 fn parse_pin(name: &str, pin: &str) -> Result<Source> {
     let Some((repo, version)) = pin.rsplit_once('@') else {
         bail!("worm `{name}`: {pin:?} has no @version, ex: \"owner/repo@0.1.0\"");
@@ -258,7 +260,7 @@ asset = "custom.zip"
         assert_eq!(w.0["luaux"].source.asset_names("luaux"), ["custom.zip"]);
     }
 
-    /// The whole point of the local form
+    /// The main purpose of the local form
     #[test]
     fn a_path_needs_no_release_at_all() {
         let w = worms(
@@ -335,7 +337,7 @@ asset = "y.zip"
         assert!(err.to_string().contains("not a release"), "{err}");
     }
 
-    /// An author says which side of our rules they want, not a number
+    /// An author names a side of the larvae rules and does not give a number
     #[test]
     fn a_worm_can_ask_for_before_or_after_by_name() {
         let w = worms(
@@ -372,14 +374,14 @@ rules = { tidy = true, const_requires = false }
         .unwrap();
 
         assert_eq!(w.0["mine"].rules["tidy"], toml::Value::Boolean(true));
-        // a name that is also ours, kept apart rather than colliding
+        // A name that larvae also uses; the two stay apart and do not collide.
         assert_eq!(
             w.0["mine"].rules["const_requires"],
             toml::Value::Boolean(false)
         );
     }
 
-    /// Everything about one worm under one key, settings included
+    /// All data about one worm under one key, settings included
     #[test]
     fn settings_live_with_the_worm_that_reads_them() {
         let w = worms(
@@ -400,7 +402,7 @@ indent = 2
         assert_eq!(config["indent"], toml::Value::Integer(2));
     }
 
-    /// A table of its own, so a worm's own `repo` key cannot collide with ours
+    /// A separate table, so the `repo` key of a worm cannot collide with the larvae key
     #[test]
     fn settings_are_kept_apart_from_the_source() {
         let w = worms(

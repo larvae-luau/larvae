@@ -1,10 +1,11 @@
 /*!
-inject_module_path, define a constant holding this file's DataModel path so
-logging and telemetry can name the module without hardcoding a path that
-goes stale the moment the file moves
+inject_module_path: define a constant that holds the DataModel path of
+this file. Then logging and telemetry can name the module without a
+hardcoded path. A hardcoded path becomes stale when the file moves.
 
-The constant only appears in files that reference it, and only when a mount
-covers the file, a reference with no known path warns rather than guessing
+The constant appears only in files that reference it, and only when a
+mount covers the file. A reference with no known path produces a warning.
+The rule does not guess a path.
 */
 
 use std::path::Path;
@@ -24,7 +25,7 @@ pub fn apply(name: &str, ctx: &RuleCtx, edits: &mut Vec<Edit>, diags: &mut Vec<D
     };
 
     engine::walk_chunk(ctx.chunk, &mut usage);
-    // the file already owns the name, ours would only shadow or be shadowed
+    // The file already owns the name. The injected local would only shadow or be shadowed.
     if !usage.referenced || usage.bound {
         return;
     }
@@ -49,8 +50,9 @@ pub fn apply(name: &str, ctx: &RuleCtx, edits: &mut Vec<Edit>, diags: &mut Vec<D
 }
 
 /*
-The constant goes after the leading directives and comments, the first real
-token is exactly that boundary, its line start when nothing else shares it
+The constant goes after the leading directives and comments. The first
+real token marks exactly that boundary. The rule uses the token's line
+start when no other content shares the line.
 */
 fn insert_at(ctx: &RuleCtx) -> u32 {
     let Some(first) = ctx.toks.first() else {
@@ -164,7 +166,7 @@ mod tests {
             run_full(ON, "print(MODULE_PATH)\n", DM, &mut Vec::new()),
             "local MODULE_PATH = \"@game/ReplicatedStorage/shared/util\"\nprint(MODULE_PATH)\n"
         );
-        // after the directives and the header comments
+        // The constant goes after the directives and the header comments.
         assert_eq!(
             run_full(
                 ON,
@@ -180,7 +182,7 @@ mod tests {
     fn stays_out_of_files_that_do_not_use_it() {
         let src = "local a = 1\nreturn a\n";
         assert_eq!(run_full(ON, src, DM, &mut Vec::new()), src);
-        // the file defines the name itself, ours would only be shadowed
+        // The file defines the name itself. The injected local would only be shadowed.
         let owned = "local MODULE_PATH = \"custom\"\nreturn MODULE_PATH\n";
         assert_eq!(run_full(ON, owned, DM, &mut Vec::new()), owned);
     }
@@ -194,7 +196,7 @@ mod tests {
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].severity, Severity::Warning);
         assert!(diags[0].message.contains("no mount covers this file"));
-        // no reference, no warning
+        // With no reference, there is no warning.
         let mut quiet = Vec::new();
         run_full(ON, "return 1\n", None, &mut quiet);
         assert!(quiet.is_empty());

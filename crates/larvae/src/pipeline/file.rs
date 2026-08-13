@@ -1,4 +1,4 @@
-//! One file, lex to scan to resolve to edits to output
+//! One file: lex, scan, resolve, edit, output.
 
 use std::path::Path;
 
@@ -13,32 +13,32 @@ use crate::syntax::scan;
 
 use super::output::write_atomic;
 
-/// Owner label for the require rewriter's own edits
+/// The owner label for the edits of the require rewriter
 const REQUIRES: &str = "the require rewriter";
 
 /// Per file transform options, resolved from the config once
 pub struct FileOpts {
     quotes: QuoteStyle,
-    /// Check mode parses too, so syntax errors surface before Studio sees them
+    /// Check mode also parses, so syntax errors appear before Studio sees them
     validate_syntax: bool,
     const_requires: bool,
     /// Compiled `except` patterns, Some means the rule is on
     remove_comments: Option<Vec<regex::Regex>>,
-    /// Drop `-- larvae: allow(...)` comments from the output
+    /// Remove `-- larvae: allow(...)` comments from the output
     strip_flags: bool,
-    /// Comment text and whether it goes at the start
+    /// The comment text, and true when the text goes at the start
     append_comment: Option<(String, bool)>,
     directive: Option<String>,
     /// Read require(script.Parent.Foo) chains as input
     instance_input: bool,
-    /// Compile time constants, empty when none are configured
+    /// Compile time constants; empty when the config sets none
     defines: std::collections::HashMap<String, crate::rules::defines::Value>,
-    /// Per path target overrides, in the order the config wrote them
+    /// Target overrides for each path, in the order of the config
     overrides: Vec<crate::config::Override>,
 }
 
 impl FileOpts {
-    /// Resolve the per file transform options once, not per file
+    /// Resolve the transform options once, not once for each file
     pub fn from_config(root: &Path, config: &Config, write: bool) -> Result<Self> {
         let remove_comments = match &config.rules.remove_comments {
             Some(rc) if rc.enabled() => {
@@ -84,10 +84,10 @@ impl FileOpts {
             validate_syntax: !write,
             const_requires: config.rules.const_requires,
             /*
-            remove_comments speaks for every comment in the file, this one for
-            a handful, so the broader rule wins outright rather than the two
-            both editing the same span. A project that kept flags alive with an
-            `except` pattern meant it.
+            remove_comments applies to every comment in the file, and this
+            rule to a few. So the broader rule wins in full, and the two rules
+            do not edit the same span. A project that keeps flags with an
+            `except` pattern wants that result.
             */
             strip_flags: config.process.strip_flags && remove_comments.is_none(),
             remove_comments,
@@ -108,22 +108,22 @@ impl FileOpts {
     }
 }
 
-/// What one file contributed to the run summary
+/// The contribution of one file to the run summary
 pub(super) struct FileOutcome {
     pub rewrites: usize,
     pub dynamic: usize,
-    /// Rules that changed something in this file, each listed once
+    /// The rules that changed this file, each listed once
     pub applied: Vec<Rule>,
 }
 
 /*
 One file, through every stage in run order.
 
-Stages are real rather than a sorting of edits. Our own rules occupy the slot
-`[process] run_order` names, a worm sits either side of it, and between two
-slots the buffer is spliced and re-lexed so a later stage genuinely reads what
-an earlier one produced. With nobody asking for an order there is one stage and
-this costs nothing.
+Stages are real and not a sort of edits. The larvae rules use the slot that
+`[process] run_order` names, and a worm sits on each side of it. Between two
+slots, larvae splices the buffer and lexes it again. So a later stage reads
+the true output of an earlier one. When no config sets an order, there is one
+stage, and this costs nothing.
 */
 #[allow(clippy::too_many_arguments)]
 pub(super) fn process_file(
@@ -136,7 +136,7 @@ pub(super) fn process_file(
     rules_cfg: &crate::config::RulesConfig,
     write: bool,
     worms: &crate::worm::pool::Pool,
-    // false when a front-end declared it resolves its own requires
+    // False when a front-end declares that it resolves its own requires.
     own_requires: bool,
     diags: &mut Vec<Diag>,
 ) -> Option<FileOutcome> {
@@ -161,7 +161,7 @@ pub(super) fn process_file(
                 diags,
             );
 
-            // a file that will not lex is out of the build, later stages included
+            // A file that does not lex is out of the build, later stages included.
             outcome.as_ref()?;
         } else {
             let Ok(lexed) = lexer::lex(&current) else {
@@ -182,7 +182,7 @@ pub(super) fn process_file(
                     diags.push(Diag::error(path, format!("write failed: {e:#}")));
                 }
             } else {
-                // check does not build the output, it still owes the same warnings
+                // Check does not build the output, but it must give the same warnings.
                 clashes = crate::rules::edits::conflicts(&edits);
             }
         } else {
@@ -210,7 +210,7 @@ pub(super) fn process_file(
     outcome
 }
 
-/// Our own work: requires, token rules, and the ast rules that want a tree
+/// The larvae work: requires, token rules, and the ast rules that need a tree
 #[allow(clippy::too_many_arguments)]
 fn native_pass(
     path: &Path,
@@ -240,9 +240,9 @@ fn native_pass(
     }
 
     /*
-    A worm that owns its own requires means we do not look at them, so there is
-    nothing to scan. Skipping here rather than later also means no realm
-    diagnostics for a file we were told not to reason about.
+    When a worm owns its requires, larvae does not examine them, so there is
+    nothing to scan. The skip here, and not later, also prevents realm
+    diagnostics for a file that larvae must not analyze.
     */
     let scanned = if own_requires {
         scan::scan(src, &lexed.toks)
@@ -251,9 +251,9 @@ fn native_pass(
     };
 
     /*
-    A mixed project can want a different output form per directory, ex:
-    client code that runs out of a Starter container cannot use absolute
-    @game strings the way shared code can
+    A mixed project can want a different output form for each directory.
+    Example: client code that runs from a Starter container cannot use
+    absolute @game strings the way shared code can.
     */
     let (target, style) = match crate::config::override_for(&opts.overrides, dest_rel) {
         Some(o) => (o.target, o.style.unwrap_or(resolver.style)),
@@ -266,8 +266,8 @@ fn native_pass(
     let quote = opts.quotes.char();
     let requote = opts.quotes != QuoteStyle::Preserve;
 
-    // every site with its final emitted form, rules use this to spot
-    // requires that point at the same module
+    // Every site with its final emitted form. Rules use this to find
+    // requires that point at the same module.
     let mut site_forms: Vec<(scan::RequireSite, String)> = Vec::new();
 
     for site in &scanned.sites {
@@ -276,7 +276,7 @@ fn native_pass(
         match resolver.resolve(&ctx, spec, src, site.at as usize, diags) {
             Rewrite::Keep => {
                 site_forms.push((*site, spec.to_string()));
-                // untouched requires still get the configured quote style
+                // Unchanged requires also get the configured quote style.
                 if requote
                     && src.as_bytes()[site.tok_start as usize] != quote as u8
                     && !spec.contains(['"', '\'', '\\'])
@@ -301,7 +301,7 @@ fn native_pass(
                 }
             }
 
-            // instance exprs replace the whole argument, parenless calls need wrapping parens
+            // Instance expressions replace the full argument; calls without parens need added parens.
             Rewrite::Expr(expr) => {
                 site_forms.push((*site, expr.clone()));
                 let expr = if site.has_parens {
@@ -316,9 +316,9 @@ fn native_pass(
     }
 
     /*
-    Instance chains, the legacy form. Resolved through the project map and
-    re-emitted like any other require, and left exactly as written whenever
-    the chain cannot be followed all the way
+    Instance chains, the legacy form. The resolver follows them through the
+    project map and emits them like any other require. When the resolver
+    cannot follow the full chain, the chain stays exactly as written.
     */
     if opts.instance_input {
         for site in &scanned.instances {
@@ -330,7 +330,7 @@ fn native_pass(
 
     let rewrites = edits.len();
 
-    // everything past the requires is a rule that ships inside larvae
+    // Each edit after the requires comes from a rule inside larvae.
     edits.family(Family::Native, |edits| {
         if opts.const_requires {
             edits.run("const_requires", |e| {
@@ -387,9 +387,9 @@ fn native_pass(
 }
 
 /*
-Flatten the file once, bucket its nodes by kind, and hand each worm the ones
-its rules asked for. Parsing happens here and only here, so a project whose
-worms declare narrow filters keeps the fast path on files that match nothing.
+Flatten the file once, group its nodes by kind, and give each worm the nodes
+that its rules request. The parse happens here and only here. So a project
+with narrow worm filters keeps the fast path on files that match nothing.
 */
 fn run_worm_rules(
     worms: &crate::worm::pool::Pool,
@@ -413,7 +413,7 @@ fn run_worm_rules(
     }
 
     let Ok(chunk) = crate::syntax::parser::parse(src, &lexed.toks) else {
-        // a syntax error is already reported by check, and a rule cannot help here
+        // Check already reports a syntax error, and a rule cannot help here.
         return;
     };
 

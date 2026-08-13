@@ -1,4 +1,4 @@
-//! Alias, self, and passthrough forms, the four RFC input shapes
+//! Alias, self, and passthrough forms: the four RFC input shapes
 
 use std::path::Path;
 
@@ -26,7 +26,7 @@ impl<'a> Resolver<'a> {
             );
         }
 
-        // instance target resolves @self on disk like any other require
+        // The instance target resolves @self on disk like any other require.
         if ctx.target == Target::RobloxInstance {
             let Some(target_base) = normalize_join(&ctx.dir, rest) else {
                 diags.push(
@@ -43,11 +43,11 @@ impl<'a> Resolver<'a> {
             return self.emit_fs(ctx, spec, &target_base, src, offset, diags);
         }
 
-        // @self is natively valid for the other targets, pass through
+        // @self is natively valid for the other targets, so it passes through.
         Rewrite::Keep
     }
 
-    /// @game input is already native, validate it, instance target converts it
+    /// @game input is already native: validate it; the instance target converts it
     pub(super) fn resolve_game_passthrough(
         &self,
         ctx: &FileCtx,
@@ -117,7 +117,7 @@ impl<'a> Resolver<'a> {
                 return Rewrite::Keep;
             }
 
-            // larvae.toml wins per key, then .luaurc upward walk
+            // larvae.toml wins for each key; then a .luaurc walk upward.
             let (value, base_dir): (&str, &Path) = if let Some(v) = self.toml_aliases.get(&name) {
                 (v.as_str(), self.root)
             } else if let Some((v, dir)) = self.luaurc.lookup(&ctx.dir, &name) {
@@ -135,7 +135,7 @@ impl<'a> Resolver<'a> {
                 return Rewrite::Keep;
             };
 
-            // DataModel-valued alias, textual expansion
+            // A DataModel-valued alias gets a textual expansion.
             if let Some(dm_base) = parse_game_path(value) {
                 if ctx.target == Target::Path {
                     diags.push(
@@ -177,7 +177,7 @@ impl<'a> Resolver<'a> {
                 return Rewrite::Replace(format!("@game/{}", segments.join("/")));
             }
 
-            // Alias-to-alias chain (ex: a = "@b/sub")
+            // An alias-to-alias chain (ex: a = "@b/sub")
             if let Some(chained) = value.strip_prefix('@') {
                 let (next_name, value_rest) = split_alias(chained);
 
@@ -190,7 +190,7 @@ impl<'a> Resolver<'a> {
                 continue;
             }
 
-            // Filesystem-valued alias, relative to wherever it was defined
+            // A filesystem-valued alias, relative to the directory that defines it
             let joined = if rest.is_empty() {
                 value.to_string()
             } else {
