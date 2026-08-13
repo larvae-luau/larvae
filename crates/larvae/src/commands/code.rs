@@ -41,6 +41,9 @@ pub fn run(root: &Path) -> Result<ExitCode> {
         bail!("no larvae.toml here - run `larvae init` first");
     }
 
+    // a project with worms has a schema of its own, and it wins for that project
+    project_schema(root)?;
+
     match installed() {
         Some(editor) => {
             eprintln!("Found Even Better TOML in {}", editor.name);
@@ -118,6 +121,57 @@ The command writes user settings and not a `.vscode` folder in the project.
 The pattern matches `larvae.toml` in every location. So one entry covers every
 project that the user opens, and each repository does not need its own entry.
 */
+/*
+Point this project at the schema that knows its worms.
+
+The hosted schema covers every project, so it cannot describe the rules, the
+lints, and the settings that one project's worms declare. Larvae writes a
+merged copy into the cache directory when it loads worms. This association
+lives in the settings of the project, so it applies to this repository alone.
+*/
+fn project_schema(root: &Path) -> Result<()> {
+    let generated = root
+        .join(&crate::config::Config::load(&root.join("larvae.toml"))?.process.cache_dir)
+        .join(crate::schema::FILE);
+
+    if !generated.exists() {
+        return Ok(());
+    }
+
+    let settings = root.join(".vscode/settings.json");
+    let target = crate::ui::rel(&generated);
+    let listed = target.clone();
+
+    let changed = edit_settings(&settings, move |table| {
+        let associations = table
+            .entry(ASSOCIATIONS)
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+
+        let Some(associations) = associations.as_object_mut() else {
+            bail!("{ASSOCIATIONS} is not an object, leaving it alone");
+        };
+
+        if associations.get(PATTERN).and_then(|v| v.as_str()) == Some(listed.as_str()) {
+            return Ok(false);
+        }
+
+        associations.insert(PATTERN.to_owned(), listed.into());
+
+        Ok(true)
+    })?;
+
+    match changed {
+        true => ui::print_success(&format!(
+            "{} now points at {target}, which knows this project's worms",
+            ui::rel(&settings)
+        )),
+
+        false => ui::print_success(&format!("{} already points at {target}", ui::rel(&settings))),
+    }
+
+    Ok(())
+}
+
 fn associate(path: &Path) -> Result<ExitCode> {
     let changed = edit_settings(path, |table| {
         let associations = table

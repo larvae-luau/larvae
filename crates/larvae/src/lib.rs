@@ -13,6 +13,7 @@ pub mod pipeline;
 pub mod project;
 pub mod requires;
 pub mod rules;
+pub mod schema;
 pub mod syntax;
 pub mod sys;
 pub mod ui;

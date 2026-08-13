@@ -135,6 +135,64 @@ pub struct LintDecl {
     pub default: crate::lint::Level,
 }
 
+/// The type that one declared option takes
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OptionType {
+    Boolean,
+    Integer,
+    Float,
+    String,
+}
+
+impl OptionType {
+    /// The name of this type in a message and in the JSON schema
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Boolean => "boolean",
+            Self::Integer => "integer",
+            Self::Float => "number",
+            Self::String => "string",
+        }
+    }
+
+    /// Report if a value has this type
+    pub fn accepts(self, value: &toml::Value) -> bool {
+        match self {
+            Self::Boolean => value.is_bool(),
+            Self::Integer => value.is_integer(),
+            Self::Float => value.is_float() || value.is_integer(),
+            Self::String => value.is_str(),
+        }
+    }
+}
+
+/*
+One setting that a worm declares for its own `[worms.<name>.config]` table.
+
+A worm that declares its options gets three things larvae cannot give an
+opaque table: larvae refuses a key the worm does not declare, larvae fills a
+missing key with the default before init, and the editor completes the key
+with its description. A worm that declares nothing keeps the opaque table.
+*/
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OptionDecl {
+    /// The type this option takes
+    #[serde(rename = "type")]
+    pub kind: OptionType,
+    /// The value larvae sends when the user writes nothing
+    #[serde(default)]
+    pub default: Option<toml::Value>,
+    /// The values this option accepts. An empty list accepts every value of
+    /// the type.
+    #[serde(default)]
+    pub values: Vec<toml::Value>,
+    /// The editor hover shows this text, through the generated JSON schema
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
 /// One rule that a worm adds to the `[rules]` table of larvae
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -189,6 +247,9 @@ pub struct Manifest {
     /// The lints this worm reports on the files it claims
     #[serde(default)]
     pub lints: BTreeMap<String, LintDecl>,
+    /// The settings this worm takes in `[worms.<name>.config]`
+    #[serde(default)]
+    pub options: BTreeMap<String, OptionDecl>,
 }
 
 impl Manifest {
@@ -257,6 +318,33 @@ impl Manifest {
                 "worm `{}` declares lints but no [frontend], and claims are what say which files its lints run on",
                 self.name
             );
+        }
+
+        /*
+        A default and a listed value must have the type the option declares.
+        The manifest states the type, so larvae checks the manifest against
+        itself before a project can meet it.
+        */
+        for (name, option) in &self.options {
+            if let Some(default) = &option.default
+                && !option.kind.accepts(default)
+            {
+                bail!(
+                    "worm `{}`: option `{name}` defaults to a value that is not a {}",
+                    self.name,
+                    option.kind.name()
+                );
+            }
+
+            for value in &option.values {
+                if !option.kind.accepts(value) {
+                    bail!(
+                        "worm `{}`: option `{name}` lists a value that is not a {}",
+                        self.name,
+                        option.kind.name()
+                    );
+                }
+            }
         }
 
         if let Some(frontend) = &self.frontend {

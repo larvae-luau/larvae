@@ -106,12 +106,13 @@ impl Registry {
             }
 
             let enabled = resolve_rules(name, &worm, &entry.rules)?;
+            let config = resolve_config(name, &worm, &entry.config)?;
 
             worms.push(Loaded {
                 dir,
                 worm,
                 artifact,
-                config: entry.config.clone(),
+                config,
                 rules: enabled,
                 run_order: entry.run_order,
             });
@@ -121,6 +122,14 @@ impl Registry {
 
         registry.check_claims()?;
         registry.check_lints()?;
+
+        /*
+        The editor needs a schema that knows these worms. The write is best
+        effort, because a read only checkout must still build and lint.
+        */
+        if !registry.is_empty() {
+            let _ = crate::schema::write(cache, &registry);
+        }
 
         Ok(registry)
     }
@@ -299,6 +308,78 @@ fn resolve_rules(
     }
 
     Ok(out)
+}
+
+/*
+Check the settings of a project against the options the worm declares, and
+fill each missing key with its default.
+
+A worm that declares no option keeps the opaque table it always had. A worm
+that declares its options gets a complete table at init, so the guest reads a
+key instead of a key and a fallback.
+*/
+fn resolve_config(name: &str, worm: &Worm, user: &toml::Value) -> Result<toml::Value> {
+    let declared = &worm.manifest.options;
+
+    if declared.is_empty() {
+        return Ok(user.clone());
+    }
+
+    let mut out = user
+        .as_table()
+        .cloned()
+        .unwrap_or_default();
+
+    /*
+    A key the worm does not declare is a setting that does nothing. It is
+    named here, for the same reason a rule the worm does not declare is.
+    */
+    for (key, value) in &out {
+        let Some(option) = declared.get(key) else {
+            bail!("worm `{name}` has no option `{key}`");
+        };
+
+        if !option.kind.accepts(value) {
+            bail!(
+                "worm `{name}`: option `{key}` takes a {}",
+                option.kind.name()
+            );
+        }
+
+        if !option.values.is_empty() && !option.values.contains(value) {
+            let allowed: Vec<String> = option.values.iter().map(scalar).collect();
+
+            bail!(
+                "worm `{name}`: option `{key}` takes one of {}",
+                allowed.join(", ")
+            );
+        }
+    }
+
+    for (key, option) in declared {
+        if let Some(default) = &option.default
+            && !out.contains_key(key)
+        {
+            out.insert(key.clone(), default.clone());
+        }
+    }
+
+    Ok(toml::Value::Table(out))
+}
+
+/// One value as a user would write it, for a message that lists the choices
+fn scalar(value: &toml::Value) -> String {
+    match value {
+        toml::Value::String(s) => format!("{s:?}"),
+
+        toml::Value::Integer(n) => n.to_string(),
+
+        toml::Value::Float(f) => f.to_string(),
+
+        toml::Value::Boolean(b) => b.to_string(),
+
+        other => other.type_str().to_owned(),
+    }
 }
 
 #[cfg(test)]
@@ -519,6 +600,83 @@ mod tests {
 
         assert!(r.frontend_for(Path::new("a/b.echo")).is_some());
         assert!(r.frontend_for(Path::new("a/b.luau")).is_none());
+    }
+
+    fn options_worm(root: &Path) {
+        write_worm(
+            root,
+            "w",
+            "name = \"echo\"\napi = 1\nform = \"luau\"\nentry = \"init.luau\"\n\n[frontend]\nclaims = [\".echo\"]\n\n[options.pretty]\ntype = \"boolean\"\ndefault = true\n\n[options.factory]\ntype = \"string\"\nvalues = [\"vide\", \"react\"]\n",
+            ECHO,
+        );
+    }
+
+    #[test]
+    fn a_declared_option_takes_its_default_when_the_user_writes_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        options_worm(root.path());
+
+        let r = Registry::load(
+            root.path(),
+            &root.path().join(".larvae"),
+            &config("echo = { path = \"w\" }"),
+        )
+        .unwrap();
+
+        let settings = r.iter().next().unwrap().config.as_table().unwrap();
+
+        assert_eq!(settings["pretty"], toml::Value::Boolean(true));
+
+        // an option with no default stays absent rather than guessing one
+        assert!(!settings.contains_key("factory"));
+    }
+
+    #[test]
+    fn an_option_the_worm_does_not_declare_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        options_worm(root.path());
+
+        let err = Registry::load(
+            root.path(),
+            &root.path().join(".larvae"),
+            &config("echo = { path = \"w\", config = { prety = true } }"),
+        )
+        .err()
+        .unwrap();
+
+        assert!(format!("{err:#}").contains("no option `prety`"), "{err:#}");
+    }
+
+    #[test]
+    fn an_option_of_the_wrong_type_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        options_worm(root.path());
+
+        let err = Registry::load(
+            root.path(),
+            &root.path().join(".larvae"),
+            &config("echo = { path = \"w\", config = { pretty = \"yes\" } }"),
+        )
+        .err()
+        .unwrap();
+
+        assert!(format!("{err:#}").contains("takes a boolean"), "{err:#}");
+    }
+
+    #[test]
+    fn an_option_outside_its_listed_values_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        options_worm(root.path());
+
+        let err = Registry::load(
+            root.path(),
+            &root.path().join(".larvae"),
+            &config("echo = { path = \"w\", config = { factory = \"solid\" } }"),
+        )
+        .err()
+        .unwrap();
+
+        assert!(format!("{err:#}").contains("takes one of"), "{err:#}");
     }
 
     #[test]
