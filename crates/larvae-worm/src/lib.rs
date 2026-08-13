@@ -40,6 +40,8 @@ payload out.
 pub const ABI_VERSION: u32 = 1;
 
 pub mod abi;
+#[cfg(feature = "native")]
+pub mod native;
 pub mod node;
 
 pub use node::Node;

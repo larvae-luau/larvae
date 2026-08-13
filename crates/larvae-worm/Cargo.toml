@@ -9,4 +9,12 @@ homepage.workspace = true
 keywords = ["luau", "larvae", "wasm", "plugin", "extension"]
 categories = ["development-tools::build-utils", "wasm"]
 
+[features]
+# The native transport: serve() and the wire types, for a worm that ships as
+# an executable rather than wasm. Off by default so the wasm path stays
+# dependency free.
+native = ["dep:serde", "dep:serde_json"]
+
 [dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
