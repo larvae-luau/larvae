@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 
-use crate::commands::fmt::worm_pool;
+use crate::commands::fmt::pool_with;
 use crate::config::Excludes;
 use crate::fmt::{self, FmtConfig};
 use crate::lint::{self, Finding, Level, LintConfig};
@@ -258,7 +258,8 @@ impl Server {
     fn load_worms(&mut self, root: &Path) {
         let mut fmt = self.fmt.clone();
 
-        match worm_pool(root, None, &mut fmt) {
+        // the editor never downloads a worm, because a keystroke cannot wait
+        match pool_with(root, None, &mut fmt, crate::worm::registry::Fetch::Never) {
             Ok(pool) => {
                 self.fmt = fmt;
                 self.worms = pool;

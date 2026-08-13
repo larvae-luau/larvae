@@ -75,6 +75,21 @@ A project with no config or no `[worms]` gets an empty pool at no cost. So
 cold cache does a fetch here, the same as `larvae process`.
 */
 pub fn worm_pool(root: &Path, config: Option<PathBuf>, fmt: &mut FmtConfig) -> Result<Pool> {
+    pool_with(root, config, fmt, crate::worm::registry::Fetch::Allowed)
+}
+
+/*
+The same, with a choice about the network.
+
+A command in the terminal fetches a worm the cache does not hold. The editor
+does not, because a keystroke cannot wait for a download.
+*/
+pub fn pool_with(
+    root: &Path,
+    config: Option<PathBuf>,
+    fmt: &mut FmtConfig,
+    fetch: crate::worm::registry::Fetch,
+) -> Result<Pool> {
     let path = config.unwrap_or_else(|| root.join("larvae.toml"));
 
     if !path.exists() {
@@ -88,7 +103,12 @@ pub fn worm_pool(root: &Path, config: Option<PathBuf>, fmt: &mut FmtConfig) -> R
     }
 
     let cfg = Config::load(&path)?;
-    let registry = Registry::for_project(root, &cfg)?;
+
+    let registry = match fetch {
+        crate::worm::registry::Fetch::Allowed => Registry::for_project(root, &cfg)?,
+
+        crate::worm::registry::Fetch::Never => Registry::for_project_cached(root, &cfg)?,
+    };
 
     // the worms of a project decide which `[fmt]` keys are real
     registry.resolve_fmt(fmt)?;

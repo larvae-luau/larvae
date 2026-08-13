@@ -17,6 +17,26 @@ use super::manifest::{RuleDecl, Stage};
 
 use super::{RequireOwner, Worm};
 
+/// Whether a caller accepts a download while it loads the worms
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fetch {
+    /// Fetch a worm that the cache does not hold yet
+    Allowed,
+    /// Use the cache alone, and skip a worm that is not in it
+    Never,
+}
+
+/// The directory of a release worm, when the cache already holds it
+fn cached(cache: &Path, name: &str, source: &Source) -> Option<std::path::PathBuf> {
+    let Source::Release { version, .. } = source else {
+        return None;
+    };
+
+    let dir = super::fetch::install_dir(cache, name, version);
+
+    dir.join(super::MANIFEST).exists().then_some(dir)
+}
+
 /// A worm plus the configuration the project gave it
 pub struct Loaded {
     pub worm: Worm,
@@ -66,16 +86,41 @@ impl Registry {
     claimed files and format the wrong set.
     */
     pub fn for_project(root: &Path, config: &crate::config::Config) -> Result<Self> {
+        Self::project(root, config, Fetch::Allowed)
+    }
+
+    /*
+    The same, without the network.
+
+    The editor uses this. A worm that is not in the cache is skipped, and the
+    rest of the project still works, because a keystroke cannot wait for a
+    download. The next command in the terminal fetches the worm.
+    */
+    pub fn for_project_cached(root: &Path, config: &crate::config::Config) -> Result<Self> {
+        Self::project(root, config, Fetch::Never)
+    }
+
+    fn project(root: &Path, config: &crate::config::Config, fetch: Fetch) -> Result<Self> {
         let Some(value) = config.worms.as_ref() else {
             return Ok(Self::default());
         };
 
         let named = crate::config::worms::Worms::parse(value)?;
 
-        Self::load(root, &root.join(&config.process.cache_dir), &named)
+        Self::load_with(root, &root.join(&config.process.cache_dir), &named, fetch)
     }
 
     pub fn load(root: &Path, cache: &Path, config: &WormsConfig) -> Result<Self> {
+        Self::load_with(root, cache, config, Fetch::Allowed)
+    }
+
+    /// The same, with a choice about the network
+    pub fn load_with(
+        root: &Path,
+        cache: &Path,
+        config: &WormsConfig,
+        fetch: Fetch,
+    ) -> Result<Self> {
         let mut worms = Vec::new();
 
         for (name, entry) in config.iter() {
@@ -87,8 +132,20 @@ impl Registry {
                 later build uses no network. The pin decides the version. The
                 recorded hash decides if the bytes are still the installed
                 bytes.
+
+                A caller that refuses the network skips a worm it does not
+                have yet. The editor is such a caller: it must answer a
+                keystroke, and a download is not an answer.
                 */
-                source @ Source::Release { .. } => super::fetch::ensure(cache, name, source)?,
+                source @ Source::Release { .. } => match fetch {
+                    Fetch::Allowed => super::fetch::ensure(cache, name, source)?,
+
+                    Fetch::Never => match cached(cache, name, source) {
+                        Some(dir) => dir,
+
+                        None => continue,
+                    },
+                },
             };
 
             let (manifest, artifact) =
