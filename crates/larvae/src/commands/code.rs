@@ -129,6 +129,25 @@ lints, and the settings that one project's worms declare. Larvae writes a
 merged copy into the cache directory when it loads worms. This association
 lives in the settings of the project, so it applies to this repository alone.
 */
+/*
+The `file://` URL of a path, because an editor takes a URL and not a path.
+
+Even Better TOML refuses a relative value: it reports `relative URL without a
+base`. So larvae writes an absolute URL. The URL names this machine, which is
+why this entry belongs to a developer and not to a repository.
+*/
+fn file_url(path: &Path) -> String {
+    let absolute = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let text = absolute.display().to_string();
+
+    match cfg!(windows) {
+        // a windows path starts with a drive letter, and the URL needs a root
+        true => format!("file:///{}", text.replace('\\', "/")),
+
+        false => format!("file://{text}"),
+    }
+}
+
 fn project_schema(root: &Path) -> Result<()> {
     let generated = root
         .join(
@@ -143,7 +162,7 @@ fn project_schema(root: &Path) -> Result<()> {
     }
 
     let settings = root.join(".vscode/settings.json");
-    let target = crate::ui::rel(&generated);
+    let target = file_url(&generated);
     let listed = target.clone();
 
     let changed = edit_settings(&settings, move |table| {

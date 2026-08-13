@@ -84,7 +84,7 @@ impl<'de> Deserialize<'de> for StdLib {
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct LintConfig {
     /// The level for each lint, keyed by the lint's name.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "levels")]
     pub rules: BTreeMap<String, Level>,
 
     /// The settings for each lint. larvae gives them to the lint that
@@ -204,6 +204,53 @@ fn selene_file(root: &Path) -> Result<Option<LintConfig>> {
         globals: Vec::new(),
         exclude: file.exclude,
     }))
+}
+
+/*
+One level, or a table of them under a namespace.
+
+A worm names its lints under its own key, so a project writes them together:
+
+```toml
+[lint.rules.luaux]
+useless_fragment = "warn"
+```
+
+TOML reads that as a table inside `[lint.rules]`, while a builtin lint is a
+level in the same table. Larvae accepts both, and joins a namespace to a name
+with a dot. Thus `luaux.useless_fragment` is the name everywhere else: in a
+message, in `--explain`, and in an `allow` comment.
+*/
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum LevelOrTable {
+    One(Level),
+    Namespace(BTreeMap<String, Level>),
+}
+
+/// Read `[lint.rules]`, and flatten each namespace into a dotted name
+fn levels<'de, D>(deserializer: D) -> Result<BTreeMap<String, Level>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: BTreeMap<String, LevelOrTable> = Deserialize::deserialize(deserializer)?;
+    let mut out = BTreeMap::new();
+
+    for (key, value) in raw {
+        match value {
+            LevelOrTable::One(level) => {
+                out.insert(key, level);
+            }
+
+            LevelOrTable::Namespace(table) => {
+                for (name, level) in table {
+                    out.insert(format!("{key}.{name}"), level);
+                }
+            }
+        }
+    }
+
+    Ok(out)
 }
 
 #[cfg(test)]

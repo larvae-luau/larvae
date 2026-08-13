@@ -198,20 +198,17 @@ fn worm_lint(
     let project = Config::load(&path).ok()?;
     let registry = crate::worm::registry::Registry::for_project(root, &project).ok()?;
 
-    registry
-        .declared_lints()
-        .find(|(lint, _)| *lint == name)
-        .map(|(_, decl)| decl.clone())
-        .and_then(|decl| {
-            let worm = registry
-                .iter()
-                .find(|l| l.worm.manifest.lints.contains_key(name))?
-                .worm
-                .name()
-                .to_owned();
+    /*
+    A user writes the name that larvae reports, `luaux.useless_fragment`. The
+    worm declares the bare half of it, so the lookup splits the name first and
+    then asks the worm that owns the first half.
+    */
+    let (owner, bare) = name.split_once('.')?;
 
-            Some((worm, decl))
-        })
+    let loaded = registry.iter().find(|l| l.worm.name() == owner)?;
+    let decl = loaded.worm.manifest.lints.get(bare)?;
+
+    Some((owner.to_owned(), decl.clone()))
 }
 
 fn files(n: usize) -> String {

@@ -1106,7 +1106,10 @@ while True:
         let diags = published(&server, "file:///p/t.luaux");
 
         assert_eq!(diags.as_array().unwrap().len(), 1);
-        assert_eq!(diags[0]["code"], "tidy");
+        assert_eq!(
+            diags[0]["code"], "luaux.tidy",
+            "the name is under the key of the worm"
+        );
         assert_eq!(diags[0]["source"], "larvae");
         assert_eq!(diags[0]["severity"], 2, "a warning");
         assert_eq!(diags[0]["range"]["end"]["character"], 7);

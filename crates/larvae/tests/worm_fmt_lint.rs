@@ -62,7 +62,7 @@ claims = [".luaux"]
 fmt = true
 inherit_lints = true
 
-[lints.markup_bad_word]
+[lints.bad_word]
 description = "The word bad is bad"
 "#,
     );
@@ -103,7 +103,7 @@ while True:
         findings = []
         if "bad" in src:
             i = src.index("bad")
-            findings.append({"span": [i, i + 3], "lint": "markup_bad_word",
+            findings.append({"span": [i, i + 3], "lint": "bad_word",
                              "message": "the word bad"})
         shadow = src.replace("<Frame/>", "(nil)   ")
         send({"ok": True, "findings": findings, "comments": comments(src),
@@ -205,14 +205,14 @@ fn lint_reports_a_worm_finding_and_the_level_lever_works() {
     let (ok, text) = run(root.path(), &["lint"]);
 
     assert!(ok, "a warning alone exits zero: {text}");
-    assert!(text.contains("markup_bad_word"), "{text}");
+    assert!(text.contains("markup.bad_word"), "{text}");
 
     // A deny level in [lint.rules] fails the run, the same as a builtin lint.
     let config = std::fs::read_to_string(root.path().join("larvae.toml")).unwrap();
     write(
         root.path(),
         "larvae.toml",
-        &format!("{config}\n[lint.rules]\nmarkup_bad_word = \"deny\"\n"),
+        &format!("{config}\n[lint.rules.markup]\nbad_word = \"deny\"\n"),
     );
 
     let (ok, text) = run(root.path(), &["lint"]);
@@ -226,14 +226,14 @@ fn an_allow_comment_suppresses_a_worm_finding() {
     write(
         root.path(),
         "src/app.luaux",
-        "-- larvae: allow(markup_bad_word)\nlocal bad = 1\n",
+        "-- larvae: allow(markup.bad_word)\nlocal bad = 1\n",
     );
 
     let (ok, text) = run(root.path(), &["lint"]);
 
     assert!(ok, "{text}");
     assert!(
-        !text.contains("markup_bad_word"),
+        !text.contains("markup.bad_word"),
         "the allow comment must silence it: {text}"
     );
 }
@@ -264,7 +264,7 @@ fn worm_run_lint_answers_like_the_linter() {
     );
 
     assert!(ok, "a warn-level finding exits zero: {text}");
-    assert!(text.contains("markup_bad_word"), "{text}");
+    assert!(text.contains("markup.bad_word"), "{text}");
 }
 
 /*

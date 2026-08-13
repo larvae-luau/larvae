@@ -65,6 +65,54 @@ fn a_native_worm_from_a_zip_is_runnable() {
     );
 }
 
+/*
+A zip that wraps its contents in one directory still installs.
+
+`zip -r name.zip name/` does this by default, so most release zips arrive this
+way. larvae lifts the contents rather than refuse the worm.
+*/
+#[test]
+fn a_single_wrapping_directory_is_lifted() {
+    let dir = tempfile::tempdir().unwrap();
+    let inner = dir.path().join("luaux-worm-x86_64-linux");
+
+    std::fs::create_dir_all(&inner).unwrap();
+    std::fs::write(
+        inner.join("worm.toml"),
+        "name = \"demo\"\napi = 1\nform = \"native\"\nentry = \"demo-worm\"\n\n[frontend]\nclaims = [\".demo\"]\n",
+    )
+    .unwrap();
+    std::fs::write(inner.join("demo-worm"), "#!/bin/sh\nexit 0\n").unwrap();
+
+    larvae::worm::fetch::flatten_wrapper(dir.path()).expect("lifts the wrapper");
+
+    assert!(
+        dir.path().join("worm.toml").is_file(),
+        "the manifest is at the root"
+    );
+    assert!(
+        dir.path().join("demo-worm").is_file(),
+        "the entry came with it"
+    );
+    assert!(!inner.exists(), "the empty wrapper is gone");
+}
+
+/// Two entries at the root are left alone, because neither is clearly the root
+#[test]
+fn more_than_one_root_entry_is_left_alone() {
+    let dir = tempfile::tempdir().unwrap();
+
+    for name in ["one", "two"] {
+        let sub = dir.path().join(name);
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("worm.toml"), "name = \"x\"\n").unwrap();
+    }
+
+    larvae::worm::fetch::flatten_wrapper(dir.path()).expect("does nothing");
+
+    assert!(!dir.path().join("worm.toml").exists());
+}
+
 /// A worm of a portable form has no bit to set, and larvae leaves it alone
 #[test]
 fn a_wasm_worm_needs_no_bit() {

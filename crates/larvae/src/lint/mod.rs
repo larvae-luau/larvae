@@ -173,8 +173,15 @@ fn worm_findings(
             return Err(bad_span("a finding", finding.span));
         }
 
+        /*
+        The worm declares a bare name, and larvae puts it under the key of the
+        worm. Thus a project writes every lint of one worm in one table, and a
+        worm cannot take a name that larvae or another worm already owns.
+        */
+        let name = qualified(worm, &finding.lint);
+
         // The worm states what it found. The config states the level.
-        let level = cfg.level_for(&finding.lint, decl.default);
+        let level = cfg.level_for(&name, decl.default);
 
         if level == Level::Allow {
             continue;
@@ -182,12 +189,12 @@ fn worm_findings(
 
         let line = (line_starts.partition_point(|&s| s <= finding.span.0) - 1) as u32;
 
-        if ctx::allowed_here(&allowed, line, &finding.lint) {
+        if ctx::allowed_here(&allowed, line, &name) {
             continue;
         }
 
         findings.push(Finding {
-            lint: std::borrow::Cow::Owned(finding.lint),
+            lint: std::borrow::Cow::Owned(name),
             level,
             span: finding.span,
             message: finding.message,
@@ -408,6 +415,20 @@ pub fn into_diags(path: &Path, src: &str, findings: Vec<Finding>) -> Vec<Diag> {
         .collect()
 }
 
+/*
+The name a lint of a worm answers to everywhere outside the worm.
+
+A name that already holds a dot is left as it is, so a worm that qualifies its
+own names keeps them.
+*/
+pub fn qualified(worm: &str, lint: &str) -> String {
+    match lint.contains('.') {
+        true => lint.to_owned(),
+
+        false => format!("{worm}.{lint}"),
+    }
+}
+
 /// Returns true if a span lies on the source. The span came from a wire, so the host checks it.
 fn span_ok(src: &str, (start, end): (u32, u32)) -> bool {
     let (s, e) = (start as usize, end as usize);
@@ -500,11 +521,15 @@ mod worm_tests {
 
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].severity, crate::diag::Severity::Warning);
-        assert!(diags[0].message.contains("(tidy)"), "{}", diags[0].message);
+        assert!(
+            diags[0].message.contains("(luaux.tidy)"),
+            "{}",
+            diags[0].message
+        );
 
         // The [lint.rules] level overrides the manifest, exactly as for a builtin lint.
         let mut cfg = LintConfig::default();
-        cfg.rules.insert("tidy".to_owned(), Level::Deny);
+        cfg.rules.insert("luaux.tidy".to_owned(), Level::Deny);
 
         let raised = from_worm(
             path,
@@ -522,7 +547,7 @@ mod worm_tests {
     #[test]
     fn an_allow_level_drops_a_worm_finding() {
         let mut cfg = LintConfig::default();
-        cfg.rules.insert("tidy".to_owned(), Level::Allow);
+        cfg.rules.insert("luaux.tidy".to_owned(), Level::Allow);
 
         let diags = from_worm(
             Path::new("a.luaux"),
@@ -539,14 +564,15 @@ mod worm_tests {
 
     #[test]
     fn an_allow_comment_suppresses_via_the_worms_comment_spans() {
-        let src = "-- larvae: allow(tidy)\n<Frame>\n";
+        let src = "-- larvae: allow(luaux.tidy)\n<Frame>\n";
+        let (start, end) = (29, 36);
 
         let suppressed = from_worm(
             Path::new("a.luaux"),
             src,
             LintReply {
-                findings: vec![finding("tidy", (23, 30))],
-                comments: vec![(0, 22)],
+                findings: vec![finding("tidy", (start, end))],
+                comments: vec![(0, 28)],
                 luau: None,
             },
             &LintConfig::default(),
@@ -561,7 +587,7 @@ mod worm_tests {
         let stands = from_worm(
             Path::new("a.luaux"),
             src,
-            reply(vec![finding("tidy", (23, 30))]),
+            reply(vec![finding("tidy", (start, end))]),
             &LintConfig::default(),
             &declared("tidy", Level::Warn),
             "luaux",

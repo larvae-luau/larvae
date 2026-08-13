@@ -27,14 +27,44 @@ pub const FILE: &str = "larvae.schema.json";
 pub fn for_project(registry: &crate::worm::registry::Registry) -> Result<Value> {
     let mut schema: Value = serde_json::from_str(BASE).context("the shipped schema is not JSON")?;
 
-    for (name, decl) in registry.declared_lints() {
-        let mut entry = json!({ "$ref": "#/$defs/lint_level" });
+    /*
+    The level list is written into each entry rather than referenced.
 
-        if let Some(text) = &decl.description {
-            entry["description"] = json!(text);
+    An editor that follows draft 07 replaces a schema that holds `$ref` with
+    the schema it points at, and the description beside the `$ref` is lost.
+    The reader then sees what a level means where it asked what the lint
+    means. The builtin lints are written the same way, for the same reason.
+    */
+    let levels = schema["$defs"]["lint_level"]["enum"].clone();
+
+    for loaded in registry.iter() {
+        let worm = loaded.worm.name();
+        let mut props = Map::new();
+
+        for (name, decl) in &loaded.worm.manifest.lints {
+            let mut entry = json!({ "enum": levels });
+
+            if let Some(text) = &decl.description {
+                entry["description"] = json!(text);
+            }
+
+            props.insert(name.clone(), entry);
         }
 
-        schema["$defs"]["lint_rules"]["properties"][name] = entry;
+        if props.is_empty() {
+            continue;
+        }
+
+        /*
+        The lints of a worm sit in a table under its key, so the editor
+        completes them where the project writes them.
+        */
+        schema["$defs"]["lint_rules"]["properties"][worm] = json!({
+            "type": "object",
+            "additionalProperties": false,
+            "description": format!("The lints of worm `{worm}`."),
+            "properties": Value::Object(props),
+        });
     }
 
     for (_, name, option) in registry.declared_fmt() {

@@ -88,9 +88,12 @@ pub fn ensure(cache: &Path, name: &str, source: &Source) -> Result<PathBuf> {
 
     unpack(&bytes, &dir).with_context(|| format!("worm `{name}`: unpacking {}", found.name))?;
 
+    flatten_wrapper(&dir)
+        .with_context(|| format!("worm `{name}`: cannot read what {} holds", found.name))?;
+
     if !dir.join(super::MANIFEST).exists() {
         bail!(
-            "worm `{name}`: {} has no {} at its root",
+            "worm `{name}`: {} has no {} at its root, and no single directory holding one",
             found.name,
             super::MANIFEST
         );
@@ -128,6 +131,47 @@ write to any location. Larvae builds the path from the plain name components
 and does not trust the entry. This approach removes the attack instead of an
 attempt to clean each bad path.
 */
+/*
+Lift the contents of a single wrapping directory to the root.
+
+Most tools that build a release zip wrap what they pack in one directory named
+after the archive, and `zip -r name.zip name/` does it by default. A worm
+packed that way holds everything larvae needs, one level down. Larvae lifts it
+rather than refuse the worm, because the layout is a packaging habit and not a
+statement by the author.
+
+A zip with more than one entry at its root is left as it is. There larvae
+cannot know which entry is meant to be the root.
+*/
+pub fn flatten_wrapper(dir: &Path) -> Result<()> {
+    if dir.join(super::MANIFEST).exists() {
+        return Ok(());
+    }
+
+    let entries: Vec<_> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name() != ".sha256")
+        .collect();
+
+    let [wrapper] = entries.as_slice() else {
+        return Ok(());
+    };
+
+    let inner = wrapper.path();
+
+    if !inner.is_dir() || !inner.join(super::MANIFEST).exists() {
+        return Ok(());
+    }
+
+    for item in std::fs::read_dir(&inner)?.filter_map(|e| e.ok()) {
+        std::fs::rename(item.path(), dir.join(item.file_name()))?;
+    }
+
+    std::fs::remove_dir(&inner).ok();
+
+    Ok(())
+}
+
 /*
 Make the entry of a native worm executable.
 
