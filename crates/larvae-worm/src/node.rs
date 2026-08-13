@@ -1,7 +1,15 @@
 //! The guest side of the node API, so a rule reads an ordinary type and not offsets
+//!
+//! A rule runs in the wasm form, where larvae hands each host function below to
+//! the module as it instantiates it. [`Node`] and every method of it stay on
+//! each target all the same, so a worm reads one API whichever form it ships
+//! as, and the `rules!` macro expands wherever it is written.
 
 use crate::abi;
 
+// The host functions, which larvae supplies to a wasm module. rustdoc writes
+// nothing for an extern block, so this is a plain comment.
+#[cfg(target_arch = "wasm32")]
 #[link(wasm_import_module = "larvae")]
 unsafe extern "C" {
     #[link_name = "node_kind"]
@@ -25,6 +33,69 @@ unsafe extern "C" {
     #[link_name = "remove"]
     safe fn host_remove(epoch: u64, id: u32) -> i64;
 }
+
+/// The same names on a target that is not wasm, where no host answers them.
+///
+/// A worm that is not wasm holds no node: larvae gives a native worm one file
+/// at a time, and a Luau worm runs in the interpreter. So nothing here runs,
+/// and each one says so if it ever does.
+///
+/// The names have to exist all the same. An `extern` block outside wasm is a
+/// symbol that something must define, and `wasm_import_module` means nothing
+/// there. `link.exe` reads every object that it links and refuses a native
+/// worm over the ten names, while the linkers of linux and of macos drop the
+/// code of a rule first and refuse nothing, so two platforms of three hide the
+/// problem. One name hides even better: `remove` is a function of the C
+/// library, so a linker binds that import to the one that deletes a file.
+#[cfg(not(target_arch = "wasm32"))]
+mod outside_wasm {
+    pub fn host_node_kind(_epoch: u64, _id: u32) -> i64 {
+        absent()
+    }
+
+    pub fn host_node_text(_epoch: u64, _id: u32) -> i64 {
+        absent()
+    }
+
+    pub fn host_span_start(_epoch: u64, _id: u32) -> i64 {
+        absent()
+    }
+
+    pub fn host_span_end(_epoch: u64, _id: u32) -> i64 {
+        absent()
+    }
+
+    pub fn host_parent(_epoch: u64, _id: u32) -> i64 {
+        absent()
+    }
+
+    pub fn host_child_count(_epoch: u64, _id: u32) -> i64 {
+        absent()
+    }
+
+    pub fn host_child(_epoch: u64, _id: u32, _index: u32) -> i64 {
+        absent()
+    }
+
+    pub fn host_take_str(_ptr: u32, _len: u32) -> i64 {
+        absent()
+    }
+
+    pub fn host_replace(_epoch: u64, _id: u32, _ptr: u32, _len: u32) -> i64 {
+        absent()
+    }
+
+    pub fn host_remove(_epoch: u64, _id: u32) -> i64 {
+        absent()
+    }
+
+    fn absent() -> ! {
+        unreachable!("the node API belongs to the wasm form, and this worm is not wasm")
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+use outside_wasm::*;
 
 /// A handle to one node of the larvae AST, valid only for the file it came from
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

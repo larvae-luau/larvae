@@ -24,3 +24,10 @@ Notable changes land here. Format follows
   `add_luau_directive`, with every darklua rule name accepted
 - `larvae init`, `larvae self code`, and `larvae self install`, `update`
   and `uninstall`
+
+### Fixed
+
+- `larvae-worm` links into a worm that is not wasm. The node API of the wasm
+  form declared its host functions on every target, so `link.exe` refused a
+  native worm over nine unresolved names and bound the tenth, `remove`, to the
+  function of the C library that deletes a file
