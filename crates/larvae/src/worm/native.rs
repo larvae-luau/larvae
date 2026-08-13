@@ -92,6 +92,9 @@ struct Response {
     /// The Luau shadow of a `lint` reply, for the inherited lints
     #[serde(default)]
     luau: Option<String>,
+    /// The Luau regions of a `format` reply, for a worm that lays out nothing
+    #[serde(default)]
+    spans: Option<Vec<(u32, u32)>>,
 }
 
 pub struct NativeWorm {
@@ -153,13 +156,10 @@ impl NativeWorm {
             .doc
             .with_context(|| format!("worm `{}` did not say which doc version it speaks", self.name))?;
 
-        let document = response
-            .document
-            .with_context(|| format!("worm `{}` returned no document", self.name))?;
-
         Ok(proto::FormatReply {
             doc,
-            document,
+            document: response.document,
+            spans: response.spans.unwrap_or_default(),
             comments: response.comments.unwrap_or_default(),
         })
     }
@@ -428,7 +428,7 @@ while True:
         let reply = worm.format("ab").unwrap();
 
         assert_eq!(reply.doc, 1);
-        assert_eq!(reply.document, proto::WireDoc::Src(0, 2));
+        assert_eq!(reply.document, Some(proto::WireDoc::Src(0, 2)));
         assert_eq!(reply.comments, vec![(0, 1)]);
     }
 

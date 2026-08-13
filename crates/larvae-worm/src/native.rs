@@ -19,14 +19,11 @@ impl Handler for MyWorm {
     }
 
     fn format(&mut self, source: &str) -> Result<Format, String> {
-        Ok(Format {
-            document: Doc::concat([
-                Doc::lit("-- formatted"),
-                Doc::Hard,
-                Doc::host(0, source.len() as u32),
-            ]),
-            comments: Vec::new(),
-        })
+        Ok(Format::document(Doc::concat([
+            Doc::lit("-- formatted"),
+            Doc::Hard,
+            Doc::host(0, source.len() as u32),
+        ])))
     }
 }
 
@@ -228,10 +225,50 @@ impl Finding {
 /// The value that [`Handler::format`] returns
 #[derive(Debug, Clone, PartialEq)]
 pub struct Format {
-    /// The layout for the whole file
-    pub document: Doc,
+    /// The layout for the whole file. Leave it empty when you send `spans`.
+    pub document: Option<Doc>,
+    /**
+    The regions of ordinary Luau, for a worm that lays out nothing itself.
+
+    This is the least a worm can do and still format. Name the byte ranges
+    that hold Luau, and larvae builds the document: it formats each range and
+    keeps every byte between the ranges as the author wrote it. Thus the Luau
+    in your files follows the style of the project, and your own syntax is
+    untouched.
+
+    `document` wins when you send both.
+    */
+    pub spans: Vec<(u32, u32)>,
     /// The span of every comment, so larvae can refuse a layout that lost one
     pub comments: Vec<(u32, u32)>,
+}
+
+impl Format {
+    /// A layout that you built yourself
+    pub fn document(document: Doc) -> Self {
+        Self {
+            document: Some(document),
+            spans: Vec::new(),
+            comments: Vec::new(),
+        }
+    }
+
+    /// The Luau regions of the file, for larvae to lay out
+    pub fn spans(spans: Vec<(u32, u32)>) -> Self {
+        Self {
+            document: None,
+            spans,
+            comments: Vec::new(),
+        }
+    }
+
+    /// The same reply, with the span of every comment. Larvae refuses output
+    /// that lost a comment.
+    pub fn with_comments(mut self, comments: Vec<(u32, u32)>) -> Self {
+        self.comments = comments;
+
+        self
+    }
 }
 
 /// The value that [`Handler::lint`] returns
@@ -402,6 +439,7 @@ fn answer(handler: &mut impl Handler, request: Request) -> Vec<u8> {
                 "ok": true,
                 "doc": DOC_VERSION,
                 "document": format.document,
+                "spans": format.spans,
                 "comments": format.comments,
             })
         }),

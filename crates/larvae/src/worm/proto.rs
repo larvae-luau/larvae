@@ -96,8 +96,23 @@ pub enum HostParse {
 pub struct FormatReply {
     /// The [`DOC_VERSION`] the worm speaks. The host refuses a mismatch.
     pub doc: u32,
-    /// The layout for the whole file
-    pub document: WireDoc,
+    /// The layout for the whole file. A worm that sends `spans` instead
+    /// leaves this empty.
+    #[serde(default)]
+    pub document: Option<WireDoc>,
+    /*
+    The regions of ordinary Luau, for a worm that lays out nothing itself.
+
+    This is the least a worm can do and still format. The worm names the byte
+    ranges that hold Luau, and larvae builds the document: it formats each
+    range and keeps every byte between the ranges as the author wrote it. Thus
+    a worm inherits the formatter of larvae for the Luau in its files, and its
+    own syntax is untouched.
+
+    `document` wins when a worm sends both.
+    */
+    #[serde(default)]
+    pub spans: Vec<(u32, u32)>,
     /// The span of every comment, for the survival backstop
     #[serde(default)]
     pub comments: Vec<(u32, u32)>,
@@ -153,7 +168,11 @@ pub fn render_format(src: &str, reply: &FormatReply, cfg: &FmtConfig) -> Result<
         slice(src, start, end).context("in a comment span")?;
     }
 
-    let document = convert(&reply.document, src, cfg)?;
+    let document = match &reply.document {
+        Some(document) => convert(document, src, cfg)?,
+
+        None => from_spans(src, &reply.spans, cfg)?,
+    };
 
     // the host owns the file-final newline, the same as it does for Luau,
     // so no worm encodes it and every file ends in the same way
@@ -163,6 +182,49 @@ pub fn render_format(src: &str, reply: &FormatReply, cfg: &FmtConfig) -> Result<
     crate::fmt::check_comments_survived(src, &reply.comments, &out)?;
 
     Ok(out)
+}
+
+/*
+Build the document of a worm that named its Luau regions and nothing else.
+
+Larvae formats each region and keeps every byte between two regions exactly as
+the author wrote it. The regions are sorted first, because a worm can find
+them in any order, and they must not overlap.
+
+The final newline of the file is dropped here, because [`render_format`] adds
+one for every file.
+*/
+fn from_spans<'a>(src: &'a str, spans: &[(u32, u32)], cfg: &FmtConfig) -> Result<Doc<'a>> {
+    if spans.is_empty() {
+        bail!("the reply carries neither a document nor any Luau span");
+    }
+
+    let mut sorted = spans.to_vec();
+    sorted.sort_unstable();
+
+    let mut parts = Vec::new();
+    let mut at = 0u32;
+
+    for (start, end) in sorted {
+        if start < at {
+            bail!("the Luau spans overlap at byte {start}");
+        }
+
+        parts.push(Doc::Text(Cow::Borrowed(slice(src, at, start)?)));
+        parts.push(crate::fmt::doc_of(slice(src, start, end)?, cfg).with_context(|| {
+            format!("in the Luau span {start}..{end}")
+        })?);
+
+        at = end;
+    }
+
+    // render_format ends every file with one newline, so the tail gives none
+    let tail = slice(src, at, src.len() as u32)?;
+    let tail = tail.strip_suffix('\n').unwrap_or(tail);
+
+    parts.push(Doc::Text(Cow::Borrowed(tail)));
+
+    Ok(Doc::concat(parts))
 }
 
 /*
@@ -289,7 +351,8 @@ mod tests {
     fn reply(document: WireDoc) -> FormatReply {
         FormatReply {
             doc: DOC_VERSION,
-            document,
+            document: Some(document),
+            spans: Vec::new(),
             comments: Vec::new(),
         }
     }
@@ -356,6 +419,38 @@ mod tests {
 
         assert_eq!(flat, "local abc = 1 + 2\n");
         assert_ne!(flat, broken, "a narrow width has to break the line");
+    }
+
+    /// The least a worm can do: name the Luau, and larvae lays it out
+    #[test]
+    fn named_luau_spans_become_a_document() {
+        let src = "<Frame>\nlocal  x   =  1\n</Frame>\n";
+        let start = src.find("local").unwrap() as u32;
+        let end = src.find("\n</Frame>").unwrap() as u32;
+
+        let reply = FormatReply {
+            doc: DOC_VERSION,
+            document: None,
+            spans: vec![(start, end)],
+            comments: Vec::new(),
+        };
+
+        let out = render_format(src, &reply, &FmtConfig::default()).unwrap();
+
+        // the Luau is formatted, and every other byte is the author's
+        assert_eq!(out, "<Frame>\nlocal x = 1\n</Frame>\n");
+    }
+
+    #[test]
+    fn a_reply_with_no_document_and_no_span_is_refused() {
+        let reply = FormatReply {
+            doc: DOC_VERSION,
+            document: None,
+            spans: Vec::new(),
+            comments: Vec::new(),
+        };
+
+        assert!(render_format("x", &reply, &FmtConfig::default()).is_err());
     }
 
     #[test]
