@@ -22,6 +22,9 @@ use crate::worm::manifest::Stage;
 /// One worm, as the project requests it
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
+    /// The choice of the user about the inherited lints. It overrides what
+    /// the worm declared in its manifest.
+    pub inherit_lints: Option<bool>,
     pub source: Source,
     /// The position of the rules of this worm; the user setting wins
     pub run_order: Option<Stage>,
@@ -98,6 +101,8 @@ struct Table {
     rules: BTreeMap<String, toml::Value>,
     #[serde(default)]
     config: Option<toml::Value>,
+    #[serde(default)]
+    inherit_lints: Option<bool>,
 }
 
 /// Every worm that a project requests, by name
@@ -131,14 +136,15 @@ impl Worms {
 }
 
 fn source_of(name: &str, raw: Raw) -> Result<Entry> {
-    let (run_order, rules, config) = match &raw {
+    let (run_order, rules, config, inherit_lints) = match &raw {
         Raw::Table(t) => (
             t.run_order,
             t.rules.clone(),
             t.config.clone().unwrap_or_else(empty_table),
+            t.inherit_lints,
         ),
 
-        Raw::Pin(_) => (None, BTreeMap::new(), empty_table()),
+        Raw::Pin(_) => (None, BTreeMap::new(), empty_table(), None),
     };
 
     if !config.is_table() {
@@ -176,6 +182,7 @@ fn source_of(name: &str, raw: Raw) -> Result<Entry> {
         run_order,
         rules,
         config,
+        inherit_lints,
     })
 }
 

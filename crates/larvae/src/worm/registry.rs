@@ -30,6 +30,8 @@ pub struct Loaded {
     pub rules: BTreeMap<String, toml::Value>,
     /// The order the user requested in `[worms.<name>] run_order`
     pub run_order: Option<Stage>,
+    /// The choice of the user about the inherited lints, which wins over the manifest
+    pub inherit_lints: Option<bool>,
 }
 
 impl Loaded {
@@ -115,6 +117,7 @@ impl Registry {
                 config,
                 rules: enabled,
                 run_order: entry.run_order,
+                inherit_lints: entry.inherit_lints,
             });
         }
 
@@ -180,6 +183,7 @@ impl Registry {
                     config: l.config.clone(),
                     rules: l.rules.clone(),
                     run_order: l.run_order,
+                    inherit_lints: l.inherit_lints,
                     requires: l.worm.manifest.requires,
                     claims: l
                         .worm

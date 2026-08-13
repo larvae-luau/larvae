@@ -91,12 +91,70 @@ fn fmt_section(root: &Path) -> String {
              # A [fmt] table here would layer over it.\n"
         ),
 
-        None => "\n[fmt]\n\
-             column_width = 120\n\
-             indent_type = \"tabs\"\n\
-             indent_width = 4\n\
-             quote_style = \"auto-prefer-double\"\n"
-            .to_string(),
+        None => format!("\n[fmt]\n{}", fmt_defaults()),
+    }
+}
+
+/*
+Every format option at the value it keeps when the user states nothing.
+
+The list is generated from the defaults of the config type, so it cannot drift
+from the code. A scalar option appears; a table and a list do not, because
+their shape needs more than one line. The first four lines are live, because
+almost every project sets them, and the rest are comments.
+*/
+fn fmt_defaults() -> String {
+    let value = serde_json::to_value(crate::fmt::FmtConfig::default()).unwrap_or_default();
+
+    let Some(table) = value.as_object() else {
+        return String::new();
+    };
+
+    // the options a project states most often, written live rather than commented
+    const LIVE: [&str; 4] = ["column_width", "indent_type", "indent_width", "quote_style"];
+
+    let scalars: Vec<(&String, String)> = table
+        .iter()
+        .filter_map(|(key, value)| Some((key, scalar_of(value)?)))
+        .collect();
+
+    let width = scalars
+        .iter()
+        .filter(|(k, _)| !LIVE.contains(&k.as_str()))
+        .map(|(k, _)| k.len())
+        .max()
+        .unwrap_or(0);
+
+    let mut out = String::new();
+
+    for name in LIVE {
+        if let Some((_, value)) = scalars.iter().find(|(k, _)| k.as_str() == name) {
+            out.push_str(&format!("{name} = {value}\n"));
+        }
+    }
+
+    out.push_str("\n# Every option below keeps the value shown until the user states it.\n");
+
+    for (key, value) in &scalars {
+        if !LIVE.contains(&key.as_str()) {
+            out.push_str(&format!("# {key:<width$} = {value}\n"));
+        }
+    }
+
+    out
+}
+
+/// One JSON scalar as the user would write it in TOML. A table and a list
+/// return nothing, because their shape needs more than one line.
+fn scalar_of(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(s) => Some(format!("{s:?}")),
+
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+
+        serde_json::Value::Number(n) => Some(n.to_string()),
+
+        _ => None,
     }
 }
 

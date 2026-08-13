@@ -46,6 +46,8 @@ pub struct Spec {
     pub rules: BTreeMap<String, toml::Value>,
     /// The order the user requested. It wins over the order the worm declared.
     pub run_order: Option<super::manifest::Stage>,
+    /// The choice of the user about the inherited lints. It wins over the manifest.
+    pub inherit_lints: Option<bool>,
     /// The owner of the requires in the output of this worm
     pub requires: super::RequireOwner,
     /// The extensions the front-end of this worm claims. It is empty when there is none.
@@ -95,12 +97,20 @@ impl Spec {
         !self.manifest.lints.is_empty()
     }
 
-    /// Report if the lints of larvae also run on the claimed files of this worm
+    /*
+    Report if the lints of larvae also run on the claimed files of this worm.
+
+    The worm declares the default in its manifest. The user overrides it in
+    `[worms.<name>] inherit_lints`, because a project can want the markup
+    lints of a worm and none of the Luau lints, or the opposite.
+    */
     pub fn inherits_lints(&self) -> bool {
-        self.manifest
-            .frontend
-            .as_ref()
-            .is_some_and(|f| f.inherit_lints)
+        self.inherit_lints.unwrap_or_else(|| {
+            self.manifest
+                .frontend
+                .as_ref()
+                .is_some_and(|f| f.inherit_lints)
+        })
     }
 }
 
@@ -485,6 +495,7 @@ claims = [".x"]
             config: toml::from_str("").unwrap(),
             rules: BTreeMap::new(),
             run_order: None,
+            inherit_lints: None,
             requires: super::super::RequireOwner::Larvae,
             claims: vec![".x".to_owned()],
         });
