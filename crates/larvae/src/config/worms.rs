@@ -70,7 +70,20 @@ impl Source {
                 asset: Some(asset), ..
             } => vec![asset.clone()],
 
-            Self::Release { .. } => vec![format!("{name}-worm.zip"), "worm.zip".to_owned()],
+            /*
+            The platform name comes first, because a native worm ships one
+            artifact per platform. A worm with one portable artifact, wasm or
+            Luau, has no such asset and the plain names answer instead.
+            */
+            Self::Release { .. } => vec![
+                format!(
+                    "{name}-worm-{}-{}.zip",
+                    std::env::consts::ARCH,
+                    std::env::consts::OS
+                ),
+                format!("{name}-worm.zip"),
+                "worm.zip".to_owned(),
+            ],
 
             Self::Local { .. } => Vec::new(),
         }
@@ -302,11 +315,22 @@ mod tests {
     #[test]
     fn the_asset_defaults_to_the_worms_own_name() {
         let w = worms(r#"luaux = "luau-xml/worm@0.1.0""#).unwrap();
+        let names = w.0["luaux"].source.asset_names("luaux");
 
+        /*
+        The platform name comes first, because a native worm ships one
+        artifact per platform. The plain names follow, for a worm with one
+        portable artifact.
+        */
         assert_eq!(
-            w.0["luaux"].source.asset_names("luaux"),
-            ["luaux-worm.zip", "worm.zip"]
+            names[0],
+            format!(
+                "luaux-worm-{}-{}.zip",
+                std::env::consts::ARCH,
+                std::env::consts::OS
+            )
         );
+        assert_eq!(names[1..], ["luaux-worm.zip", "worm.zip"]);
     }
 
     #[test]

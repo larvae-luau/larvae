@@ -96,6 +96,9 @@ pub fn ensure(cache: &Path, name: &str, source: &Source) -> Result<PathBuf> {
         );
     }
 
+    make_runnable(&dir)
+        .with_context(|| format!("worm `{name}`: cannot make its entry runnable"))?;
+
     std::fs::write(&stamp, &digest).ok();
 
     Ok(dir)
@@ -125,6 +128,40 @@ write to any location. Larvae builds the path from the plain name components
 and does not trust the entry. This approach removes the attack instead of an
 attempt to clean each bad path.
 */
+/*
+Make the entry of a native worm executable.
+
+A zip carries a permission mode, but the mode of a file inside one is not
+reliable across the tools that build releases. A worm that the operating
+system refuses to run is a worse failure than a file that is executable and
+never run, so larvae sets the bit itself.
+*/
+#[cfg(unix)]
+pub fn make_runnable(dir: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let text = std::fs::read_to_string(dir.join(super::MANIFEST))?;
+    let manifest = super::Manifest::parse(&text)?;
+
+    if manifest.form != super::Form::Native {
+        return Ok(());
+    }
+
+    let entry = dir.join(&manifest.entry);
+    let mut mode = std::fs::metadata(&entry)?.permissions();
+
+    mode.set_mode(mode.mode() | 0o755);
+    std::fs::set_permissions(&entry, mode)?;
+
+    Ok(())
+}
+
+/// Windows runs a file by its extension, so there is no bit to set
+#[cfg(not(unix))]
+pub fn make_runnable(_dir: &Path) -> Result<()> {
+    Ok(())
+}
+
 fn unpack(archive: &[u8], dir: &Path) -> Result<()> {
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(archive))
         .context("not a readable zip archive")?;
