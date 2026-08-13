@@ -119,7 +119,7 @@ pub struct SortRequires {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub struct FmtConfig {
     // --- stylua parity: the same names and the same defaults -------------
     #[serde(default = "default_width")]
@@ -199,6 +199,17 @@ pub struct FmtConfig {
     */
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub syntax: Option<String>,
+
+    /*
+    The keys that larvae does not own. A format option of a worm lands here.
+
+    A worm declares its options in its `worm.toml`, and the user writes them
+    in `[fmt]` beside the builtin options. Larvae checks each key against the
+    declarations of the loaded worms, and gives the values to the worm that
+    declared them.
+    */
+    #[serde(flatten)]
+    pub rest: std::collections::BTreeMap<String, toml::Value>,
 }
 
 fn default_width() -> usize {
@@ -576,11 +587,25 @@ call_parentheses = "NoSingleTable"
         assert_eq!(c.syntax.as_deref(), Some("Luau"));
     }
 
-    /// This file belongs to larvae. There an unknown key is a typo, and larvae must report it.
+    /*
+    This file belongs to larvae. There an unknown key is a typo, and larvae
+    must report it.
+
+    A worm can add a format option, so the key is not refused while the file
+    parses. It lands in `rest`, and the check happens when the worms of the
+    project are known. A key that no worm declares is refused there.
+    */
     #[test]
     fn an_unknown_key_in_larvae_toml_is_still_refused() {
         let over = toml::from_str::<toml::Value>("colum_width = 80").unwrap();
+        let mut cfg = FmtConfig::default().merged(&over).expect("it parses");
 
-        assert!(FmtConfig::default().merged(&over).is_err());
+        assert_eq!(cfg.rest["colum_width"], toml::Value::Integer(80));
+
+        let err = crate::worm::registry::Registry::default()
+            .resolve_fmt(&mut cfg)
+            .expect_err("no worm declares it");
+
+        assert!(format!("{err:#}").contains("colum_width"), "{err:#}");
     }
 }

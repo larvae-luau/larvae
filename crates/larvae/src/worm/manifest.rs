@@ -250,6 +250,15 @@ pub struct Manifest {
     /// The settings this worm takes in `[worms.<name>.config]`
     #[serde(default)]
     pub options: BTreeMap<String, OptionDecl>,
+    /*
+    The format options this worm adds to the `[fmt]` table of larvae.
+
+    These sit beside the builtin options, in the same way the lints of a worm
+    sit beside the builtin lints. A name has to be free, so prefix each one
+    with the name of the worm.
+    */
+    #[serde(default)]
+    pub fmt: BTreeMap<String, OptionDecl>,
 }
 
 impl Manifest {
@@ -325,7 +334,7 @@ impl Manifest {
         The manifest states the type, so larvae checks the manifest against
         itself before a project can meet it.
         */
-        for (name, option) in &self.options {
+        for (name, option) in self.options.iter().chain(&self.fmt) {
             if let Some(default) = &option.default
                 && !option.kind.accepts(default)
             {

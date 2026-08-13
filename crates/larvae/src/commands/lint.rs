@@ -42,7 +42,25 @@ pub fn run(
         return from_stdin(&cfg);
     }
 
-    let pool = worm_pool(root, config)?;
+    /*
+    The lint command also builds the pool, so a worm receives the same
+    settings whichever command started it. The `[fmt]` table of the project
+    is read here as well, because a key of a worm lives in that table and
+    larvae checks it against the worms it loads.
+    */
+    let path = config.clone().unwrap_or_else(|| root.join("larvae.toml"));
+
+    let mut fmt = match path.exists() {
+        true => {
+            let project = Config::load(&path)?;
+
+            crate::fmt::FmtConfig::discover(root, project.fmt.as_ref())?
+        }
+
+        false => crate::fmt::FmtConfig::default(),
+    };
+
+    let pool = worm_pool(root, config, &mut fmt)?;
     let files = collect(root, &paths, &cfg.excludes(root)?, &pool.lint_claimed())?;
 
     if files.is_empty() {

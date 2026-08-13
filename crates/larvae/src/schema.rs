@@ -37,6 +37,10 @@ pub fn for_project(registry: &crate::worm::registry::Registry) -> Result<Value> 
         schema["$defs"]["lint_rules"]["properties"][name] = entry;
     }
 
+    for (_, name, option) in registry.declared_fmt() {
+        schema["$defs"]["fmt"]["properties"][name] = option_schema(option);
+    }
+
     let entry = schema["$defs"]["worms"]["additionalProperties"].clone();
 
     for loaded in registry.iter() {
@@ -120,21 +124,7 @@ fn config_of(worm: &crate::worm::Manifest) -> Value {
     let mut props = Map::new();
 
     for (name, option) in &worm.options {
-        let mut entry = json!({ "type": option.kind.name() });
-
-        if let Some(text) = &option.description {
-            entry["description"] = json!(text);
-        }
-
-        if let Some(default) = &option.default {
-            entry["default"] = value_of(default);
-        }
-
-        if !option.values.is_empty() {
-            entry["enum"] = Value::Array(option.values.iter().map(value_of).collect());
-        }
-
-        props.insert(name.clone(), entry);
+        props.insert(name.clone(), option_schema(option));
     }
 
     json!({
@@ -143,6 +133,26 @@ fn config_of(worm: &crate::worm::Manifest) -> Value {
         "description": "The settings of this worm, under the options it declares.",
         "properties": Value::Object(props),
     })
+}
+
+/// One declared option as a schema entry, with its type, its text, its
+/// default, and the values it accepts
+fn option_schema(option: &crate::worm::manifest::OptionDecl) -> Value {
+    let mut entry = json!({ "type": option.kind.name() });
+
+    if let Some(text) = &option.description {
+        entry["description"] = json!(text);
+    }
+
+    if let Some(default) = &option.default {
+        entry["default"] = value_of(default);
+    }
+
+    if !option.values.is_empty() {
+        entry["enum"] = Value::Array(option.values.iter().map(value_of).collect());
+    }
+
+    entry
 }
 
 /// One TOML scalar as JSON. larvae builds TOML without a serializer, so the

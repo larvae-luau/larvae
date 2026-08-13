@@ -125,6 +125,7 @@ impl Registry {
 
         registry.check_claims()?;
         registry.check_lints()?;
+        registry.check_fmt()?;
 
         /*
         The editor needs a schema that knows these worms. The write is best
@@ -202,6 +203,85 @@ impl Registry {
         self.worms
             .iter()
             .flat_map(|l| l.worm.manifest.rules.keys().map(String::as_str))
+    }
+
+    /*
+    Check the `[fmt]` table of a project against the options the worms
+    declare, and fill each missing option with its default.
+
+    A key that larvae does not own reaches this point in `rest`. It has to
+    belong to a worm, because a key that belongs to nobody is a setting that
+    does nothing, and that is the failure mode larvae refuses everywhere.
+    */
+    pub fn resolve_fmt(&self, cfg: &mut crate::fmt::FmtConfig) -> Result<()> {
+        for (key, value) in &cfg.rest {
+            let Some((worm, option)) = self.declared_fmt().find(|(_, name, _)| *name == key)
+                .map(|(worm, _, option)| (worm, option))
+            else {
+                bail!("`[fmt] {key}` is not an option of larvae or of any worm this project loads");
+            };
+
+            if !option.kind.accepts(value) {
+                bail!(
+                    "`[fmt] {key}` of worm `{worm}` takes a {}",
+                    option.kind.name()
+                );
+            }
+
+            if !option.values.is_empty() && !option.values.contains(value) {
+                let allowed: Vec<String> = option.values.iter().map(scalar).collect();
+
+                bail!(
+                    "`[fmt] {key}` of worm `{worm}` takes one of {}",
+                    allowed.join(", ")
+                );
+            }
+        }
+
+        for (_, name, option) in self.declared_fmt() {
+            if let Some(default) = &option.default
+                && !cfg.rest.contains_key(name)
+            {
+                cfg.rest.insert(name.to_owned(), default.clone());
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Every format option that a worm declared, with the worm that declared it
+    pub fn declared_fmt(
+        &self,
+    ) -> impl Iterator<Item = (&str, &str, &super::manifest::OptionDecl)> {
+        self.worms.iter().flat_map(|l| {
+            l.worm
+                .manifest
+                .fmt
+                .iter()
+                .map(|(name, option)| (l.worm.name(), name.as_str(), option))
+        })
+    }
+
+    /*
+    A format option of a worm shares the `[fmt]` table with the builtin
+    options, so its name has to be free. A collision would make one line of
+    `[fmt]` mean two settings.
+    */
+    fn check_fmt(&self) -> Result<()> {
+        let builtin = serde_json::to_value(crate::fmt::FmtConfig::default()).unwrap_or_default();
+        let mut seen: BTreeMap<&str, &str> = BTreeMap::new();
+
+        for (worm, name, _) in self.declared_fmt() {
+            if builtin.get(name).is_some() {
+                bail!("worm `{worm}` declares format option `{name}`, which larvae already owns");
+            }
+
+            if let Some(other) = seen.insert(name, worm) {
+                bail!("worms `{other}` and `{worm}` both declare format option `{name}`, only one may");
+            }
+        }
+
+        Ok(())
     }
 
     /// The lint names that every worm declared, with the default of each
@@ -681,6 +761,87 @@ mod tests {
         .unwrap();
 
         assert!(format!("{err:#}").contains("takes one of"), "{err:#}");
+    }
+
+    fn fmt_worm(root: &Path) {
+        write_worm(
+            root,
+            "w",
+            "name = \"echo\"\napi = 1\nform = \"luau\"\nentry = \"init.luau\"\n\n[frontend]\nclaims = [\".echo\"]\n\n[fmt.echo_attribute_per_line]\ntype = \"boolean\"\ndefault = false\n",
+            ECHO,
+        );
+    }
+
+    fn loaded(root: &Path) -> Registry {
+        Registry::load(
+            root,
+            &root.join(".larvae"),
+            &config("echo = { path = \"w\" }"),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_worm_format_option_sits_beside_the_builtin_options() {
+        let root = tempfile::tempdir().unwrap();
+        fmt_worm(root.path());
+
+        let mut cfg: crate::fmt::FmtConfig =
+            toml::from_str("column_width = 80\necho_attribute_per_line = true").unwrap();
+
+        loaded(root.path()).resolve_fmt(&mut cfg).unwrap();
+
+        assert_eq!(cfg.column_width, 80);
+        assert_eq!(
+            cfg.rest["echo_attribute_per_line"],
+            toml::Value::Boolean(true)
+        );
+    }
+
+    #[test]
+    fn a_format_option_takes_its_default_when_the_user_writes_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        fmt_worm(root.path());
+
+        let mut cfg = crate::fmt::FmtConfig::default();
+        loaded(root.path()).resolve_fmt(&mut cfg).unwrap();
+
+        assert_eq!(
+            cfg.rest["echo_attribute_per_line"],
+            toml::Value::Boolean(false)
+        );
+    }
+
+    #[test]
+    fn a_format_key_that_belongs_to_nobody_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        fmt_worm(root.path());
+
+        let mut cfg: crate::fmt::FmtConfig = toml::from_str("colum_width = 80").unwrap();
+        let err = loaded(root.path()).resolve_fmt(&mut cfg).err().unwrap();
+
+        assert!(format!("{err:#}").contains("colum_width"), "{err:#}");
+    }
+
+    #[test]
+    fn a_worm_format_option_named_like_a_builtin_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        write_worm(
+            root.path(),
+            "w",
+            "name = \"echo\"\napi = 1\nform = \"luau\"\nentry = \"init.luau\"\n\n[frontend]\nclaims = [\".echo\"]\n\n[fmt.column_width]\ntype = \"integer\"\n",
+            ECHO,
+        );
+
+        let err = Registry::load(
+            root.path(),
+            &root.path().join(".larvae"),
+            &config("echo = { path = \"w\" }"),
+        )
+        .err()
+        .unwrap();
+
+        assert!(format!("{err:#}").contains("larvae already owns"), "{err:#}");
     }
 
     #[test]

@@ -39,14 +39,14 @@ pub fn run(
     stdin: bool,
     config: Option<PathBuf>,
 ) -> Result<ExitCode> {
-    let cfg = discover(root, config.clone())?;
+    let mut cfg = discover(root, config.clone())?;
 
     // Stdin has no file path that routes to a worm, so stdin formats only Luau.
     if stdin {
         return from_stdin(&cfg);
     }
 
-    let pool = worm_pool(root, config)?;
+    let pool = worm_pool(root, config, &mut cfg)?;
     let files = collect(root, &paths, &cfg.excludes(root)?, &pool.fmt_claimed())?;
 
     if files.is_empty() {
@@ -74,20 +74,31 @@ A project with no config or no `[worms]` gets an empty pool at no cost. So
 `larvae fmt` on a bare directory keeps its old behavior. A pinned worm on a
 cold cache does a fetch here, the same as `larvae process`.
 */
-pub fn worm_pool(root: &Path, config: Option<PathBuf>) -> Result<Pool> {
+pub fn worm_pool(root: &Path, config: Option<PathBuf>, fmt: &mut FmtConfig) -> Result<Pool> {
     let path = config.unwrap_or_else(|| root.join("larvae.toml"));
 
     if !path.exists() {
+        /*
+        No project, so no worm can own a key. A key larvae does not own is
+        then a mistake, and the same message says so.
+        */
+        Registry::default().resolve_fmt(fmt)?;
+
         return Ok(Pool::new(Vec::new(), 1));
     }
 
     let cfg = Config::load(&path)?;
     let registry = Registry::for_project(root, &cfg)?;
 
+    // the worms of a project decide which `[fmt]` keys are real
+    registry.resolve_fmt(fmt)?;
+
+    let lint = crate::lint::LintConfig::discover(root, cfg.lint.as_ref())?;
+
     Ok(Pool::with_settings(
         registry.specs(),
         cfg.process.run_order,
-        crate::worm::Settings::new(&FmtConfig::discover(root, cfg.fmt.as_ref())?, &crate::lint::LintConfig::discover(root, cfg.lint.as_ref())?),
+        crate::worm::Settings::new(fmt, &lint),
     ))
 }
 
