@@ -35,20 +35,43 @@ trust it silently. GitHub permits an author to replace an asset without a move
 of the tag. A pin alone does not cover that case.
 */
 pub fn ensure(cache: &Path, name: &str, source: &Source) -> Result<PathBuf> {
-    let Source::Release {
-        repo,
-        version,
-        asset,
-    } = source
-    else {
-        bail!("worm `{name}` is local, it does not need fetching");
+    let (repo, version, asset) = match source {
+        Source::Release {
+            repo,
+            version,
+            asset,
+        } => (repo, version, asset),
+
+        Source::Cargo { package, version } => {
+            return ensure_cargo(cache, name, package, version);
+        }
+
+        Source::Local { .. } => bail!("worm `{name}` is local, it does not need fetching"),
     };
 
     let dir = install_dir(cache, name, version);
     let stamp = dir.join(".sha256");
 
     if dir.join(super::MANIFEST).exists() {
-        return Ok(dir);
+        /*
+        The stamp records what the install wrote, so a later build can see a
+        changed byte. A worm that fails the check is fetched again rather
+        than run, because a native worm executes with the access of the user
+        and a silent change is the one failure worth a network trip.
+
+        A directory without a stamp predates the check and is trusted as it
+        is. The next fetch writes one.
+        */
+        let recorded = std::fs::read_to_string(&stamp).unwrap_or_default();
+
+        if recorded.trim().is_empty() || recorded.trim() == dir_digest(&dir)? {
+            return Ok(dir);
+        }
+
+        eprintln!("worm `{name}` changed on disk since its install, so larvae fetches it again");
+
+        std::fs::remove_dir_all(&dir)
+            .with_context(|| format!("cannot clear {}", crate::ui::rel(&dir)))?;
     }
 
     let wanted = Source::Release {
@@ -81,8 +104,6 @@ pub fn ensure(cache: &Path, name: &str, source: &Source) -> Result<PathBuf> {
     let bytes = http::get_bytes(&found.browser_download_url)
         .with_context(|| format!("worm `{name}`: downloading {}", found.name))?;
 
-    let digest = sha256(&bytes);
-
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("cannot create {}", crate::ui::rel(&dir)))?;
 
@@ -102,21 +123,66 @@ pub fn ensure(cache: &Path, name: &str, source: &Source) -> Result<PathBuf> {
     make_runnable(&dir)
         .with_context(|| format!("worm `{name}`: cannot make its entry runnable"))?;
 
-    std::fs::write(&stamp, &digest).ok();
+    std::fs::write(&stamp, dir_digest(&dir)?).ok();
 
     Ok(dir)
 }
 
-/// Check if an installed worm still hashes to the value recorded at fetch time
-pub fn verify(dir: &Path, expected: &str) -> Result<()> {
-    let stamp = dir.join(".sha256");
-    let recorded = std::fs::read_to_string(&stamp).unwrap_or_default();
+/*
+One digest for the whole installed directory.
 
-    if recorded.trim() != expected.trim() {
+The hash covers every file except the stamp, each with its relative path, in
+a sorted order. Thus the digest is stable across platforms, and a changed,
+added, or removed file changes it. The permissions are not part of it,
+because larvae itself sets the executable bit after the unpack.
+*/
+fn dir_digest(dir: &Path) -> Result<String> {
+    let mut files = Vec::new();
+    collect_files(dir, dir, &mut files)?;
+    files.sort();
+
+    let mut all = Vec::new();
+
+    for rel in files {
+        all.extend_from_slice(rel.as_bytes());
+        all.push(0);
+        all.extend_from_slice(&std::fs::read(dir.join(&rel))?);
+        all.push(0);
+    }
+
+    Ok(sha256(&all))
+}
+
+fn collect_files(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            collect_files(root, &path, out)?;
+        } else if entry.file_name() != ".sha256" {
+            let rel = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+
+            out.push(rel);
+        }
+    }
+
+    Ok(())
+}
+
+/// Check if an installed worm still hashes to the value recorded at fetch time
+/// Check that an installed worm still hashes to the stamp of its install
+pub fn verify(dir: &Path, expected: &str) -> Result<()> {
+    let found = dir_digest(dir)?;
+
+    if found.trim() != expected.trim() {
         bail!(
-            "worm at {} has changed since it was installed, expected {expected} and found {}",
-            crate::ui::rel(dir),
-            recorded.trim()
+            "worm at {} has changed since it was installed, expected {expected} and found {found}",
+            crate::ui::rel(dir)
         );
     }
 
@@ -131,6 +197,116 @@ write to any location. Larvae builds the path from the plain name components
 and does not trust the entry. This approach removes the attack instead of an
 attempt to clean each bad path.
 */
+/*
+Install a worm from crates.io, and adopt what cargo built.
+
+`cargo install` compiles the crate on this machine, so one published crate
+serves every platform and a worm author uploads no per platform zip. It also
+ships no data files. The manifest therefore travels inside the binary, and
+larvae asks the binary for it once, over the same pipe the worm always
+speaks.
+*/
+fn ensure_cargo(cache: &Path, name: &str, package: &str, version: &str) -> Result<PathBuf> {
+    let dir = install_dir(cache, name, version);
+
+    if dir.join(super::MANIFEST).exists() {
+        return Ok(dir);
+    }
+
+    /*
+    The build root sits beside the install directory rather than in a system
+    temp path, so a failed build leaves its debris where `cache_dir` already
+    collects it, and one `rm -rf` of the cache removes everything.
+    */
+    let build = dir.with_extension("build");
+    let _ = std::fs::remove_dir_all(&build);
+
+    let output = std::process::Command::new("cargo")
+        .args(["install", package, "--version", version, "--root"])
+        .arg(&build)
+        .args(["--locked", "--no-track"])
+        .output()
+        .with_context(|| format!("worm `{name}`: cannot run cargo, is it installed?"))?;
+
+    if !output.status.success() {
+        bail!(
+            "worm `{name}`: cargo install {package} {version} failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .rev()
+                .take(12)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+
+    let adopted = adopt(&build.join("bin"), &dir, name);
+
+    let _ = std::fs::remove_dir_all(&build);
+
+    adopted
+}
+
+/*
+Adopt the binary that a cargo install produced.
+
+The steps are the contract of the cargo channel: find the one binary, ask it
+for the `worm.toml` it carries, write that manifest beside it, and place the
+binary at the entry the manifest names. The manifest must say `form =
+"native"`, because a compiled binary is the only thing cargo installs.
+*/
+pub fn adopt(bin: &Path, dir: &Path, name: &str) -> Result<PathBuf> {
+    let mut binaries: Vec<_> = std::fs::read_dir(bin)
+        .with_context(|| format!("worm `{name}`: cargo installed no binary"))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .collect();
+
+    let [binary] = binaries.as_mut_slice() else {
+        bail!(
+            "worm `{name}`: the crate installed {} binaries, and a worm is exactly one",
+            binaries.len()
+        );
+    };
+
+    let text = super::native::manifest_of(binary, name)?;
+    let manifest = super::Manifest::parse(&text)
+        .with_context(|| format!("worm `{name}`: in the worm.toml that the binary returned"))?;
+
+    if manifest.form != super::Form::Native {
+        bail!(
+            "worm `{name}`: the manifest says form = \"{}\", and a cargo install is always native",
+            manifest.form.name()
+        );
+    }
+
+    std::fs::create_dir_all(dir)
+        .with_context(|| format!("cannot create {}", crate::ui::rel(dir)))?;
+    std::fs::write(dir.join(super::MANIFEST), &text).with_context(|| {
+        format!(
+            "cannot write {}",
+            crate::ui::rel(&dir.join(super::MANIFEST))
+        )
+    })?;
+
+    let entry = dir.join(&manifest.entry);
+
+    if let Some(parent) = entry.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+
+    std::fs::copy(&*binary, &entry)
+        .with_context(|| format!("cannot place the binary at {}", crate::ui::rel(&entry)))?;
+
+    make_runnable(dir)?;
+
+    Ok(dir.to_path_buf())
+}
+
 /*
 Lift the contents of a single wrapping directory to the root.
 
@@ -332,11 +508,17 @@ mod tests {
     #[test]
     fn a_changed_worm_is_caught_on_a_later_build() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join(".sha256"), "abc123").unwrap();
+        std::fs::write(dir.path().join("worm.toml"), "name = \"x\"").unwrap();
+        std::fs::write(dir.path().join("init.luau"), "return {}").unwrap();
 
-        assert!(verify(dir.path(), "abc123").is_ok());
+        // the digest of the installed bytes passes as long as the bytes stand
+        let installed = dir_digest(dir.path()).unwrap();
+        assert!(verify(dir.path(), &installed).is_ok());
 
-        let err = verify(dir.path(), "different").err().unwrap();
+        // an edited artifact no longer hashes to the recorded value
+        std::fs::write(dir.path().join("init.luau"), "return nil").unwrap();
+
+        let err = verify(dir.path(), &installed).err().unwrap();
         assert!(err.to_string().contains("has changed"), "{err}");
     }
 

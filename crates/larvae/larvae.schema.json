@@ -1202,6 +1202,11 @@
                 "required": [
                   "path"
                 ]
+              },
+              {
+                "required": [
+                  "cargo"
+                ]
               }
             ],
             "properties": {
@@ -1279,6 +1284,10 @@
                     "description": "The format options that do not apply in the files of this worm. An option named here keeps its own default there."
                   }
                 }
+              },
+              "cargo": {
+                "type": "string",
+                "description": "A crate on crates.io that ships the worm as its binary, ex: \"luaux-worm@0.1.0\". cargo install builds it from source on this machine, so one crate serves every platform. Excludes repo, path, and asset; the version can sit here after @ or in the version key."
               }
             }
           }

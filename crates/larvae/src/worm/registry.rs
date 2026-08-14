@@ -28,7 +28,7 @@ pub enum Fetch {
 
 /// The directory of a release worm, when the cache already holds it
 fn cached(cache: &Path, name: &str, source: &Source) -> Option<std::path::PathBuf> {
-    let Source::Release { version, .. } = source else {
+    let (Source::Release { version, .. } | Source::Cargo { version, .. }) = source else {
         return None;
     };
 
@@ -122,6 +122,7 @@ impl Registry {
         fetch: Fetch,
     ) -> Result<Self> {
         let mut worms = Vec::new();
+        let mut skipped = false;
 
         for (name, entry) in config.iter() {
             let dir = match &entry.source {
@@ -137,13 +138,17 @@ impl Registry {
                 have yet. The editor is such a caller: it must answer a
                 keystroke, and a download is not an answer.
                 */
-                source @ Source::Release { .. } => match fetch {
+                source @ (Source::Release { .. } | Source::Cargo { .. }) => match fetch {
                     Fetch::Allowed => super::fetch::ensure(cache, name, source)?,
 
                     Fetch::Never => match cached(cache, name, source) {
                         Some(dir) => dir,
 
-                        None => continue,
+                        None => {
+                            skipped = true;
+
+                            continue;
+                        }
                     },
                 },
             };
@@ -189,9 +194,11 @@ impl Registry {
 
         /*
         The editor needs a schema that knows these worms. The write is best
-        effort, because a read only checkout must still build and lint.
+        effort, because a read only checkout must still build and lint. A
+        load that skipped a worm writes nothing, because a schema without
+        that worm would flag its keys until the next full load.
         */
-        if !registry.is_empty() {
+        if !registry.is_empty() && !skipped {
             let _ = crate::schema::write(cache, &registry);
         }
 

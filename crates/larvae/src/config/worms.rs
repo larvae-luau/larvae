@@ -60,6 +60,19 @@ pub enum Source {
     Local {
         path: PathBuf,
     },
+
+    /*
+    A crate on crates.io that ships the worm as its binary.
+
+    `cargo install` builds from source on the machine of the user, so one
+    published crate serves every platform and a worm author uploads no
+    per platform zip. The binary carries its own `worm.toml` and returns it
+    over the pipe, because `cargo install` ships no data files.
+    */
+    Cargo {
+        package: String,
+        version: String,
+    },
 }
 
 impl Source {
@@ -85,7 +98,7 @@ impl Source {
                 "worm.zip".to_owned(),
             ],
 
-            Self::Local { .. } => Vec::new(),
+            Self::Local { .. } | Self::Cargo { .. } => Vec::new(),
         }
     }
 }
@@ -110,6 +123,8 @@ struct Table {
     asset: Option<String>,
     #[serde(default)]
     path: Option<PathBuf>,
+    #[serde(default)]
+    cargo: Option<String>,
     #[serde(default)]
     run_order: Option<Stage>,
     #[serde(default)]
@@ -224,6 +239,37 @@ fn source_of(name: &str, raw: Raw) -> Result<Entry> {
         Raw::Pin(pin) => parse_pin(name, &pin)?,
 
         Raw::Table(t) => match (t.path.clone(), t.repo.clone(), t.version.clone()) {
+            _ if t.cargo.is_some() => {
+                if t.path.is_some() || t.repo.is_some() || t.asset.is_some() {
+                    bail!("worm `{name}`: cargo excludes path, repo, and asset");
+                }
+
+                let package = t.cargo.clone().expect("checked in the guard");
+
+                /*
+                The version can sit in the package pin or in the version key,
+                because both forms read naturally. Two versions at one time
+                cannot both be the answer.
+                */
+                let (package, pinned) = match package.rsplit_once('@') {
+                    Some((p, v)) => (p.to_owned(), Some(v.to_owned())),
+
+                    None => (package, None),
+                };
+
+                let version = match (pinned, t.version.clone()) {
+                    (Some(a), Some(b)) if a != b => {
+                        bail!("worm `{name}`: cargo pins {a} and version says {b}")
+                    }
+
+                    (Some(v), _) | (None, Some(v)) => v.trim_start_matches('v').to_owned(),
+
+                    (None, None) => bail!("worm `{name}`: cargo needs a version to pin"),
+                };
+
+                Source::Cargo { package, version }
+            }
+
             (Some(path), None, None) => {
                 if t.asset.is_some() {
                     bail!("worm `{name}`: asset means nothing with path, it is not a release");
@@ -310,6 +356,55 @@ mod tests {
         assert!(
             matches!(&w.0["luaux"].source, Source::Release { version, .. } if version == "0.1.0")
         );
+    }
+
+    #[test]
+    fn a_cargo_worm_parses_with_the_version_in_either_place() {
+        let w = worms(r#"luaux = { cargo = "luaux-worm@0.1.0" }"#).unwrap();
+
+        assert_eq!(
+            w.0["luaux"].source,
+            Source::Cargo {
+                package: "luaux-worm".into(),
+                version: "0.1.0".into()
+            }
+        );
+
+        let w = worms(r#"luaux = { cargo = "luaux-worm", version = "0.1.0" }"#).unwrap();
+
+        assert_eq!(
+            w.0["luaux"].source,
+            Source::Cargo {
+                package: "luaux-worm".into(),
+                version: "0.1.0".into()
+            }
+        );
+    }
+
+    #[test]
+    fn a_cargo_worm_without_a_version_is_refused() {
+        let err = worms(r#"luaux = { cargo = "luaux-worm" }"#).err().unwrap();
+
+        assert!(format!("{err:#}").contains("needs a version"), "{err:#}");
+    }
+
+    #[test]
+    fn two_versions_that_disagree_are_refused() {
+        let err = worms(r#"luaux = { cargo = "luaux-worm@0.1.0", version = "0.2.0" }"#)
+            .err()
+            .unwrap();
+
+        assert!(format!("{err:#}").contains("0.1.0"), "{err:#}");
+        assert!(format!("{err:#}").contains("0.2.0"), "{err:#}");
+    }
+
+    #[test]
+    fn cargo_excludes_the_other_sources() {
+        let err = worms(r#"luaux = { cargo = "luaux-worm@0.1.0", path = "w" }"#)
+            .err()
+            .unwrap();
+
+        assert!(format!("{err:#}").contains("excludes"), "{err:#}");
     }
 
     #[test]

@@ -127,3 +127,89 @@ fn a_wasm_worm_needs_no_bit() {
 
     larvae::worm::fetch::make_runnable(dir.path()).expect("nothing to do");
 }
+
+/*
+The adoption half of the cargo channel, without cargo.
+
+`cargo install` ships one binary and no data files, so larvae asks the binary
+for the `worm.toml` it carries and writes the manifest beside it. This test
+stands a python script in for the binary, because the pipe protocol is the
+contract and the compiler that produced the binary is not.
+*/
+#[test]
+fn a_cargo_built_binary_is_adopted_into_a_worm_dir() {
+    let build = tempfile::tempdir().unwrap();
+    let bin = build.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+
+    let script = bin.join("demo-worm");
+    std::fs::write(
+        &script,
+        r#"#!/usr/bin/env python3
+import sys, json, struct
+
+MANIFEST = """name = "demo"
+api = 1
+form = "native"
+entry = "demo-worm"
+
+[frontend]
+claims = [".demo"]
+"""
+
+def read():
+    n = sys.stdin.buffer.read(4)
+    if len(n) < 4: sys.exit(0)
+    return json.loads(sys.stdin.buffer.read(struct.unpack("<I", n)[0]))
+
+def send(obj):
+    b = json.dumps(obj).encode()
+    sys.stdout.buffer.write(struct.pack("<I", len(b)) + b)
+    sys.stdout.buffer.flush()
+
+while True:
+    req = read()
+    if req["op"] == "manifest":
+        send({"ok": True, "manifest": MANIFEST})
+    else:
+        send({"ok": True, "output": req.get("source", "")})
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let cache = tempfile::tempdir().unwrap();
+    let dir = cache.path().join("worms/demo/0.1.0");
+
+    larvae::worm::fetch::adopt(&bin, &dir, "demo").expect("adopts the binary");
+
+    // the manifest sits beside the binary, at the entry the manifest names
+    assert!(dir.join("worm.toml").is_file());
+    assert!(dir.join("demo-worm").is_file());
+
+    // and the adopted directory is a loadable worm
+    let worm = larvae::worm::Worm::load(&dir).expect("loads");
+    assert_eq!(worm.name(), "demo");
+}
+
+/// A binary that does not answer the manifest op cannot install through cargo
+#[test]
+fn a_binary_without_a_manifest_is_refused() {
+    let build = tempfile::tempdir().unwrap();
+    let bin = build.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+
+    let script = bin.join("mute-worm");
+    std::fs::write(
+        &script,
+        "#!/usr/bin/env python3\nimport sys, json, struct\nwhile True:\n    n = sys.stdin.buffer.read(4)\n    if len(n) < 4: sys.exit(0)\n    sys.stdin.buffer.read(struct.unpack(\"<I\", n)[0])\n    b = json.dumps({\"ok\": False, \"error\": \"no\"}).encode()\n    sys.stdout.buffer.write(struct.pack(\"<I\", len(b)) + b)\n    sys.stdout.buffer.flush()\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let cache = tempfile::tempdir().unwrap();
+    let err = larvae::worm::fetch::adopt(&bin, &cache.path().join("d"), "mute")
+        .expect_err("no manifest, no worm");
+
+    assert!(format!("{err:#}").contains("mute"), "{err:#}");
+}
