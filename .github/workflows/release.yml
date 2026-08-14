@@ -78,10 +78,26 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      # musl links statically, so one linux binary runs on any distro
+      # musl links statically, so one linux binary runs on any distro. The
+      # vendored Luau is C++, and musl-tools carries no C++ compiler, so the
+      # toolchain comes from musl.cc: a cross build on the x86 runner and a
+      # native build on the arm runner, each shipping <arch>-linux-musl-g++
+      # under the exact name that cc-rs looks for. The linker is the same
+      # g++, so the static libstdc++ comes from the musl toolchain and not
+      # from the glibc host.
       - name: musl toolchain
         if: contains(matrix.target, 'musl')
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+        run: |
+          set -euo pipefail
+          ARCH=$(uname -m)
+          case "$ARCH" in
+            x86_64)  TGZ="x86_64-linux-musl-cross" ;;
+            aarch64) TGZ="aarch64-linux-musl-native" ;;
+          esac
+          curl -fsSL --retry 5 --retry-connrefused "https://musl.cc/${TGZ}.tgz" | sudo tar -xz -C /opt
+          echo "/opt/${TGZ}/bin" >> "$GITHUB_PATH"
+          UPPER=$(echo "${ARCH}_unknown_linux_musl" | tr '[:lower:]' '[:upper:]')
+          echo "CARGO_TARGET_${UPPER}_LINKER=${ARCH}-linux-musl-g++" >> "$GITHUB_ENV" 
 
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
