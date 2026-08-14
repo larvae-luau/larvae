@@ -65,6 +65,17 @@ impl<'a> Resolver<'a> {
             }
         };
 
+        /*
+        The edge, recorded at the one place where a require becomes a file.
+
+        Every spelling reaches this point: relative, alias and instance
+        alike. So the graph keys on the resolved module, not on the written
+        form, and two files that name one module add one node.
+        */
+        ctx.required
+            .borrow_mut()
+            .push(node.dm_key_path().to_path_buf());
+
         let out = match ctx.target {
             Target::Path => self.emit_path_target(ctx, &node),
 

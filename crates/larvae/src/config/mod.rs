@@ -7,6 +7,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
+pub mod check;
 mod excludes;
 mod overrides;
 mod process;
@@ -58,6 +59,10 @@ pub struct Config {
     #[serde(default)]
     pub worms: Option<toml::Value>,
 
+    /// The `larvae check` gate, see [`check`]
+    #[serde(default)]
+    pub check: check::CheckConfig,
+
     // Parsed so the error can name the new location and not say "unknown key".
     #[serde(default)]
     config: Option<toml::Value>,
@@ -68,9 +73,6 @@ pub struct Config {
 
     #[serde(default)]
     minify: Option<toml::Value>,
-
-    #[serde(default)]
-    check: Option<toml::Value>,
 }
 
 impl Config {
@@ -141,7 +143,6 @@ impl Config {
         let unimplemented: &[(&str, &Option<toml::Value>, &str)] = &[
             ("[bundle]", &self.bundle, "M3"),
             ("[minify]", &self.minify, "M4"),
-            ("[check]", &self.check, "M3"),
         ];
 
         for (name, value, milestone) in unimplemented {
@@ -353,6 +354,15 @@ mod tests {
         let err = c.validate().unwrap_err().to_string();
 
         assert!(err.contains("M3"), "{err}");
+    }
+
+    /// [check] landed, so a [check] table is configuration and not an error
+    #[test]
+    fn a_check_table_is_read_rather_than_refused() {
+        let c: Config = toml::from_str("[check]\ncycles = \"deny\"").unwrap();
+
+        c.validate().unwrap();
+        assert_eq!(c.check.cycles, crate::lint::Level::Deny);
     }
 
     #[test]

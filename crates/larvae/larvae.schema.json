@@ -719,6 +719,15 @@
             }
           }
         },
+        "require_binding": {
+          "enum": [
+            "preserve",
+            "const",
+            "local"
+          ],
+          "default": "preserve",
+          "description": "Selects which keyword binds a required module. Luau enforces \"const\", so a name that the file reassigns keeps \"local\" and does not become a syntax error. \"preserve\" keeps each declaration as written."
+        },
         "magic_trailing_comma": {
           "type": "boolean",
           "default": true,
@@ -1031,6 +1040,14 @@
             "deny"
           ],
           "description": "A UDim2.new that fromScale or fromOffset says more clearly. Default: warn."
+        },
+        "non_const_require": {
+          "enum": [
+            "allow",
+            "warn",
+            "deny"
+          ],
+          "description": "A required module bound with local, where const says it never changes. The lint skips a name that the file reassigns, because const would then be a syntax error. Default: allow."
         },
         "unreachable_code": {
           "enum": [
@@ -1363,40 +1380,40 @@
       }
     },
     "check": {
-      "description": "CI-gate diagnostics for `larvae check`. (M3)",
+      "description": "Whole-project analyses that `larvae check` runs over the require graph. Each check is a level, like [lint.rules], so the project decides what fails CI.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "disallow_cycles": {
-          "type": "boolean",
-          "default": true,
-          "description": "Require cycles fail the check."
+        "cycles": {
+          "enum": [
+            "allow",
+            "warn",
+            "deny"
+          ],
+          "description": "Modules that require each other, directly or through a chain. The report names the whole cycle. Default: warn."
         },
-        "disallow_unused_modules": {
-          "type": "boolean",
-          "default": false,
-          "description": "Files unreachable from any entry point."
+        "unused_modules": {
+          "enum": [
+            "allow",
+            "warn",
+            "deny"
+          ],
+          "description": "Modules that nothing requires. A Script or LocalScript is never reported, because Roblox runs those. Default: allow."
         },
-        "entry_points": {
+        "early_require": {
+          "enum": [
+            "allow",
+            "warn",
+            "deny"
+          ],
+          "description": "Client scripts that require through an indexing style that does not wait for replication. Only the roblox-instance target. Default: warn."
+        },
+        "entries": {
           "type": "array",
           "items": {
             "type": "string"
-          }
-        },
-        "realm_analysis": {
-          "type": "boolean",
-          "default": true,
-          "description": "Error when client-reachable code requires server-only containers."
-        },
-        "early_require_diagnostics": {
-          "type": "boolean",
-          "default": true,
-          "description": "Flag string requires reachable from early client entry points (no wait semantics)."
-        },
-        "native_expressible": {
-          "type": "boolean",
-          "default": true,
-          "description": "Flag emitted requires that can't be native string form."
+          },
+          "description": "Extra entry points, as paths relative to the project root. A module in this list is never reported as unused."
         }
       }
     }

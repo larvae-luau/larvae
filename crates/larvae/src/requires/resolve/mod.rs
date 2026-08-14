@@ -51,6 +51,15 @@ pub struct FileCtx<'a> {
     /// The output form for this file; an override can move it off the default
     pub target: Target,
     pub style: IndexingStyle,
+    /*
+    The modules this file resolved a require to, for the require graph.
+
+    The list lives here, not as one more `&mut` beside `diags`, because a
+    worker builds a `FileCtx` per file and shares nothing. So a `RefCell`
+    costs nothing, and every resolver function that can resolve a module
+    already holds the context.
+    */
+    pub required: std::cell::RefCell<Vec<PathBuf>>,
 }
 
 impl<'a> FileCtx<'a> {
@@ -61,6 +70,7 @@ impl<'a> FileCtx<'a> {
 
         Self {
             path,
+            required: std::cell::RefCell::default(),
             dm: mounts.dm_of(path),
             is_init,
             kind: script_kind(file_name),

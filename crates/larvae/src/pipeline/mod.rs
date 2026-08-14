@@ -4,7 +4,7 @@ mod file;
 mod frontend;
 mod output;
 pub mod roots;
-mod setup;
+pub(crate) mod setup;
 
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -49,6 +49,13 @@ pub struct Outcome {
     pub stats: Stats,
     pub diags: Vec<Diag>,
     pub build_project: Option<PathBuf>,
+    /*
+    Which module requires which, for the whole project analyses in `check`.
+
+    The graph is complete when the cache is off, which holds for every read
+    only run: the cache applies only to writes.
+    */
+    pub graph: crate::requires::graph::Graph,
 }
 
 impl Outcome {
@@ -162,6 +169,7 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
 
     // --- Parallel per file processing ---------------------------------------
     let shared_diags = Mutex::new(diags);
+    let shared_graph = Mutex::new(crate::requires::graph::Graph::default());
     let stats = Mutex::new(Stats::default());
 
     let fresh_hashes: Mutex<Vec<(String, u64)>> = Mutex::new(Vec::new());
@@ -238,6 +246,8 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
             }
         }
 
+        let owns = pool.owns_requires(front);
+
         let mut local_diags = Vec::new();
         let rewritten = process_file(
             path,
@@ -249,7 +259,7 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
             &config.rules,
             write,
             &pool,
-            pool.owns_requires(front),
+            owns,
             &mut local_diags,
         );
         let mut s = stats.lock().unwrap();
@@ -262,6 +272,32 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
         }
 
         drop(s);
+
+        /*
+        The serial half of section 4.4. Every worker collects its own edges
+        with no lock, and this merge is the one place they meet. So the graph
+        builds once at the end of each file, and no worker contends on a
+        require. An init file keys on its directory, so the edge into a
+        directory module meets the edges out of its init file on one node.
+        */
+        {
+            let node = crate::requires::graph::node_of(path);
+            let mut g = shared_graph.lock().unwrap();
+
+            if owns {
+                g.see(node);
+            } else {
+                // A worm resolves the requires of this file, so the graph
+                // holds no edges for it. The unused analysis checks the mark.
+                g.see_opaque(node);
+            }
+
+            if let Some(file) = &rewritten {
+                for to in &file.required {
+                    g.add(node, to);
+                }
+            }
+        }
         // Only a clean file gets a cache entry; errors must appear again.
         if rewritten.is_some()
             && !local_diags
@@ -387,5 +423,6 @@ pub fn run(root: &Path, config: &Config, write: bool) -> Result<Outcome> {
         stats,
         diags,
         build_project,
+        graph: shared_graph.into_inner().unwrap(),
     })
 }

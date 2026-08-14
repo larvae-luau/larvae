@@ -114,6 +114,8 @@ pub(super) struct FileOutcome {
     pub dynamic: usize,
     /// The rules that changed this file, each listed once
     pub applied: Vec<Rule>,
+    /// The modules this file requires; its contribution to the require graph
+    pub required: Vec<std::path::PathBuf>,
 }
 
 /*
@@ -148,6 +150,11 @@ pub(super) fn process_file(
         let last = i + 1 == slots.len();
         let mut edits = Edits::new();
 
+        /*
+        The slot list holds the native slot once, so this pass and its
+        require harvest run once for the file. A later stage extends
+        `applied` only, and adds no edges.
+        */
         if slot == worms.native() {
             outcome = native_pass(
                 path,
@@ -383,6 +390,7 @@ fn native_pass(
         rewrites,
         dynamic: scanned.dynamic.len(),
         applied: Vec::new(),
+        required: ctx.required.take(),
     })
 }
 
