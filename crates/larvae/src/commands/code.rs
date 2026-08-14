@@ -149,13 +149,42 @@ fn file_url(path: &Path) -> String {
 }
 
 fn project_schema(root: &Path) -> Result<()> {
+    let config = crate::config::Config::load(&root.join("larvae.toml"))?;
     let generated = root
-        .join(
-            &crate::config::Config::load(&root.join("larvae.toml"))?
-                .process
-                .cache_dir,
-        )
+        .join(&config.process.cache_dir)
         .join(crate::schema::FILE);
+
+    /*
+    The command writes the schema itself rather than wait for a build.
+
+    A user runs this command to set an editor up, often before any other
+    command has run in the project. Without this the schema does not exist
+    yet, the command finds nothing to point at, and the editor completes
+    nothing that a worm declares. Loading the worms also refreshes a schema
+    that a worm has since changed.
+    */
+    match crate::worm::registry::Registry::for_project(root, &config) {
+        Ok(worms) if !worms.is_empty() => {
+            crate::schema::write(&root.join(&config.process.cache_dir), &worms)?;
+        }
+
+        // a project with no worms wants the schema that larvae hosts
+        Ok(_) => return Ok(()),
+
+        /*
+        A worm that larvae cannot load is a problem for a build to report.
+        Here it only means there is no schema of this project to point at,
+        and the hosted schema still answers.
+        */
+        Err(e) => {
+            eprintln!(
+                "Cannot read the worms of this project, so the editor keeps the hosted schema."
+            );
+            eprintln!("  {e:#}");
+
+            return Ok(());
+        }
+    }
 
     if !generated.exists() {
         return Ok(());

@@ -617,7 +617,10 @@
     "fmt": {
       "description": "Formatter settings for `larvae fmt`. Every stylua option under its own name, so a stylua.toml can move in here whole, plus the ones stylua does not have. A stylua.toml left in the project is still read, and these keys layer over it.",
       "type": "object",
-      "additionalProperties": false,
+      "additionalProperties": {
+        "type": "object",
+        "description": "The format options of one worm, under its key. Run `larvae self code` to name and describe them here."
+      },
       "properties": {
         "column_width": {
           "type": "integer",
@@ -822,7 +825,11 @@
       "description": "How loudly each lint speaks. A lint keeps its own default until it is named here. A name not listed below is a worm's lint, declared in that worm's [lints] and levelled here the same way.",
       "type": "object",
       "additionalProperties": {
-        "$ref": "#/$defs/lint_level"
+        "type": "object",
+        "description": "The lints of one worm, under its key. Run `larvae self code` to name and describe them here.",
+        "additionalProperties": {
+          "$ref": "#/$defs/lint_level"
+        }
       },
       "properties": {
         "almost_swapped": {

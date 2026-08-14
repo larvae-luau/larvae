@@ -67,8 +67,29 @@ pub fn for_project(registry: &crate::worm::registry::Registry) -> Result<Value> 
         });
     }
 
-    for (_, name, option) in registry.declared_fmt() {
-        schema["$defs"]["fmt"]["properties"][name] = option_schema(option);
+    for loaded in registry.iter() {
+        let worm = loaded.worm.name();
+        let mut props = Map::new();
+
+        for (name, option) in &loaded.worm.manifest.fmt {
+            props.insert(name.clone(), option_schema(option));
+        }
+
+        if props.is_empty() {
+            continue;
+        }
+
+        /*
+        The format options of a worm sit in a table under its key, the same
+        way its lints do, so the editor completes them where a project writes
+        them.
+        */
+        schema["$defs"]["fmt"]["properties"][worm] = json!({
+            "type": "object",
+            "additionalProperties": false,
+            "description": format!("The format options of worm `{worm}`."),
+            "properties": Value::Object(props),
+        });
     }
 
     let entry = schema["$defs"]["worms"]["additionalProperties"].clone();

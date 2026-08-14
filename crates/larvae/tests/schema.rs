@@ -49,15 +49,23 @@ fn lint_rules_match_the_registry() {
     );
 
     /*
-    Names beyond the builtins are worm lints, which the schema cannot know.
-    Thus extra names must stay legal and must still be levels. A `false` here
-    would make every editor flag a worm lint when a project sets a level for
-    one.
+    A name outside the builtins is not a level. A worm names its lints under
+    its own key, so an unknown key must be a table of levels and a flat
+    `luaux_x = "warn"` line is an error the editor shows.
     */
+    let extra = &schema["$defs"]["lint_rules"]["additionalProperties"];
+
+    assert_eq!(extra["type"], "object", "an unknown key is a worm table");
     assert_eq!(
-        schema["$defs"]["lint_rules"]["additionalProperties"],
+        extra["additionalProperties"],
         serde_json::json!({ "$ref": "#/$defs/lint_level" }),
-        "[lint.rules] must accept worm lint names as levels"
+        "the values of a worm table are levels"
+    );
+
+    // the same for [fmt]: an unknown key is the table of one worm
+    assert_eq!(
+        schema["$defs"]["fmt"]["additionalProperties"]["type"],
+        "object"
     );
 }
 
