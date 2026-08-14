@@ -4,9 +4,10 @@
 
 # larvae
 
-**One toolchain for all of Luau.**
+**Format, lint, and ship Luau.**
 
-One parallel Rust binary. It has transformers today, and formatting and linting come next.
+One parallel Rust binary. Requires that cannot break, style that cannot
+drift, and worms that teach it languages beyond Luau.
 
 [![CI](https://github.com/larvae-luau/larvae/actions/workflows/ci.yml/badge.svg)](https://github.com/larvae-luau/larvae/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/larvae-luau/larvae?color=10E694&label=release)](https://github.com/larvae-luau/larvae/releases/latest)
@@ -15,10 +16,15 @@ One parallel Rust binary. It has transformers today, and formatting and linting 
 
 </div>
 
-larvae starts with require rewriting that no other tool in the ecosystem
-does. It refuses to emit a require that would fail at runtime. Roblox
-shipped native string requires, and `@game/...` became available in early
-2026. No tool generated them. larvae does.
+larvae is three tools and an extension system in one binary. `larvae
+process` rewrites requires and refuses to emit one that would fail at
+runtime. `larvae fmt` formats with stylua parity and a Wadler printer.
+`larvae lint` carries thirty four lints with selene's spellings. Worms
+extend all three to languages that compile to Luau, such as LuauX.
+
+The requires came first, because no other tool has them. Roblox shipped
+native string requires, and `@game/...` became available in early 2026. No
+tool generated them. larvae does.
 
 ```lua
 -- what you write
@@ -112,7 +118,11 @@ live Studio session.
 | `larvae process` | rewrite requires into the output directory |
 | `larvae process --watch` | the same, on every save |
 | `larvae check` | validate requires and syntax, write nothing, exit non zero on errors |
-| `larvae init` | scaffold a config |
+| `larvae fmt` | format in place; `--check` for CI, `--stdin` for editors |
+| `larvae lint` | thirty four lints; `--explain <name>` describes one |
+| `larvae lsp` | diagnostics and formatting over stdio, for any editor |
+| `larvae worm` | develop an extension: `run`, `run --fmt`, `run --lint`, `info`, `types` |
+| `larvae init` | scaffold a config with every default written out |
 | `larvae self code` | set up editor completion for larvae.toml |
 | `larvae self install` | manage the install, with `update` and `uninstall` |
 
@@ -150,12 +160,19 @@ reports the release that adds the feature. larvae ignores nothing silently.
 
 ## Status
 
-Requires, the Rojo integration, the parser, the cache, and watch mode all
-work today. The next work items are: Instance requires as input, so that
-existing codebases can convert; compile time constants; build profiles; and
-the rest of the rules, now possible because the parser exists. After that:
-bundling with a documented module init order, cross module dead code
-elimination, and transforms that the user writes in Luau.
+Requires, formatting, linting, the language server, the Rojo integration,
+compile time constants, build profiles, the rule set, the cache, and watch
+mode all work today.
+
+Worms work today as well. A worm is an extension that adds a language on top
+of Luau: it compiles its files into the pipeline, formats them through
+larvae's own printer, and lints them beside the builtin lints. A worm ships
+as a GitHub release, as a crate on crates.io, or as a path during
+development. The first worm is [LuauX](https://github.com/luau-xml/luaux),
+Luau with JSX syntax.
+
+The next work items are bundling with a documented module init order and
+cross module dead code elimination, then minify.
 
 ## License
 
