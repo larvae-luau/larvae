@@ -929,3 +929,87 @@ fn preserving_gaps_is_still_idempotent() {
 
     assert_eq!(fmt_with(&once, cfg), once);
 }
+
+// --- require_binding -------------------------------------------------------
+
+fn binding(mode: larvae::fmt::config::RequireBinding) -> FmtConfig {
+    FmtConfig {
+        require_binding: mode,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn require_binding_preserves_what_was_written_by_default() {
+    let src = "local A = require(\"@pkg/a\")\nconst B = require(\"@pkg/b\")\nreturn A, B\n";
+
+    assert_eq!(fmt(src), src);
+}
+
+#[test]
+fn const_converts_a_local_require() {
+    assert_eq!(
+        fmt_with(
+            "local Signal = require(\"@pkg/signal\")\nreturn Signal\n",
+            binding(larvae::fmt::config::RequireBinding::Const)
+        ),
+        "const Signal = require(\"@pkg/signal\")\nreturn Signal\n"
+    );
+}
+
+#[test]
+fn local_converts_a_const_require_back() {
+    assert_eq!(
+        fmt_with(
+            "const Signal = require(\"@pkg/signal\")\nreturn Signal\n",
+            binding(larvae::fmt::config::RequireBinding::Local)
+        ),
+        "local Signal = require(\"@pkg/signal\")\nreturn Signal\n"
+    );
+}
+
+/*
+This case would turn a working file into a syntax error. Luau enforces const:
+`Variable 'M' is constant and may not be reassigned`.
+*/
+#[test]
+fn a_require_whose_name_is_reassigned_keeps_local() {
+    let src = "local M = require(\"@pkg/m\")\nM = fallback\nreturn M\n";
+
+    assert_eq!(
+        fmt_with(src, binding(larvae::fmt::config::RequireBinding::Const)),
+        src
+    );
+}
+
+#[test]
+fn only_a_single_unannotated_binding_converts() {
+    let cfg = binding(larvae::fmt::config::RequireBinding::Const);
+
+    for src in [
+        "local A, B = require(\"@pkg/a\"), require(\"@pkg/b\")\nreturn A, B\n",
+        "local S: Signal = require(\"@pkg/signal\")\nreturn S\n",
+        "local x = compute()\nreturn x\n",
+    ] {
+        assert_eq!(fmt_with(src, cfg.clone()), src, "{src:?}");
+    }
+}
+
+/// A require inside a function body is still a require
+#[test]
+fn a_nested_require_converts_too() {
+    let out = fmt_with(
+        "local function f()\n\tlocal S = require(\"@pkg/s\")\n\treturn S\nend\nreturn f\n",
+        binding(larvae::fmt::config::RequireBinding::Const),
+    );
+
+    assert!(out.contains("const S = require"), "{out}");
+}
+
+#[test]
+fn converting_the_binding_is_idempotent() {
+    let cfg = binding(larvae::fmt::config::RequireBinding::Const);
+    let once = fmt_with("local S = require(\"@pkg/s\")\nreturn S\n", cfg.clone());
+
+    assert_eq!(fmt_with(&once, cfg), once);
+}

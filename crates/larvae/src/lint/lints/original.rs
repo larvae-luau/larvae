@@ -13,6 +13,8 @@ use crate::syntax::ast::*;
 use super::correctness::{each_block, each_stmt};
 
 lints! {
+    NonConstRequire => "non_const_require", Allow,
+        "a required module bound with local, where const says it never changes";
     SelfAssignment => "self_assignment", Warn,
         "assigning a value to itself, which does nothing";
     ShadowedLoopWork => "loop_invariant_call", Warn,
@@ -21,6 +23,104 @@ lints! {
         "building a string by concatenation in a loop, which is quadratic";
     UnreachableCode => "unreachable_code", Warn,
         "statements after a return, break or continue, which never run";
+}
+
+// --- non_const_require -----------------------------------------------------
+
+impl NonConstRequire {
+    /*
+    `local Signal = require(...)`, where `const Signal` says more.
+
+    Luau enforces `const` and does not treat it as decoration: to reassign
+    one is a syntax error, `Variable 'X' is constant and may not be
+    reassigned`. A module handle is the clearest case for it, because a
+    rebind of that name to something else is almost always a mistake and not
+    an intention.
+
+    The lint is off by default. `const` is newer than most codebases, and a
+    project that has not adopted it would get one warning per require on the
+    first run. That is how a linter teaches people to ignore it. `larvae fmt`
+    with `require_binding = "const"` does the whole conversion in one pass,
+    which is the better way to arrive at it.
+
+    The lint is narrow on purpose, and it matches the `const_requires`
+    transform: one name, one value, no type annotation. A multi binding
+    cannot be const one name at a time, and an annotated local states
+    something that the author cared about.
+    */
+    fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
+        each_stmt(ctx, out, |ctx, s, out| {
+            let Stmt::Local(n) = s else {
+                return;
+            };
+
+            if n.is_const || !binds_one_require(ctx, n) {
+                return;
+            }
+
+            /*
+            A name that something reassigns cannot be const. Advice to make
+            it const produces `Variable 'X' is constant and may not be
+            reassigned`. The formatter's `require_binding` skips the same
+            case.
+            */
+            let reassigned = ctx
+                .names
+                .by_token
+                .get(&n.names[0].name.start)
+                .and_then(|&i| ctx.names.bindings.get(i))
+                .is_none_or(|b| !b.writes.is_empty());
+
+            if reassigned {
+                return;
+            }
+
+            out.push(
+                Finding::new(
+                    "non_const_require",
+                    ctx.bytes(n.keyword),
+                    format!(
+                        "{} is a required module, so it can be const",
+                        ctx.text(n.names[0].name)
+                    ),
+                )
+                .with_help("const is enforced, reassigning one is a syntax error"),
+            );
+        });
+    }
+}
+
+/// `local X = require(...)`, with one name, one value, and no annotation.
+fn binds_one_require(ctx: &LintCtx<'_>, local: &Local) -> bool {
+    let ([binding], [value]) = (local.names.as_slice(), local.values.as_slice()) else {
+        return false;
+    };
+
+    // An annotation is a statement of the author, so the lint leaves it alone.
+    if binding.ty.is_some() {
+        return false;
+    }
+
+    is_require_call(ctx, value)
+}
+
+/*
+Reports if this expression calls `require`.
+
+The name must be the global one. A local named `require` is the function of
+somebody else and says nothing about modules.
+*/
+fn is_require_call(ctx: &LintCtx<'_>, e: &Expr) -> bool {
+    let Expr::Call { func, method, .. } = e else {
+        return false;
+    };
+
+    if method.is_some() {
+        return false;
+    }
+
+    matches!(func.as_ref(), Expr::Name(n)
+        if ctx.text(*n) == "require" && ctx.names.is_global(n.start))
 }
 
 // --- unreachable_code ------------------------------------------------------

@@ -30,15 +30,24 @@ pub struct Emitter<'a> {
     toks: &'a [Tok],
     trivia: &'a Trivia<'a>,
     cfg: &'a FmtConfig,
+    /// The keywords that `require_binding` decided to change, by their token index
+    rebindings: super::rebind::Rebindings,
 }
 
 impl<'a> Emitter<'a> {
-    pub fn new(src: &'a str, toks: &'a [Tok], trivia: &'a Trivia<'a>, cfg: &'a FmtConfig) -> Self {
+    pub fn new(
+        src: &'a str,
+        toks: &'a [Tok],
+        trivia: &'a Trivia<'a>,
+        cfg: &'a FmtConfig,
+        rebindings: super::rebind::Rebindings,
+    ) -> Self {
         Self {
             src,
             toks,
             trivia,
             cfg,
+            rebindings,
         }
     }
 
@@ -692,7 +701,12 @@ impl<'a> Emitter<'a> {
     }
 
     fn local(&self, n: &Local) -> Doc<'a> {
-        let keyword = self.one(n.keyword);
+        // `require_binding` can decide that this declaration says the other keyword.
+        let keyword = self
+            .rebindings
+            .get(&n.keyword.start)
+            .copied()
+            .unwrap_or_else(|| self.one(n.keyword));
         let names = Doc::join(Doc::text(", "), n.names.iter().map(|b| self.binding(b)));
 
         if n.values.is_empty() {

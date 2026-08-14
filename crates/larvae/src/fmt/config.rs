@@ -98,6 +98,27 @@ pub enum IndentType {
     Spaces,
 }
 
+/*
+Selects which keyword binds a required module.
+
+`preserve` is the default for two reasons. A formatter that changes the
+keyword of a declaration takes a bigger step than a formatter that moves its
+spaces. And Luau enforces `const`: the conversion can turn a file that ran
+into a syntax error, when a later statement reassigns the name. Larvae finds
+that case and keeps `local` there.
+*/
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RequireBinding {
+    /// Keep every declaration exactly as written.
+    #[default]
+    Preserve,
+    /// `const X = require(...)`, where nothing reassigns X.
+    Const,
+    /// `local X = require(...)`.
+    Local,
+}
+
 /// Selects how `sort_requires` groups the requires it sorts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -153,6 +174,10 @@ pub struct FmtConfig {
     pub sort_requires: SortRequires,
 
     // --- options beyond stylua -------------------------------------------
+    /// Selects which keyword binds a required module.
+    #[serde(default)]
+    pub require_binding: RequireBinding,
+
     /*
     A trailing comma that the author left in a table means "keep this table
     expanded".

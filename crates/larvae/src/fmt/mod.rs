@@ -14,6 +14,7 @@ formatter that oscillates between two outputs turns every save into a diff.
 pub mod config;
 pub mod doc;
 pub mod emit;
+pub mod rebind;
 pub mod trivia;
 
 use anyhow::{Context, Result};
@@ -32,7 +33,8 @@ pub fn format(src: &str, cfg: &FmtConfig) -> Result<String> {
         .context("cannot format a file that does not parse")?;
 
     let trivia = trivia::Trivia::new(src, &lexed.comments);
-    let emitter = emit::Emitter::new(src, &lexed.toks, &trivia, cfg);
+    let rebindings = rebind::plan(src, &lexed.toks, &chunk, cfg.require_binding);
+    let emitter = emit::Emitter::new(src, &lexed.toks, &trivia, cfg, rebindings);
     let document = emitter.chunk(&chunk);
     let out = doc::render(&document, cfg.style());
 
@@ -59,7 +61,12 @@ pub(crate) fn doc_of(src: &str, cfg: &FmtConfig) -> Result<doc::Doc<'static>> {
     let chunk = parser::parse(src, &lexed.toks).map_err(|e| anyhow::anyhow!("{}", e.message))?;
 
     let trivia = trivia::Trivia::new(src, &lexed.comments);
-    let emitter = emit::Emitter::new(src, &lexed.toks, &trivia, cfg);
+
+    /*
+    The slice is not the whole file, so `require_binding` cannot prove that a
+    conversion compiles here. The empty plan changes no keyword.
+    */
+    let emitter = emit::Emitter::new(src, &lexed.toks, &trivia, cfg, rebind::Rebindings::new());
 
     Ok(emitter.block_body(&chunk.block).into_owned())
 }
@@ -73,7 +80,9 @@ pub(crate) fn doc_of_expr(src: &str, cfg: &FmtConfig) -> Result<doc::Doc<'static
         parser::parse_expr(src, &lexed.toks).map_err(|e| anyhow::anyhow!("{}", e.message))?;
 
     let trivia = trivia::Trivia::new(src, &lexed.comments);
-    let emitter = emit::Emitter::new(src, &lexed.toks, &trivia, cfg);
+
+    // An expression declares nothing, so the empty plan is exact here.
+    let emitter = emit::Emitter::new(src, &lexed.toks, &trivia, cfg, rebind::Rebindings::new());
 
     Ok(emitter.expr(&expr).into_owned())
 }

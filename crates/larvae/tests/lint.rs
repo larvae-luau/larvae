@@ -1175,3 +1175,73 @@ fn deprecated_methods_are_silent_under_plain_luau() {
             .any(|n| n == "deprecated")
     );
 }
+
+// --- non_const_require -----------------------------------------------------
+
+/// `const` is newer than most codebases, so a project must ask for this lint.
+#[test]
+fn non_const_require_is_off_until_a_project_asks() {
+    let src = "local Signal = require(\"@pkg/signal\")\nreturn Signal\n";
+
+    assert!(!fires("non_const_require", src));
+    assert!(
+        fired(src, &with("non_const_require", Level::Warn))
+            .iter()
+            .any(|n| n == "non_const_require")
+    );
+}
+
+fn const_lint(src: &str) -> bool {
+    fired(src, &with("non_const_require", Level::Warn))
+        .iter()
+        .any(|n| n == "non_const_require")
+}
+
+#[test]
+fn a_local_bound_to_a_require_is_reported() {
+    assert!(const_lint(
+        "local Signal = require(\"@pkg/signal\")\nreturn Signal\n"
+    ));
+}
+
+#[test]
+fn one_already_const_is_not() {
+    assert!(!const_lint(
+        "const Signal = require(\"@pkg/signal\")\nreturn Signal\n"
+    ));
+}
+
+/*
+Advice to make a reassigned name const produces `Variable 'X' is constant
+and may not be reassigned`, which is worse than silence.
+*/
+#[test]
+fn a_require_whose_name_is_reassigned_is_left_alone() {
+    assert!(!const_lint(
+        "local M = require(\"@pkg/m\")\nM = fallback\nreturn M\n"
+    ));
+}
+
+/// The lint matches the const_requires transform: one name, one value, no annotation.
+#[test]
+fn the_shapes_const_cannot_express_are_skipped() {
+    assert!(!const_lint(
+        "local A, B = require(\"@pkg/a\"), require(\"@pkg/b\")\nreturn A, B\n"
+    ));
+    assert!(!const_lint(
+        "local S: Signal = require(\"@pkg/signal\")\nreturn S\n"
+    ));
+}
+
+#[test]
+fn a_local_that_is_not_a_require_is_not_its_business() {
+    assert!(!const_lint("local x = compute()\nreturn x\n"));
+}
+
+/// A local named require is not the global require.
+#[test]
+fn a_shadowed_require_says_nothing_about_modules() {
+    assert!(!const_lint(
+        "local require = myLoader\nlocal S = require(\"x\")\nreturn S\n"
+    ));
+}

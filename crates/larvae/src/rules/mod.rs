@@ -109,6 +109,12 @@ const_requires: change `local X = require(...)` to `const X = require(...)`.
 Then single assignment requires get Luau's const treatment. The rule is
 conservative by design. It does not change multi bindings or annotated
 locals.
+
+Luau enforces `const`. A converted name that a later statement reassigns
+turns a file that ran into a syntax error. So the rule resolves the scopes,
+the same walk that the linter and `require_binding` use, and keeps `local`
+on every binding with writes. A file that does not parse gets no conversion,
+because the rule cannot prove that a conversion compiles.
 */
 pub fn const_requires(
     src: &str,
@@ -116,6 +122,8 @@ pub fn const_requires(
     sites: &[RequireSite],
     replacements: &mut Vec<(u32, u32, String)>,
 ) {
+    let mut candidates = Vec::new();
+
     for site in sites {
         let i = site.require_idx;
         // The rule looks backward for the pattern: local <name> = require
@@ -131,6 +139,30 @@ pub fn const_requires(
             && local.kind == TokKind::Ident
             && local.text(src) == "local"
         {
+            // The name token index identifies the binding in the scope walk.
+            candidates.push(((i - 2) as u32, local));
+        }
+    }
+
+    if candidates.is_empty() {
+        return;
+    }
+
+    let Ok(chunk) = crate::syntax::parser::parse(src, toks) else {
+        return;
+    };
+
+    let names = crate::lint::scope::resolve(src, toks, &chunk);
+
+    for (name_idx, local) in candidates {
+        // A later statement reassigns the name, so const would be a syntax error.
+        let reassigned = names
+            .by_token
+            .get(&name_idx)
+            .and_then(|&b| names.bindings.get(b))
+            .is_none_or(|b| !b.writes.is_empty());
+
+        if !reassigned {
             replacements.push((local.start, local.end, "const".to_string()));
         }
     }
@@ -325,6 +357,18 @@ mod tests {
         assert_eq!(apply("x = require(\"./x\")"), "x = require(\"./x\")");
         // A dynamic require has no site.
         assert_eq!(apply("local x = require(p)"), "local x = require(p)");
+    }
+
+    /*
+    Luau enforces const. A conversion of a reassigned name would produce
+    `Variable 'M' is constant and may not be reassigned`, so the rule must
+    keep `local` there.
+    */
+    #[test]
+    fn a_reassigned_require_binding_keeps_local() {
+        let src = "local M = require(\"./m\")\nM = fallback\nreturn M\n";
+
+        assert_eq!(apply(src), src);
     }
 
     #[test]

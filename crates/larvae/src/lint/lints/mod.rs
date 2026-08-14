@@ -53,6 +53,7 @@ pub static ALL: &[&dyn Lint] = &[
     &roblox::RobloxSuspiciousUdim2New,
     &roblox::RobloxManualFromScaleOrOffset,
     // The lints that selene does not have.
+    &original::NonConstRequire,
     &original::UnreachableCode,
     &original::SelfAssignment,
     &original::StringConcatInLoop,
