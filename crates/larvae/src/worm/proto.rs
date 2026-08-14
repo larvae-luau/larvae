@@ -279,6 +279,44 @@ fn convert<'a>(wire: &'a WireDoc, src: &'a str, cfg: &FmtConfig) -> Result<Doc<'
     })
 }
 
+/*
+One rule of a worm, with the nodes that its filter matched, for the batched
+rules protocol.
+
+The batch crosses once per file and never once per node. A pipe crossing
+costs 24 µs, and a rule worm visits about 120 nodes per file. Thus a per node
+protocol costs about 3 ms per file, and one batched crossing costs 24 µs. The
+worm receives the whole source and each node as an id, a kind name, and a
+byte span. It navigates no tree, and it returns whole span replacements.
+*/
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuleCall {
+    /// The rule name, as `[rules]` in `worm.toml` declares it
+    pub name: String,
+    /// The matched nodes, in pre-order
+    pub nodes: Vec<WireNode>,
+}
+
+/// One matched node, as it crosses in a [`RuleCall`]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WireNode {
+    /// The pre-order index of the node in its file
+    pub id: u32,
+    /// The kind name, the same text as `filter` in `worm.toml`
+    pub kind: String,
+    /// The byte range in the source, as a half open range
+    pub span: (u32, u32),
+}
+
+/// The reply to a batched rules request
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RulesReply {
+    /// Whole span replacements against the original source: start byte, end
+    /// byte, and the new text
+    #[serde(default)]
+    pub edits: Vec<(u32, u32, String)>,
+}
+
 /// A validated span, because every span here came off a wire
 fn slice(src: &str, start: u32, end: u32) -> Result<&str> {
     let (s, e) = (start as usize, end as usize);
@@ -478,5 +516,47 @@ mod tests {
             render_format(src, &r, &FmtConfig::default()).unwrap(),
             "-- keep me\nx = 1\n"
         );
+    }
+
+    /// The batched rules payload, pinned byte for byte, because every guest
+    /// mirrors this JSON by hand
+    #[test]
+    fn the_rule_call_shape_is_the_documented_one() {
+        let call = RuleCall {
+            name: "x".into(),
+            nodes: vec![WireNode {
+                id: 1,
+                kind: "CallExpr".into(),
+                span: (4, 20),
+            }],
+        };
+
+        let json = serde_json::to_string(&call).unwrap();
+
+        assert_eq!(
+            json,
+            r#"{"name":"x","nodes":[{"id":1,"kind":"CallExpr","span":[4,20]}]}"#
+        );
+        assert_eq!(serde_json::from_str::<RuleCall>(&json).unwrap(), call);
+    }
+
+    #[test]
+    fn the_rules_reply_shape_is_the_documented_one() {
+        let reply = RulesReply {
+            edits: vec![(4, 20, "new".to_owned())],
+        };
+
+        let json = serde_json::to_string(&reply).unwrap();
+
+        assert_eq!(json, r#"{"edits":[[4,20,"new"]]}"#);
+        assert_eq!(serde_json::from_str::<RulesReply>(&json).unwrap(), reply);
+    }
+
+    /// A reply without edits means no change, not a parse failure
+    #[test]
+    fn a_rules_reply_defaults_to_no_edits() {
+        let reply: RulesReply = serde_json::from_str("{}").unwrap();
+
+        assert!(reply.edits.is_empty());
     }
 }

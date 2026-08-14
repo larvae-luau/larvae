@@ -300,6 +300,22 @@ impl Pool {
     */
     pub fn run(&self, index: usize, file: Arc<FileCtx>, matched: &Matched) -> Result<Vec<Edit>> {
         self.with_worm(index, |worm, spec| {
+            /*
+            The native form crosses once per file and never once per node. A
+            pipe crossing costs 24 µs, and a rule worm visits about 120 nodes
+            per file, so the per node shape of the other forms would cost
+            about 3 ms per file here.
+            */
+            if matches!(spec.manifest.form, super::Form::Native) {
+                let calls = batch(spec, &file, matched);
+
+                if calls.is_empty() {
+                    return Ok(Vec::new());
+                }
+
+                return worm.run_rules_batched(&file.src, &calls);
+            }
+
             let mut edits = Vec::new();
 
             for (i, name) in spec.enabled().iter().enumerate() {
@@ -373,6 +389,46 @@ impl Pool {
 
 fn init(worm: &mut Worm, spec: &Spec, settings: &super::Settings) -> Result<()> {
     worm.init(&spec.config, &spec.rules, settings)
+}
+
+/*
+Build the batched rule calls of a native worm for one file.
+
+The calls keep the enabled rule order, which is also the order the per node
+path runs. Each call carries the id, the kind name, and the byte span of
+every matched node, read from the node table here on the host. A rule with
+no matched node sends no call, so a quiet file costs no crossing.
+*/
+fn batch(spec: &Spec, file: &FileCtx, matched: &Matched) -> Vec<super::proto::RuleCall> {
+    let mut calls = Vec::new();
+
+    for name in spec.enabled() {
+        let Some(ids) = matched.for_rule(spec, name) else {
+            continue;
+        };
+
+        if ids.is_empty() {
+            continue;
+        }
+
+        let nodes = ids
+            .iter()
+            .filter_map(|&id| {
+                file.table.get(id).map(|node| super::proto::WireNode {
+                    id,
+                    kind: node.kind.name().to_owned(),
+                    span: node.span,
+                })
+            })
+            .collect();
+
+        calls.push(super::proto::RuleCall {
+            name: name.to_owned(),
+            nodes,
+        });
+    }
+
+    calls
 }
 
 /// The nodes that match the filter of each rule, computed once per file

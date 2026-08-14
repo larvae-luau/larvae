@@ -39,6 +39,8 @@ fn main() {
 {"op": "transform", "source": "..."}   // reply {"ok": true, "output": "..."}
 {"op": "format", "source": "..."}      // reply below
 {"op": "lint", "source": "..."}        // reply below
+{"op": "rules", "source": "...",       // reply {"ok": true, "edits": [[4, 20, "new"]]}
+ "rules": [{"name": "x", "nodes": [{"id": 1, "kind": "CallExpr", "span": [4, 20]}]}]}
 ```
 
 A format reply carries a layout document. larvae renders it with the width
@@ -59,248 +61,28 @@ levels, the suppression, and the exit codes:
   "comments": [[0, 10]] }
 ```
 
+A rules request carries every enabled rule of one file, each with its matched
+nodes, in one message. One message per file is the contract, because a pipe
+crossing costs about 24 µs and a rule worm visits about 120 nodes per file.
+The reply carries whole span replacements against the original source.
+
 An error replies `{"ok": false, "error": "why"}`, and the worm continues to
 serve. One bad file must not stop a watch session.
 */
 
 use std::io::{Read, Write};
 
+pub use crate::wire::{DOC_VERSION, Doc, Finding, Format, HostParse, Lint};
 use serde::{Deserialize, Serialize};
-
-/// The layout contract revision this module speaks. It is `doc` in a format reply.
-pub const DOC_VERSION: u32 = 1;
-
-/**
-One piece of layout, in exactly the shape that larvae deserializes.
-
-Source text crosses as a `Src` span and not as a copy. `Lit` is reserved for
-text that the worm generated. `Host` marks a span of ordinary Luau that
-larvae formats itself and splices in. This lets a worm own its markup and no
-Luau at all.
-*/
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Doc {
-    /// No output at all
-    Nil,
-    /// An exact slice of the source, by byte range
-    Src(u32, u32),
-    /// Text that the worm generated
-    Lit(String),
-    /// A space when flat, a newline when broken
-    Line,
-    /// Nothing when flat, a newline when broken
-    Soft,
-    /// A newline in both modes. It forces every enclosing group to break.
-    Hard,
-    /// A blank line that the author wrote. It is kept because it separates ideas.
-    Blank,
-    /// One value when the enclosing group is flat, an other value when it breaks
-    IfBreak(Box<Doc>, Box<Doc>),
-    /// Flat when it fits the line, broken when it does not fit
-    Group(Box<Doc>),
-    /// One more level of indentation for the content inside
-    Indent(Box<Doc>),
-    /// The parts, in order
-    Concat(Vec<Doc>),
-    /// A span of ordinary Luau for larvae to format and splice in
-    Host {
-        /// The byte offset where the span starts
-        start: u32,
-        /// The byte offset one past its end
-        end: u32,
-        /// The mode in which larvae parses it
-        parse: HostParse,
-    },
-}
-
-/// The parse mode of a [`Doc::Host`] span
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HostParse {
-    /// Statements, which is the shape between markup regions
-    Block,
-    /// One expression, a `{expr}` hole or attribute value
-    Expr,
-}
-
-impl Doc {
-    /// An exact slice of the source
-    pub fn src(start: u32, end: u32) -> Self {
-        Self::Src(start, end)
-    }
-
-    /// Text that the worm generated
-    pub fn lit(s: impl Into<String>) -> Self {
-        Self::Lit(s.into())
-    }
-
-    /// Flat when it fits, broken when it does not fit
-    pub fn group(inner: Doc) -> Self {
-        Self::Group(Box::new(inner))
-    }
-
-    /// One more level of indentation for the content inside
-    pub fn indent(inner: Doc) -> Self {
-        Self::Indent(Box::new(inner))
-    }
-
-    /// `broken` only when the enclosing group breaks, and `flat` in the other case
-    pub fn if_break(flat: Doc, broken: Doc) -> Self {
-        Self::IfBreak(Box::new(flat), Box::new(broken))
-    }
-
-    /// The parts, in order
-    pub fn concat(parts: impl IntoIterator<Item = Doc>) -> Self {
-        Self::Concat(parts.into_iter().collect())
-    }
-
-    /// `parts` separated by `sep`, which is the shape that most lists take
-    pub fn join(sep: Doc, parts: impl IntoIterator<Item = Doc>) -> Self {
-        let mut out = Vec::new();
-
-        for (i, part) in parts.into_iter().enumerate() {
-            if i > 0 {
-                out.push(sep.clone());
-            }
-
-            out.push(part);
-        }
-
-        Self::Concat(out)
-    }
-
-    /// A span of Luau statements for larvae to format
-    pub fn host(start: u32, end: u32) -> Self {
-        Self::Host {
-            start,
-            end,
-            parse: HostParse::Block,
-        }
-    }
-
-    /// A span that holds one Luau expression for larvae to format
-    pub fn host_expr(start: u32, end: u32) -> Self {
-        Self::Host {
-            start,
-            end,
-            parse: HostParse::Expr,
-        }
-    }
-}
-
-/// One problem found. The severity is absent by intent, because the host owns it.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct Finding {
-    /// The byte range in the source
-    pub span: (u32, u32),
-    /// The name of the lint. You must declare it in `[lints]` in your `worm.toml`.
-    pub lint: String,
-    /// The description of the problem
-    pub message: String,
-    /// The fix, when there is a short fix to state
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub help: Option<String>,
-}
-
-impl Finding {
-    /// A new finding. Add help with [`with_help`](Self::with_help).
-    pub fn new(lint: impl Into<String>, span: (u32, u32), message: impl Into<String>) -> Self {
-        Self {
-            span,
-            lint: lint.into(),
-            message: message.into(),
-            help: None,
-        }
-    }
-
-    /// The same finding with a help line
-    pub fn with_help(mut self, help: impl Into<String>) -> Self {
-        self.help = Some(help.into());
-
-        self
-    }
-}
-
-/// The value that [`Handler::format`] returns
-#[derive(Debug, Clone, PartialEq)]
-pub struct Format {
-    /// The layout for the whole file. Leave it empty when you send `spans`.
-    pub document: Option<Doc>,
-    /**
-    The regions of ordinary Luau, for a worm that lays out nothing itself.
-
-    This is the least a worm can do and still format. Name the byte ranges
-    that hold Luau, and larvae builds the document: it formats each range and
-    keeps every byte between the ranges as the author wrote it. Thus the Luau
-    in your files follows the style of the project, and your own syntax is
-    untouched.
-
-    `document` wins when you send both.
-    */
-    pub spans: Vec<(u32, u32)>,
-    /// The span of every comment, so larvae can refuse a layout that lost one
-    pub comments: Vec<(u32, u32)>,
-}
-
-impl Format {
-    /// A layout that you built yourself
-    pub fn document(document: Doc) -> Self {
-        Self {
-            document: Some(document),
-            spans: Vec::new(),
-            comments: Vec::new(),
-        }
-    }
-
-    /// The Luau regions of the file, for larvae to lay out
-    pub fn spans(spans: Vec<(u32, u32)>) -> Self {
-        Self {
-            document: None,
-            spans,
-            comments: Vec::new(),
-        }
-    }
-
-    /// The same reply, with the span of every comment. Larvae refuses output
-    /// that lost a comment.
-    pub fn with_comments(mut self, comments: Vec<(u32, u32)>) -> Self {
-        self.comments = comments;
-
-        self
-    }
-}
-
-/// The value that [`Handler::lint`] returns
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct Lint {
-    /// The problems found
-    pub findings: Vec<Finding>,
-    /**
-    The Luau shadow of the file, for the lints of larvae to read.
-
-    The shadow is the source with every region that is not Luau replaced by
-    filler of the same byte length. Thus each offset in the shadow is the same
-    offset in the source, and larvae maps no spans. The shadow must parse as
-    Luau.
-
-    Set this field when `worm.toml` says `inherit_lints = true` and you want
-    exact columns. Leave it empty to let larvae read the output of your own
-    `transform` instead, which maps by line.
-    */
-    pub luau: Option<String>,
-    /// The comment spans, so `-- larvae: allow(...)` works in a claimed file.
-    /// Leave the list empty to remove your findings from suppression.
-    pub comments: Vec<(u32, u32)>,
-}
 
 /**
 The operations of a worm. Each default is a refusal.
 
 Implement the operations that your worm.toml declares: `transform` for a
-`[frontend]`, `format` when it sets `fmt = true`, and `lint` when it declares
-`[lints]`. larvae does not call an op that it does not send. Thus the defaults
-answer only when a manifest and its worm disagree.
+`[frontend]`, `format` when it sets `fmt = true`, `lint` when it declares
+`[lints]`, and `rules` when it declares `[rules]`. larvae does not call an op
+that it does not send. Thus the defaults answer only when a manifest and its
+worm disagree.
 */
 pub trait Handler {
     /**
@@ -337,6 +119,65 @@ pub trait Handler {
 
         Err("this worm does not lint".into())
     }
+
+    /**
+    The `worm.toml` text that this worm carries, for the cargo channel.
+
+    `cargo install` ships one binary and no data files. A worm that returns
+    its manifest here installs with `[worms.x] cargo = "crate@version"`, and
+    larvae writes the returned text beside the binary. Embed the file:
+
+    ```ignore
+    fn manifest(&self) -> Option<&'static str> {
+        Some(include_str!("../worm.toml"))
+    }
+    ```
+
+    A worm that returns `None` installs only from a release or a path.
+    */
+    fn manifest(&self) -> Option<&'static str> {
+        None
+    }
+
+    /**
+    Run the enabled rules over the matched nodes of one file.
+
+    larvae sends one request per file and never one per node, because a pipe
+    crossing costs about 24 µs and a rule worm visits about 120 nodes per
+    file. A rule receives the matched nodes of its `filter`, each as an id, a
+    kind name, and a byte span, and the whole source beside them. It
+    navigates no tree. It returns whole span replacements against the
+    original source, as `(start, end, new_text)`. A span that does not lie on
+    the source fails the file on the host.
+    */
+    fn rules(&mut self, source: &str, rules: &[RuleCall]) -> Result<Vec<Edit>, String> {
+        let _ = (source, rules);
+
+        Err("this worm does not run rules".into())
+    }
+}
+
+/// A whole span replacement: the start byte, the end byte, and the new text
+pub type Edit = (u32, u32, String);
+
+/// One rule of the worm, with the nodes that its `filter` matched
+#[derive(Debug, Clone, Deserialize)]
+pub struct RuleCall {
+    /// The rule name, as `[rules]` in `worm.toml` declares it
+    pub name: String,
+    /// The matched nodes, in pre-order
+    pub nodes: Vec<WireNode>,
+}
+
+/// One matched node of a [`RuleCall`]
+#[derive(Debug, Clone, Deserialize)]
+pub struct WireNode {
+    /// The pre-order index of the node in its file
+    pub id: u32,
+    /// The kind name, the same text as `filter` in `worm.toml`
+    pub kind: String,
+    /// The byte range in the source, as a half open range
+    pub span: (u32, u32),
 }
 
 /// The resolved settings of the project, as larvae sent them
@@ -376,6 +217,12 @@ enum Request {
     Lint {
         source: String,
     },
+    Rules {
+        source: String,
+        #[serde(default)]
+        rules: Vec<RuleCall>,
+    },
+    Manifest,
 }
 
 /**
@@ -452,6 +299,16 @@ fn answer(handler: &mut impl Handler, request: Request) -> Vec<u8> {
                 "luau": lint.luau,
             })
         }),
+
+        Request::Rules { source, rules } => handler
+            .rules(&source, &rules)
+            .map(|edits| serde_json::json!({ "ok": true, "edits": edits })),
+
+        Request::Manifest => match handler.manifest() {
+            Some(text) => Ok(serde_json::json!({ "ok": true, "manifest": text })),
+
+            None => Err("this worm does not carry its manifest".into()),
+        },
     };
 
     match reply {
@@ -551,8 +408,7 @@ mod tests {
 
     #[test]
     fn an_undeclared_op_refuses_rather_than_panics() {
-        let request: Request =
-            serde_json::from_slice(br#"{"op":"format","source":"x"}"#).unwrap();
+        let request: Request = serde_json::from_slice(br#"{"op":"format","source":"x"}"#).unwrap();
 
         let reply = String::from_utf8(answer(&mut Echo, request)).unwrap();
 
@@ -562,13 +418,55 @@ mod tests {
 
     #[test]
     fn a_doc_version_mismatch_is_refused_at_init() {
-        let request: Request = serde_json::from_slice(
-            br#"{"op":"init","config":"","rules":"","doc_version":9}"#,
-        )
-        .unwrap();
+        let request: Request =
+            serde_json::from_slice(br#"{"op":"init","config":"","rules":"","doc_version":9}"#)
+                .unwrap();
 
         let reply = String::from_utf8(answer(&mut Echo, request)).unwrap();
 
         assert!(reply.contains("doc v1"), "{reply}");
+    }
+
+    /// A worm that uppercases every matched span, which is enough to prove
+    /// that the batch crosses and the edits cross back
+    struct Shout;
+
+    impl Handler for Shout {
+        fn rules(&mut self, source: &str, rules: &[RuleCall]) -> Result<Vec<Edit>, String> {
+            Ok(rules
+                .iter()
+                .flat_map(|call| &call.nodes)
+                .map(|node| {
+                    let (start, end) = node.span;
+                    let text = source[start as usize..end as usize].to_uppercase();
+
+                    (start, end, text)
+                })
+                .collect())
+        }
+    }
+
+    #[test]
+    fn a_rules_request_round_trips_through_answer() {
+        let request: Request = serde_json::from_slice(
+            br#"{"op":"rules","source":"hi there","rules":[{"name":"up","nodes":[{"id":1,"kind":"Name","span":[0,2]},{"id":2,"kind":"Name","span":[3,8]}]}]}"#,
+        )
+        .unwrap();
+
+        let reply = String::from_utf8(answer(&mut Shout, request)).unwrap();
+
+        // json! sorts its keys, so `edits` precedes `ok` on the wire
+        assert_eq!(reply, r#"{"edits":[[0,2,"HI"],[3,8,"THERE"]],"ok":true}"#);
+    }
+
+    #[test]
+    fn an_undeclared_rules_op_refuses_rather_than_panics() {
+        let request: Request =
+            serde_json::from_slice(br#"{"op":"rules","source":"x","rules":[]}"#).unwrap();
+
+        let reply = String::from_utf8(answer(&mut Echo, request)).unwrap();
+
+        assert!(reply.contains(r#""ok":false"#), "{reply}");
+        assert!(reply.contains("does not run rules"), "{reply}");
     }
 }

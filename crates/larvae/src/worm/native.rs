@@ -58,11 +58,36 @@ enum Request<'a> {
         lint: &'a str,
     },
     /// Turn a claimed file into Luau
-    Transform { source: &'a str },
+    Transform {
+        source: &'a str,
+    },
     /// Format a claimed file and reply with a document to render
-    Format { source: &'a str },
+    Format {
+        source: &'a str,
+    },
     /// Report the problems of a claimed file. The host decides the severity.
-    Lint { source: &'a str },
+    Lint {
+        source: &'a str,
+    },
+    /*
+    Run the enabled rules over the matched nodes of one file.
+
+    This is the batched shape from the module docs: one crossing per file
+    and never one per node. A crossing costs 24 µs, and a rule worm visits
+    about 120 nodes per file, so the batch is what keeps this form fast.
+    */
+    Rules {
+        source: &'a str,
+        rules: &'a [proto::RuleCall],
+    },
+    /*
+    Ask the worm for its own `worm.toml`.
+
+    A worm that arrives through cargo is a bare binary, because `cargo
+    install` ships no data files. The manifest therefore travels inside the
+    binary, and larvae asks for it once at install time.
+    */
+    Manifest,
 }
 
 /// The reply. One struct serves every op, because the fields do not overlap.
@@ -95,6 +120,17 @@ struct Response {
     /// The Luau regions of a `format` reply, for a worm that lays out nothing
     #[serde(default)]
     spans: Option<Vec<(u32, u32)>>,
+    /// The `worm.toml` text of a `manifest` reply
+    #[serde(default)]
+    manifest: Option<String>,
+    /// The edits of a `rules` reply
+    #[serde(default)]
+    edits: Option<Vec<(u32, u32, String)>>,
+}
+
+/// Ask a worm binary for the `worm.toml` it carries, in one short lived process
+pub fn manifest_of(entry: &Path, name: &str) -> Result<String> {
+    NativeWorm::load(entry, name)?.manifest()
 }
 
 pub struct NativeWorm {
@@ -139,6 +175,18 @@ impl NativeWorm {
         Ok(())
     }
 
+    /// Ask the worm for the `worm.toml` text that it carries
+    pub fn manifest(&mut self) -> Result<String> {
+        let response = self.call(&Request::Manifest)?;
+
+        response.manifest.with_context(|| {
+            format!(
+                "worm `{}` did not return a manifest; a worm installs through cargo only when it answers the manifest op",
+                self.name
+            )
+        })
+    }
+
     /// Turn a claimed file into Luau
     pub fn transform(&mut self, source: &str) -> Result<String> {
         let response = self.call(&Request::Transform { source })?;
@@ -165,6 +213,34 @@ impl NativeWorm {
             spans: response.spans.unwrap_or_default(),
             comments: response.comments.unwrap_or_default(),
         })
+    }
+
+    /*
+    Run the enabled rules of one file in one crossing, and get the edits.
+
+    Every edit span must lie on the source, with the same rules as a format
+    span. The check runs here, before an edit reaches the splice, because a
+    span off the wire is untrusted in the same way as a `src` span of a
+    format reply.
+    */
+    pub fn rules(
+        &mut self,
+        source: &str,
+        rules: &[proto::RuleCall],
+    ) -> Result<Vec<crate::rules::edits::Edit>> {
+        let response = self.call(&Request::Rules { source, rules })?;
+        let edits = response.edits.unwrap_or_default();
+
+        for (start, end, _) in &edits {
+            if !span_ok(source, *start, *end) {
+                bail!(
+                    "worm `{}` returned the edit span {start}..{end}, which does not lie on the source",
+                    self.name
+                );
+            }
+        }
+
+        Ok(edits)
     }
 
     /// Get the problems of a claimed file. The host decides the severity.
@@ -230,6 +306,14 @@ impl NativeWorm {
     }
 }
 
+/// Report if a span lies on the source. The rules match the format path:
+/// ordered ends, inside the source, and on character boundaries.
+fn span_ok(src: &str, start: u32, end: u32) -> bool {
+    let (s, e) = (start as usize, end as usize);
+
+    s <= e && e <= src.len() && src.is_char_boundary(s) && src.is_char_boundary(e)
+}
+
 /*
 Start the process. Retry while the file is still open for writing.
 
@@ -282,7 +366,38 @@ impl Drop for NativeWorm {
     }
 }
 
+/// The request JSON is the contract, so a shape change here is a protocol
+/// change. These pins run on every platform.
 #[cfg(test)]
+mod wire_tests {
+    use super::*;
+
+    #[test]
+    fn the_rules_request_shape_is_the_documented_one() {
+        let rules = vec![proto::RuleCall {
+            name: "x".into(),
+            nodes: vec![proto::WireNode {
+                id: 1,
+                kind: "CallExpr".into(),
+                span: (4, 20),
+            }],
+        }];
+
+        let request = Request::Rules {
+            source: "s",
+            rules: &rules,
+        };
+
+        assert_eq!(
+            serde_json::to_string(&request).unwrap(),
+            r#"{"op":"rules","source":"s","rules":[{"name":"x","nodes":[{"id":1,"kind":"CallExpr","span":[4,20]}]}]}"#
+        );
+    }
+}
+
+/// These tests spawn a python fixture, so they are unix only. Windows CI runs
+/// `cargo test`, and a `.py` script does not spawn as a process there.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
@@ -470,5 +585,77 @@ while True:
             .expect_err("the worm refuses everything");
 
         assert!(format!("{err:#}").contains("saw doc v1"), "{err:#}");
+    }
+
+    /// One crossing carries every rule and every node, and one reply carries
+    /// every edit
+    #[test]
+    fn a_worm_answers_rules_with_edits() {
+        let (_dir, mut worm) = worm_that(
+            r#"    if req["op"] == "init":
+        send({"ok": True})
+    else:
+        edits = []
+        for rule in req["rules"]:
+            for node in rule["nodes"]:
+                s, e = node["span"]
+                edits.append([s, e, req["source"][s:e].upper()])
+        send({"ok": True, "edits": edits})"#,
+        );
+
+        worm.init("", "", &Default::default()).unwrap();
+
+        let rules = vec![
+            proto::RuleCall {
+                name: "shout".into(),
+                nodes: vec![proto::WireNode {
+                    id: 1,
+                    kind: "Name".into(),
+                    span: (0, 5),
+                }],
+            },
+            proto::RuleCall {
+                name: "shout_more".into(),
+                nodes: vec![proto::WireNode {
+                    id: 2,
+                    kind: "Name".into(),
+                    span: (6, 11),
+                }],
+            },
+        ];
+
+        assert_eq!(
+            worm.rules("hello world", &rules).unwrap(),
+            vec![(0, 5, "HELLO".to_owned()), (6, 11, "WORLD".to_owned())]
+        );
+    }
+
+    /// A reply without edits means no change
+    #[test]
+    fn a_rules_reply_without_edits_is_no_change() {
+        let (_dir, mut worm) = worm_that(r#"    send({"ok": True})"#);
+
+        assert!(worm.rules("x", &[]).unwrap().is_empty());
+    }
+
+    /// A span off the source is an error against this file, with the worm named
+    #[test]
+    fn an_edit_span_off_the_source_is_refused_by_name() {
+        let (_dir, mut worm) = worm_that(r#"    send({"ok": True, "edits": [[0, 99, "y"]]})"#);
+
+        let err = worm.rules("short", &[]).expect_err("the span is off");
+        let text = format!("{err:#}");
+
+        assert!(text.contains("test"), "{text}");
+        assert!(text.contains("0..99"), "{text}");
+    }
+
+    /// A span that splits a character is refused, the same as a format span
+    #[test]
+    fn an_edit_span_splitting_a_character_is_refused() {
+        let (_dir, mut worm) = worm_that(r#"    send({"ok": True, "edits": [[1, 2, "y"]]})"#);
+
+        // é is two bytes, so 1..2 points inside it
+        assert!(worm.rules("é", &[]).is_err());
     }
 }
