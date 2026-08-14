@@ -1,6 +1,6 @@
 //! `larvae self <command>` manages the larvae installation.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
@@ -31,6 +31,16 @@ pub enum SelfCommand {
 
     /// Set up editor completion for larvae.toml
     Code,
+
+    /// Write the project's aliases into .luaurc, as paths an editor can follow
+    SyncLuaurc {
+        /// Write nothing; exit non zero if .luaurc would change
+        #[arg(long)]
+        check: bool,
+        /// Path to larvae.toml (defaults to ./larvae.toml when present)
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
 }
 
 pub fn run(root: &Path, cmd: SelfCommand) -> Result<ExitCode> {
@@ -42,6 +52,10 @@ pub fn run(root: &Path, cmd: SelfCommand) -> Result<ExitCode> {
         SelfCommand::Uninstall => uninstall(),
 
         SelfCommand::Code => crate::commands::code::run(root),
+
+        SelfCommand::SyncLuaurc { check, config } => {
+            crate::commands::sync_luaurc::run(root, check, config)
+        }
     }
 }
 
