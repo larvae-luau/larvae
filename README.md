@@ -82,6 +82,53 @@ and keeps it current, so the user edits one file.
 **It never runs rojo.** Serving is rojo's job. larvae writes
 `.larvae/build.project.json` and does nothing more.
 
+## Why not stylua
+
+stylua is good software, and larvae does not ask a project to leave it.
+larvae reads `stylua.toml` as it is and aims at stylua parity for plain
+Luau, so trying larvae costs nothing and changes no diffs. Four things are
+different.
+
+**It formats languages that stylua cannot.** A worm compiles a language such
+as LuauX into the pipeline and formats its files through larvae's own
+printer. The markup and the Luau inside it come out in one style, with the
+project's width and indentation, because there is one printer.
+
+**It would rather decline than delete a comment.** The formatter checks
+every comment against its output at runtime. A file whose formatting would
+drop one is left exactly as it was, and the run reports it.
+
+**It has options past stylua.** `magic_trailing_comma`, `trailing_comma`,
+`space_inside_braces` and its siblings, and `block_newline_gaps`. Every
+stylua option keeps its stylua name.
+
+**The formatter is not alone.** It shares the config, the excludes, the
+schema, and the language server with the linter and the transformer. An
+excluded file loses its stale diagnostics; a claimed file routes to its
+worm; one `larvae.toml` describes all of it.
+
+## Why not selene
+
+The same answer, and the same respect. larvae reads `selene.toml`, keeps
+selene's lint names, levels, and `std` spellings, and honors
+`-- selene: allow(...)` comments, so a port costs nothing. Three things are
+different.
+
+**It lints languages that selene cannot.** A worm reports findings that only
+its own parser can see, and the builtin lints run on the same files through
+a byte exact shadow, so a LuauX file reports `unused_variable` at the right
+column beside `luaux.useless_fragment`.
+
+**A project can add lints.** A worm declares a lint with a name, a default
+level, and a description. The lint sits in `[lint.rules.<worm>]` beside the
+builtins, obeys the same levels and the same allow comments, and appears in
+`--explain` and in editor completion. selene's lint set is fixed at compile
+time.
+
+**The editor knows every lint.** larvae generates a schema for the project,
+so `[lint.rules]` completes each name, builtin and worm alike, and hover
+shows the description of the lint rather than the meaning of a level.
+
 ## Install
 
 ```bash
