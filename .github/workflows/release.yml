@@ -113,6 +113,23 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path "target\${{ matrix.target }}\release\larvae.exe" -DestinationPath "${{ matrix.asset }}.zip"
 
+      - name: Report the size
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          BIN=$(find "target/${{ matrix.target }}/release" -maxdepth 1 -name larvae -type f)
+          {
+            echo "**${{ matrix.asset }}**: binary $(numfmt --to=iec $(stat -c%s "$BIN" 2>/dev/null || stat -f%z "$BIN")), zip $(numfmt --to=iec $(stat -c%s "${{ matrix.asset }}.zip" 2>/dev/null || stat -f%z "${{ matrix.asset }}.zip"))"
+          } >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Report the size
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bin = (Get-Item "target\${{ matrix.target }}\release\larvae.exe").Length
+          $zip = (Get-Item "${{ matrix.asset }}.zip").Length
+          "**${{ matrix.asset }}**: binary $([math]::Round($bin/1MB,1)) MB, zip $([math]::Round($zip/1MB,1)) MB" >> $env:GITHUB_STEP_SUMMARY
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
@@ -143,6 +160,38 @@ jobs:
 
           gh release upload "$TAG" dist/*.zip --clobber
 
+      # One table for every platform: the zip a user downloads, and the
+      # binary inside it. The table lands in the run summary and in the
+      # release notes, and a re-run replaces it instead of appending twice.
+      - name: The size of every binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.verify.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          {
+            echo "### Binaries"
+            echo ""
+            echo "| asset | binary | zip |"
+            echo "|---|---:|---:|"
+            for z in dist/*.zip; do
+              NAME=$(basename "$z" .zip)
+              ZIP=$(numfmt --to=iec "$(stat -c%s "$z")")
+              RAW=$(unzip -l "$z" | tail -1 | awk '{print $1}')
+              BIN=$(numfmt --to=iec "$RAW")
+              echo "| $NAME | $BIN | $ZIP |"
+            done
+          } > sizes.md
+
+          cat sizes.md >> "$GITHUB_STEP_SUMMARY"
+
+          gh release view "$TAG" --json body -q .body | awk '/^### Binaries$/{exit} {print}' > notes.md
+          printf '\n' >> notes.md
+          cat sizes.md >> notes.md
+          gh release edit "$TAG" --notes-file notes.md
+
   crates:
     name: Publish to crates.io
     needs: [verify, release]
@@ -153,6 +202,25 @@ jobs:
           ref: ${{ needs.verify.outputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo publish -p larvae --locked --token "$CARGO_REGISTRY_TOKEN"
+      # The verify job already proved the tag equals the Cargo.toml version,
+      # so what publishes here is always the version the tag names. A crate
+      # whose version is already on crates.io is skipped, so a re-run of a
+      # partly failed release publishes only what is missing. larvae-worm
+      # goes first: a worm author needs the guest crate at the version the
+      # host speaks.
+      - name: Publish what this version is missing
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_SECRET }}
+          TAG: ${{ needs.verify.outputs.tag }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+
+          for CRATE in larvae-worm larvae; do
+            if curl -fsS -A "larvae-release" "https://crates.io/api/v1/crates/${CRATE}/${VERSION}" >/dev/null 2>&1; then
+              echo "${CRATE} ${VERSION} is already on crates.io, skipping"
+              continue
+            fi
+
+            cargo publish -p "$CRATE" --locked --token "$CARGO_REGISTRY_TOKEN"
+          done
