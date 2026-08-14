@@ -70,6 +70,9 @@
           "lint": {
             "$ref": "#/$defs/lint"
           },
+          "bundle": {
+            "$ref": "#/$defs/bundle"
+          },
           "minify": {
             "$ref": "#/$defs/minify"
           }
@@ -1312,48 +1315,22 @@
       }
     },
     "bundle": {
-      "description": "Single-file bundling with deterministic module-init ordering. Present = enabled. (M3)",
+      "description": "Single-file output for `larvae bundle`. Each module initialises on first require, so the bundle keeps the demand order of the unbundled project.",
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "entry"
-      ],
       "properties": {
         "entry": {
           "type": "string",
-          "description": "Entry-point module."
+          "description": "The module the bundle starts from, relative to the project root. `--entry` overrides it."
         },
         "output": {
-          "type": "string"
-        },
-        "excludes": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "Requires left as-is (runtime-provided), e.g. \"@lune/**\"."
-        },
-        "modules_identifier": {
           "type": "string",
-          "default": "__LARVAE_MODULES"
+          "description": "Where the single file goes, relative to the project root. Default: bundle.luau."
         },
         "tree_shake": {
           "type": "boolean",
           "default": true,
-          "description": "Drop modules unreachable from the entry point."
-        },
-        "loaders": {
-          "type": "object",
-          "description": "Data files required as modules are converted to Lua tables (glob -> loader).",
-          "additionalProperties": {
-            "enum": [
-              "json",
-              "toml",
-              "yaml",
-              "text",
-              "skip"
-            ]
-          }
+          "description": "Drop the modules that the entry cannot reach. Turn off to keep modules that only a dynamic require reaches."
         }
       }
     },

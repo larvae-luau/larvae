@@ -120,6 +120,50 @@ fn fmt_options_match_the_config() {
     );
 }
 
+/// The schema lists every [bundle] key, and no other key.
+#[test]
+fn bundle_keys_match_the_config() {
+    let schema = schema();
+    let documented = keys(&schema["$defs"]["bundle"]["properties"]);
+
+    /*
+    Every field set, because toml omits a `None` on serialization. The
+    default config would serialize `tree_shake` alone, and the test would
+    compare three documented keys against one real key.
+    */
+    let full = larvae::config::bundle::BundleConfig {
+        entry: Some("src/main.luau".into()),
+        output: Some("bundle.luau".into()),
+        tree_shake: true,
+    };
+
+    let real: BTreeSet<String> = toml::Value::try_from(full)
+        .expect("the config serializes")
+        .as_table()
+        .expect("a table")
+        .keys()
+        .cloned()
+        .collect();
+
+    assert_eq!(
+        documented.difference(&real).collect::<Vec<_>>(),
+        Vec::<&String>::new(),
+        "the schema offers [bundle] keys that do not exist"
+    );
+
+    assert_eq!(
+        real.difference(&documented).collect::<Vec<_>>(),
+        Vec::<&String>::new(),
+        "these [bundle] keys are missing from the schema"
+    );
+
+    // The config denies unknown fields, so the schema must too.
+    assert_eq!(
+        schema["$defs"]["bundle"]["additionalProperties"],
+        serde_json::json!(false)
+    );
+}
+
 /// A ref to a def that does not exist documents nothing, and gives no error.
 #[test]
 fn every_ref_resolves() {

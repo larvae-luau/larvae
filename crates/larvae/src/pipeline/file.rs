@@ -116,6 +116,16 @@ pub(super) struct FileOutcome {
     pub applied: Vec<Rule>,
     /// The modules this file requires; its contribution to the require graph
     pub required: Vec<std::path::PathBuf>,
+    /// Each resolved require site, for anything that must rewrite one
+    pub sites: Vec<crate::requires::graph::Site>,
+    /*
+    The text the native pass scanned, kept only when the run asks for it.
+
+    The byte spans in `sites` index this exact text, not the file on disk: a
+    front-end worm replaces the buffer of a claimed file before the scan.
+    The bundler reads modules from here for the same reason.
+    */
+    pub source: Option<String>,
 }
 
 /*
@@ -140,6 +150,8 @@ pub(super) fn process_file(
     worms: &crate::worm::pool::Pool,
     // False when a front-end declares that it resolves its own requires.
     own_requires: bool,
+    // True when the caller wants the scanned text back, see FileOutcome.
+    keep_source: bool,
     diags: &mut Vec<Diag>,
 ) -> Option<FileOutcome> {
     let slots = worms.slots();
@@ -170,6 +182,15 @@ pub(super) fn process_file(
 
             // A file that does not lex is out of the build, later stages included.
             outcome.as_ref()?;
+
+            /*
+            The buffer at the native slot, which is the text the require
+            sites index. A later slot can edit the buffer again, so the copy
+            happens here and not at the end.
+            */
+            if keep_source && let Some(o) = outcome.as_mut() {
+                o.source = Some(current.to_string());
+            }
         } else {
             let Ok(lexed) = lexer::lex(&current) else {
                 continue;
@@ -277,10 +298,30 @@ fn native_pass(
     // requires that point at the same module.
     let mut site_forms: Vec<(scan::RequireSite, String)> = Vec::new();
 
+    // Every site with the module it resolved to, for the require graph.
+    let mut resolved_sites: Vec<crate::requires::graph::Site> = Vec::new();
+
     for site in &scanned.sites {
         let spec = &src[site.inner_start as usize..site.inner_end as usize];
 
-        match resolver.resolve(&ctx, spec, src, site.at as usize, diags) {
+        /*
+        The resolver appends to `ctx.required` when a require resolves to a
+        module. So the entry at the old length, when one exists, is the
+        target of this site.
+        */
+        let before = ctx.required.borrow().len();
+        let rewrite = resolver.resolve(&ctx, spec, src, site.at as usize, diags);
+
+        if let Some(target) = ctx.required.borrow().get(before) {
+            resolved_sites.push(crate::requires::graph::Site {
+                at: site.at,
+                tok_start: site.tok_start,
+                tok_end: site.tok_end,
+                target: target.clone(),
+            });
+        }
+
+        match rewrite {
             Rewrite::Keep => {
                 site_forms.push((*site, spec.to_string()));
                 // Unchanged requires also get the configured quote style.
@@ -391,6 +432,8 @@ fn native_pass(
         dynamic: scanned.dynamic.len(),
         applied: Vec::new(),
         required: ctx.required.take(),
+        sites: resolved_sites,
+        source: None,
     })
 }
 

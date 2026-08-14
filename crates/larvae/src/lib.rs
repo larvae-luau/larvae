@@ -1,4 +1,5 @@
 pub mod art;
+pub mod bundle;
 pub mod cache;
 pub mod cli;
 pub mod commands;

@@ -39,6 +39,22 @@ enum Command {
         watch: bool,
     },
 
+    /// Collect the modules of the project into one file
+    Bundle {
+        /// The module to start from, defaults to [bundle] entry
+        #[arg(long)]
+        entry: Option<PathBuf>,
+        /// Where to write it, defaults to [bundle] output
+        #[arg(long, short)]
+        out: Option<PathBuf>,
+        /// Path to larvae.toml (defaults to ./larvae.toml when present)
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Merge [profile.<name>] over the config before bundling
+        #[arg(long)]
+        profile: Option<String>,
+    },
+
     /// Validate requires and syntax without writing any output
     Check {
         /// Path to larvae.toml (defaults to ./larvae.toml when present)
@@ -170,6 +186,13 @@ fn run() -> Result<ExitCode> {
             profile,
             watch,
         } => commands::process::run(&root, config, profile, watch),
+
+        Command::Bundle {
+            entry,
+            out,
+            config,
+            profile,
+        } => commands::bundle::run(&root, entry, out, config, profile),
 
         Command::Check { config, profile } => commands::check::run(&root, config, profile),
 

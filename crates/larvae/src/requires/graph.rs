@@ -48,6 +48,28 @@ pub struct Graph {
     nodes: BTreeSet<PathBuf>,
     /// The files whose requires the walk does not see; a worm resolves them
     opaque: BTreeSet<PathBuf>,
+    /*
+    Every resolved require site, with the span of its string token.
+
+    Separate from `edges`, because the two answer different questions and
+    need different shapes. An edge is deduplicated, so a cycle is reported
+    once, however many times one module requires another. A site is not
+    deduplicated, because the bundler must rewrite every call, and a pairing
+    of sites against deduplicated edges by position rewrites the wrong call.
+    */
+    sites: BTreeMap<PathBuf, Vec<Site>>,
+}
+
+/// One `require("...")` that resolved, and where its string token sits
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Site {
+    /// The byte offset of the `require` identifier
+    pub at: u32,
+    /// The byte range of the string token, quotes included
+    pub tok_start: u32,
+    pub tok_end: u32,
+    /// The module the require resolved to, in the node form of the graph
+    pub target: PathBuf,
 }
 
 impl Graph {
@@ -63,6 +85,16 @@ impl Graph {
         if !out.iter().any(|p| p == to) {
             out.push(to.to_path_buf());
         }
+    }
+
+    /// Record where a require sits, for anything that must rewrite it
+    pub fn add_site(&mut self, from: &Path, site: Site) {
+        self.sites.entry(from.to_path_buf()).or_default().push(site);
+    }
+
+    /// The resolved require sites of one file, in source order
+    pub fn sites_of(&self, file: &Path) -> &[Site] {
+        self.sites.get(file).map_or(&[], Vec::as_slice)
     }
 
     /// Record a file from the walk, with or without requires
@@ -88,6 +120,11 @@ impl Graph {
         !self.opaque.is_empty()
     }
 
+    /// True when the edge list of this file is unknown
+    pub fn is_opaque(&self, file: &Path) -> bool {
+        self.opaque.contains(file)
+    }
+
     /// Fold the edges of another worker in; this is the serial half of section 4.4
     pub fn merge(&mut self, other: Graph) {
         for node in other.nodes {
@@ -106,6 +143,10 @@ impl Graph {
                     out.push(to);
                 }
             }
+        }
+
+        for (from, sites) in other.sites {
+            self.sites.entry(from).or_default().extend(sites);
         }
     }
 
@@ -378,6 +419,47 @@ mod tests {
         );
     }
 
+    // --- sites --------------------------------------------------------------
+
+    fn site(at: u32, target: &str) -> Site {
+        Site {
+            at,
+            tok_start: at + 8,
+            tok_end: at + 12,
+            target: p(target),
+        }
+    }
+
+    /// Two requires of one module are one edge, but they stay two sites
+    #[test]
+    fn sites_are_not_deduplicated() {
+        let mut g = graph(&[("a", "b"), ("a", "b")]);
+        g.add_site(Path::new("a"), site(0, "b"));
+        g.add_site(Path::new("a"), site(30, "b"));
+
+        assert_eq!(g.requires_of(Path::new("a")).len(), 1);
+        assert_eq!(g.sites_of(Path::new("a")).len(), 2);
+    }
+
+    #[test]
+    fn a_file_without_sites_has_an_empty_list() {
+        let g = graph(&[("a", "b")]);
+
+        assert!(g.sites_of(Path::new("a")).is_empty());
+    }
+
+    #[test]
+    fn merging_keeps_every_site() {
+        let mut a = Graph::default();
+        a.add_site(Path::new("x"), site(0, "y"));
+
+        let mut b = Graph::default();
+        b.add_site(Path::new("x"), site(30, "y"));
+        a.merge(b);
+
+        assert_eq!(a.sites_of(Path::new("x")).len(), 2);
+    }
+
     // --- opaque files -------------------------------------------------------
 
     #[test]
@@ -386,6 +468,8 @@ mod tests {
         g.see_opaque(Path::new("styled.luau"));
 
         assert!(g.has_opaque());
+        assert!(g.is_opaque(Path::new("styled.luau")));
+        assert!(!g.is_opaque(Path::new("other.luau")));
         assert_eq!(g.nodes().count(), 1);
     }
 
