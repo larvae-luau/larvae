@@ -223,7 +223,7 @@ Worms work today as well. A worm is an extension that adds a language on top
 of Luau: it compiles its files into the pipeline, formats them through
 larvae's own printer, and lints them beside the builtin lints. A worm ships
 as a GitHub release, as a crate on crates.io, or as a path during
-development. The first worm is [LuauX](https://github.com/luau-xml/luaux),
+development. The [first worm](https://github.com/larvae-luau/luaux) is [LuauX](https://github.com/luau-xml/luaux),
 Luau with JSX syntax.
 
 The next work items are bundling with a documented module init order and
