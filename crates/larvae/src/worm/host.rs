@@ -17,6 +17,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 
 use super::ctx::FileCtx;
+use super::proto;
 use crate::rules::edits::Edit;
 
 /// The guest exports the host requires, and the one alias the host still accepts
@@ -27,6 +28,9 @@ mod export {
     pub const TRANSFORM: &str = "larvae_transform";
     pub const INIT: &str = "larvae_init";
     pub const VISIT: &str = "larvae_visit";
+    pub const FORMAT: &str = "larvae_format";
+    pub const LINT: &str = "larvae_lint";
+    pub const SETTINGS: &str = "larvae_settings";
 
     /// The name the luaux prototype shipped before the ABI was stable.
     /// It is removed when api 1 freezes.
@@ -77,6 +81,9 @@ pub struct WasmWorm {
     transform: Option<wasmi::TypedFunc<(u32, u32, u32, u32), u32>>,
     init: Option<wasmi::TypedFunc<(u32, u32, u32, u32), ()>>,
     visit: Option<wasmi::TypedFunc<(u32, u64, u32), ()>>,
+    format: Option<wasmi::TypedFunc<(u32, u32), u32>>,
+    lint: Option<wasmi::TypedFunc<(u32, u32), u32>>,
+    settings: Option<wasmi::TypedFunc<(u32, u32, u32, u32), ()>>,
 }
 
 impl WasmWorm {
@@ -117,12 +124,19 @@ impl WasmWorm {
 
         let init = typed(&instance, &store, export::INIT).ok();
         let visit = typed(&instance, &store, export::VISIT).ok();
+        let format = typed(&instance, &store, export::FORMAT).ok();
+        let lint = typed(&instance, &store, export::LINT).ok();
+        let settings = typed(&instance, &store, export::SETTINGS).ok();
 
-        if transform.is_none() && visit.is_none() {
+        // a module with only a format or lint export is legal, because a
+        // worm can report on its claimed files without a transform
+        if transform.is_none() && visit.is_none() && format.is_none() && lint.is_none() {
             bail!(
-                "worm exports neither `{}` nor `{}`, so it would never run",
+                "worm exports none of `{}`, `{}`, `{}`, or `{}`, so it would never run",
                 export::TRANSFORM,
-                export::VISIT
+                export::VISIT,
+                export::FORMAT,
+                export::LINT
             );
         }
 
@@ -134,6 +148,9 @@ impl WasmWorm {
             transform,
             init,
             visit,
+            format,
+            lint,
+            settings,
         })
     }
 
@@ -155,6 +172,50 @@ impl WasmWorm {
         self.free(cfg)?;
 
         self.pull(header)
+    }
+
+    /*
+    Ask the worm for the layout of one file.
+
+    The reply crosses as JSON in the payload of the header, in the exact
+    shape that [`proto::FormatReply`] deserializes. The ok flag of the header
+    separates a reply from a diagnostic, so no JSON envelope repeats it.
+    */
+    pub fn format(&mut self, source: &str) -> Result<proto::FormatReply> {
+        let Some(format) = self.format else {
+            bail!("worm sets fmt = true but exports no `{}`", export::FORMAT);
+        };
+
+        let src = self.push(source.as_bytes())?;
+
+        let header = format
+            .call(&mut self.store, (src.0, src.1))
+            .context("worm trapped")?;
+
+        self.free(src)?;
+
+        let text = self.pull(header)?.into_source()?;
+
+        serde_json::from_str(&text).context("worm sent a reply we cannot read")
+    }
+
+    /// Ask the worm for the problems of one file. The host decides the severity.
+    pub fn lint(&mut self, source: &str) -> Result<proto::LintReply> {
+        let Some(lint) = self.lint else {
+            bail!("worm declares lints but exports no `{}`", export::LINT);
+        };
+
+        let src = self.push(source.as_bytes())?;
+
+        let header = lint
+            .call(&mut self.store, (src.0, src.1))
+            .context("worm trapped")?;
+
+        self.free(src)?;
+
+        let text = self.pull(header)?.into_source()?;
+
+        serde_json::from_str(&text).context("worm sent a reply we cannot read")
     }
 
     /// Copy bytes into the guest and return their location
@@ -420,23 +481,38 @@ fn host_functions(linker: &mut wasmi::Linker<HostState>) -> Result<()> {
 }
 
 impl WasmWorm {
-    /// Give the settings to the worm once, before the worm sees a file
-    ///
-    /// Both blobs cross as TOML text. The Luau form gets real tables instead,
-    /// because each form gets the shape that is natural for it.
-    pub fn init(&mut self, config: &str, rules: &str) -> Result<()> {
-        let Some(init) = self.init else {
-            return Ok(());
-        };
+    /*
+    Give the settings to the worm once, before the worm sees a file.
 
-        let cfg = self.push(config.as_bytes())?;
-        let rls = self.push(rules.as_bytes())?;
+    The config and rules cross as TOML text. The Luau form gets real tables
+    instead, because each form gets the shape that is natural for it. The
+    project settings cross as JSON text through `larvae_settings`, directly
+    after `larvae_init`, and only when the module exports the function. Thus
+    an old module runs unchanged.
+    */
+    pub fn init(&mut self, config: &str, rules: &str, settings: &super::Settings) -> Result<()> {
+        if let Some(init) = self.init {
+            let cfg = self.push(config.as_bytes())?;
+            let rls = self.push(rules.as_bytes())?;
 
-        init.call(&mut self.store, (cfg.0, cfg.1, rls.0, rls.1))
-            .context("worm trapped during init")?;
+            init.call(&mut self.store, (cfg.0, cfg.1, rls.0, rls.1))
+                .context("worm trapped during init")?;
 
-        self.free(cfg)?;
-        self.free(rls)?;
+            self.free(cfg)?;
+            self.free(rls)?;
+        }
+
+        if let Some(accept) = self.settings {
+            let fmt = self.push(settings.fmt.as_bytes())?;
+            let lint = self.push(settings.lint.as_bytes())?;
+
+            accept
+                .call(&mut self.store, (fmt.0, fmt.1, lint.0, lint.1))
+                .context("worm trapped during init")?;
+
+            self.free(fmt)?;
+            self.free(lint)?;
+        }
 
         Ok(())
     }
@@ -475,5 +551,41 @@ impl WasmWorm {
         result?;
 
         Ok(file.take_edits())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/echo_worm.wasm");
+
+    /*
+    A cleared func field is the exact state of a module without the export,
+    because `load` stores `None` when `get_typed_func` finds nothing. The
+    override spares the repository a second wasm artifact.
+    */
+    #[test]
+    fn a_promised_format_without_the_export_is_a_clear_error() {
+        let mut worm = WasmWorm::load(FIXTURE).unwrap();
+        worm.format = None;
+
+        let err = worm.format("x").unwrap_err();
+        let text = format!("{err:#}");
+
+        assert!(text.contains("fmt = true"), "{text}");
+        assert!(text.contains("larvae_format"), "{text}");
+    }
+
+    #[test]
+    fn promised_lints_without_the_export_are_a_clear_error() {
+        let mut worm = WasmWorm::load(FIXTURE).unwrap();
+        worm.lint = None;
+
+        let err = worm.lint("x").unwrap_err();
+        let text = format!("{err:#}");
+
+        assert!(text.contains("declares lints"), "{text}");
+        assert!(text.contains("larvae_lint"), "{text}");
     }
 }

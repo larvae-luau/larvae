@@ -13,7 +13,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-larvae-worm = { path = "../../../../larvae-worm" }
+larvae-worm = { path = "../../../../larvae-worm", features = ["wire"] }
 
 [profile.release]
 opt-level = "z"

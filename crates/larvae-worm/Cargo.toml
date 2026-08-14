@@ -10,10 +10,13 @@ keywords = ["luau", "larvae", "wasm", "plugin", "extension"]
 categories = ["development-tools::build-utils", "wasm"]
 
 [features]
-# The native transport: serve() and the wire types, for a worm that ships as
-# an executable and not as wasm. It is off by default, so the wasm path stays
-# free of dependencies.
-native = ["dep:serde", "dep:serde_json"]
+# The reply shapes that every transport shares. A wasm worm that formats or
+# lints uses them alone.
+wire = ["dep:serde", "dep:serde_json"]
+# The native transport: serve() and the framing, for a worm that ships as an
+# executable. Off by default, so the plain wasm path stays free of
+# dependencies.
+native = ["wire"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"], optional = true }

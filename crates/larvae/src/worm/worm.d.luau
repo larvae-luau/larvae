@@ -31,8 +31,117 @@
 export type Compile = (source: string, config: string) -> string
 
 --[=[
+	A byte range in the source, as a half open `{start, stop}` pair.
+
+	The offsets are 0-based and count bytes, in the same way as every other
+	span of larvae.
+]=]
+export type Span = { number }
+
+--[=[
+	One piece of layout, for a format reply.
+
+	larvae renders the document with the `[fmt]` settings of the project.
+	Thus your output obeys `column_width` without any width code in the worm.
+	A unit piece is a plain string. Every other piece is a table with one key.
+
+	- `"nil"` gives no output.
+	- `"line"` gives a space when flat and a newline when broken.
+	- `"soft"` gives nothing when flat and a newline when broken.
+	- `"hard"` gives a newline in both modes.
+	- `"blank"` keeps a blank line that the author wrote.
+	- `{ src = {s, e} }` copies an exact slice of the source.
+	- `{ lit = "<" }` inserts text that the worm generated.
+	- `{ group = doc }` is flat when it fits and broken when it does not fit.
+	- `{ indent = doc }` adds one level of indentation inside.
+	- `{ if_break = {flat, broken} }` selects one part by the mode of the group.
+	- `{ concat = {...} }` joins the parts in order.
+	- `{ host = { start = s, ["end"] = e, parse = "block" } }` marks a span of
+	  ordinary Luau, and larvae formats the span itself. `parse` is `"block"`
+	  for statements and `"expr"` for one expression. `"block"` is the
+	  default.
+]=]
+export type Doc =
+	"nil"
+	| "line"
+	| "soft"
+	| "hard"
+	| "blank"
+	| { src: Span }
+	| { lit: string }
+	| { group: Doc }
+	| { indent: Doc }
+	| { if_break: { Doc } }
+	| { concat: { Doc } }
+	| { host: { start: number, ["end"]: number, parse: ("block" | "expr")? } }
+
+--[=[
+	The value your `format` function returns.
+
+	Send `document` when the worm lays out its own syntax. Send `spans` when
+	the worm only names the byte ranges that hold Luau: larvae formats each
+	range and keeps every other byte as the author wrote it. `document` wins
+	when you send both.
+
+	`comments` holds the span of every comment. larvae refuses an output that
+	drops one of them, so a layout bug cannot delete a comment silently.
+]=]
+export type FormatReply = {
+	document: Doc?,
+	spans: { Span }?,
+	comments: { Span }?,
+}
+
+--[=[
+	The format half of a front-end. Set `fmt = true` under `[frontend]` in
+	worm.toml, and `larvae fmt` calls this function on every claimed file.
+
+	To report a problem instead, call `error("...")` with a message for a
+	human. larvae attributes the error to your worm.
+]=]
+export type Format = (source: string) -> FormatReply
+
+--[=[
+	One problem the worm found. There is no severity here. The host stamps
+	the level from `[lint.rules]`, so a worm cannot decide that a build
+	fails.
+
+	`lint` names one of the lints your worm.toml declares under `[lints]`.
+	`span` is the byte range the report points at.
+]=]
+export type Finding = {
+	span: Span,
+	lint: string,
+	message: string,
+	help: string?,
+}
+
+--[=[
+	The value your `lint` function returns.
+
+	`comments` holds the comment spans, so `-- larvae: allow(...)` works in a
+	claimed file. `luau` is the Luau shadow of the file: the source, with
+	every region that is not Luau replaced by filler of the same byte length.
+	The builtin lints of larvae read the shadow, and every offset stays
+	exact.
+]=]
+export type LintReply = {
+	findings: { Finding }?,
+	comments: { Span }?,
+	luau: string?,
+}
+
+--[=[
+	The lint half of a front-end. Declare lints under `[lints]` in worm.toml,
+	and `larvae lint` calls this function on every claimed file.
+]=]
+export type Lint = (source: string) -> LintReply
+
+--[=[
 	The front-end role. It claims a file extension and turns the file into
-	Luau before the pipeline of larvae reads it.
+	Luau before the pipeline of larvae reads it. `format` and `lint` are the
+	optional halves that give the claimed files `larvae fmt` and
+	`larvae lint`.
 
 	Declare the extensions in worm.toml, not here:
 
@@ -41,6 +150,8 @@ export type Compile = (source: string, config: string) -> string
 ]=]
 export type Frontend = {
 	compile: Compile,
+	format: Format?,
+	lint: Lint?,
 }
 
 --[=[
@@ -133,13 +244,29 @@ export type Rule = {
 }
 
 --[=[
+	The resolved settings of the project.
+
+	`fmt` is the `[fmt]` table of larvae.toml, with every default filled in.
+	`lint` maps each lint name to its resolved level. Read them to lay your
+	own constructs out in the style of the project. Without them the user
+	writes the same values a second time under `[config.<your name>]`, and
+	the two copies drift.
+]=]
+export type Settings = {
+	fmt: { [string]: any },
+	lint: { [string]: any },
+}
+
+--[=[
 	larvae calls this once, before it sees a file, with your settings.
 
 	`config` is `[config.<your name>]` from larvae.toml as a table, already
 	parsed. `rules` holds only the rules that are switched on, keyed by name,
-	with the resolved value of each. A rule that is off is absent.
+	with the resolved value of each. A rule that is off is absent. `settings`
+	holds the resolved project settings. A worm that names only the first two
+	parameters stays correct, because Lua drops the extra argument.
 ]=]
-export type Init = (config: { [string]: any }, rules: { [string]: any }) -> ()
+export type Init = (config: { [string]: any }, rules: { [string]: any }, settings: Settings) -> ()
 
 --[=[
 	The value a worm module returns. There are three roles, and a worm can
@@ -147,7 +274,8 @@ export type Init = (config: { [string]: any }, rules: { [string]: any }) -> ()
 
 	**A front-end** claims a file extension and turns the file into Luau
 	before larvae reads it. It takes text and returns text. Use it for a
-	syntax that larvae cannot parse.
+	syntax that larvae cannot parse. With the optional `format` and `lint`
+	halves, the claimed files also serve `larvae fmt` and `larvae lint`.
 
 	```luau
 	local worm: Worm = {

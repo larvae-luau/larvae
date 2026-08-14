@@ -15,7 +15,6 @@ lpm.toml
 larvae.toml
 
 # working notes, kept out of the repo
-larvae.example.toml
 
 *.[mM][dD]
 !LICENSE.md
