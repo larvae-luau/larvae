@@ -28,6 +28,7 @@ pub fn run(
     root: &Path,
     paths: Vec<PathBuf>,
     stdin: bool,
+    stdin_filepath: Option<PathBuf>,
     explain: Option<String>,
     config: Option<PathBuf>,
 ) -> Result<ExitCode> {
@@ -37,9 +38,13 @@ pub fn run(
 
     let cfg = discover(root, config.clone())?;
 
-    // Stdin has no file path that routes to a worm, so stdin lints only Luau.
+    /*
+    Stdin alone has no file path, so it lints only Luau. An editor that pipes
+    a claimed file names the path with --stdin-filepath, and the pool routes
+    on it exactly as a walk does.
+    */
     if stdin {
-        return from_stdin(&cfg);
+        return from_stdin(root, &cfg, stdin_filepath.as_deref(), config);
     }
 
     /*
@@ -119,18 +124,34 @@ fn discover(root: &Path, config: Option<PathBuf>) -> Result<LintConfig> {
 }
 
 /// One file over stdin and stdout; an editor uses this path
-fn from_stdin(cfg: &LintConfig) -> Result<ExitCode> {
+fn from_stdin(
+    root: &Path,
+    cfg: &LintConfig,
+    path: Option<&Path>,
+    config: Option<PathBuf>,
+) -> Result<ExitCode> {
     let mut src = String::new();
     std::io::stdin()
         .read_to_string(&mut src)
         .context("cannot read stdin")?;
 
-    let path = Path::new("stdin");
+    let diags = match path {
+        Some(path) => {
+            let mut fmt = crate::fmt::FmtConfig::default();
+            let pool = worm_pool(root, config, &mut fmt)?;
 
-    let diags = match lint(path, &src, cfg) {
-        Ok(found) => found,
+            match one(path, &src, cfg, &pool) {
+                Ok(found) => found,
 
-        Err(e) => vec![e],
+                Err(e) => vec![e],
+            }
+        }
+
+        None => match lint(Path::new("stdin"), &src, cfg) {
+            Ok(found) => found,
+
+            Err(e) => vec![e],
+        },
     };
 
     report(&diags, 1)

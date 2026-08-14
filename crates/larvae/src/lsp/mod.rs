@@ -63,6 +63,8 @@ struct Server {
     excluded: Excludes,
     /// The worms of the project. They own the files that they claim.
     worms: Pool,
+    /// What the artifacts of the pool looked like at the last load
+    worm_stamp: Vec<(std::path::PathBuf, Option<std::time::SystemTime>, u64)>,
     /// `shutdown` sets this, so a later `exit` is clean and not abrupt
     shutting_down: bool,
 }
@@ -76,6 +78,7 @@ impl Default for Server {
             lint: LintConfig::default(),
             excluded: Excludes::default(),
             worms: no_worms(),
+            worm_stamp: Vec::new(),
             shutting_down: false,
         }
     }
@@ -116,6 +119,8 @@ impl Server {
             }
 
             "textDocument/didOpen" => {
+                self.refresh_worms();
+
                 let uri = uri_of(&message.params);
                 let text = message.params["textDocument"]["text"]
                     .as_str()
@@ -135,6 +140,8 @@ impl Server {
             the machinery that avoids the send.
             */
             "textDocument/didChange" => {
+                self.refresh_worms();
+
                 let uri = uri_of(&message.params);
 
                 if let Some(change) = message.params["contentChanges"]
@@ -148,6 +155,8 @@ impl Server {
             }
 
             "textDocument/didSave" => {
+                self.refresh_worms();
+
                 let uri = uri_of(&message.params);
 
                 self.publish(&uri, out)?;
@@ -166,6 +175,8 @@ impl Server {
             }
 
             "textDocument/formatting" => {
+                self.refresh_worms();
+
                 let result = self.format(&uri_of(&message.params));
 
                 match result {
@@ -262,10 +273,34 @@ impl Server {
         match pool_with(root, None, &mut fmt, crate::worm::registry::Fetch::Never) {
             Ok(pool) => {
                 self.fmt = fmt;
+                self.worm_stamp = stamp_of(&pool);
                 self.worms = pool;
             }
 
             Err(_) => self.worms = no_worms(),
+        }
+    }
+
+    /*
+    Rebuild the pool when a worm changed on disk.
+
+    A worm author rebuilds a path worm and expects the next keystroke to use
+    it. The command line reads the directory on every run, and a server that
+    holds the first build all session would answer with a stale worm. The
+    check costs one stat per worm artifact, so the server runs it before each
+    request that a worm can answer.
+    */
+    fn refresh_worms(&mut self) {
+        let Some(root) = self.root.clone() else {
+            return;
+        };
+
+        if self.worms.is_empty() {
+            return;
+        }
+
+        if stamp_of(&self.worms) != self.worm_stamp {
+            self.load_worms(&root);
         }
     }
 
@@ -517,6 +552,28 @@ fn capabilities() -> Value {
 }
 
 /// A pool with no worm in it. Every file then takes the Luau route.
+/*
+The modification time and the size of the entry of each worm.
+
+A rebuilt artifact changes both on every real toolchain, and two stat calls
+per worm cost nothing next to a lint pass.
+*/
+fn stamp_of(pool: &Pool) -> Vec<(std::path::PathBuf, Option<std::time::SystemTime>, u64)> {
+    pool.specs()
+        .iter()
+        .map(|spec| {
+            let entry = spec.dir.join(&spec.manifest.entry);
+            let meta = std::fs::metadata(&entry).ok();
+
+            (
+                entry,
+                meta.as_ref().and_then(|m| m.modified().ok()),
+                meta.map(|m| m.len()).unwrap_or(0),
+            )
+        })
+        .collect()
+}
+
 fn no_worms() -> Pool {
     Pool::new(Vec::new(), 1)
 }

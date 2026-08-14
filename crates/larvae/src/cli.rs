@@ -59,6 +59,9 @@ enum Command {
         /// Read one file from stdin and write the result to stdout
         #[arg(long, conflicts_with_all = ["paths", "check"])]
         stdin: bool,
+        /// The path the stdin content has, so a worm can claim it
+        #[arg(long, requires = "stdin")]
+        stdin_filepath: Option<PathBuf>,
         /// Path to larvae.toml (defaults to ./larvae.toml when present)
         #[arg(long)]
         config: Option<PathBuf>,
@@ -71,6 +74,9 @@ enum Command {
         /// Read one file from stdin
         #[arg(long, conflicts_with = "paths")]
         stdin: bool,
+        /// The path the stdin content has, so a worm can claim it
+        #[arg(long, requires = "stdin")]
+        stdin_filepath: Option<PathBuf>,
         /// Describe one lint and stop
         #[arg(long, value_name = "LINT")]
         explain: Option<String>,
@@ -171,15 +177,17 @@ fn run() -> Result<ExitCode> {
             paths,
             check,
             stdin,
+            stdin_filepath,
             config,
-        } => commands::fmt::run(&root, paths, check, stdin, config),
+        } => commands::fmt::run(&root, paths, check, stdin, stdin_filepath, config),
 
         Command::Lint {
             paths,
             stdin,
+            stdin_filepath,
             explain,
             config,
-        } => commands::lint::run(&root, paths, stdin, explain, config),
+        } => commands::lint::run(&root, paths, stdin, stdin_filepath, explain, config),
 
         Command::Lsp => {
             crate::lsp::run()?;

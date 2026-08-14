@@ -26,7 +26,7 @@ clap = { version = "4", features = ["derive"] }
 dirs = "6"
 globset = "0.4"
 json5 = "0.4"
-mlua = { version = "0.12.0", features = ["luau", "vendored", "error-send"] }
+mlua = { version = "0.12.0", features = ["luau", "vendored", "error-send", "serialize"] }
 notify-debouncer-full = "0.7.0"
 rayon = "1"
 regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-perl", "unicode-case"] }

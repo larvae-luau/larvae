@@ -110,7 +110,7 @@ impl Worm {
                 })?;
 
                 Backend::Native(Box::new(native::NativeWorm::load(
-                    &dir.join(&manifest.entry),
+                    &native_entry(dir, &manifest.entry),
                     &manifest.name,
                 )?))
             }
@@ -159,15 +159,16 @@ impl Worm {
         settings: &Settings,
     ) -> Result<()> {
         match &mut self.backend {
-            Backend::Luau(worm) => worm.init(config, rules),
-
-            Backend::Wasm(worm) => worm.init(&toml_text(config), &toml_text_map(rules)),
+            Backend::Luau(worm) => worm.init(config, rules, settings),
 
             /*
-            The native form also receives the settings of the project, because
-            it is the only form that formats and lints. The other two forms
-            gain the same field when their guests can answer those ops.
+            Every form receives the settings of the project, because every
+            form can format and lint. The wasm form takes them through the
+            optional `larvae_settings` export, so an old module runs
+            unchanged.
             */
+            Backend::Wasm(worm) => worm.init(&toml_text(config), &toml_text_map(rules), settings),
+
             Backend::Native(worm) => worm.init(&toml_text(config), &toml_text_map(rules), settings),
         }
     }
@@ -188,19 +189,44 @@ impl Worm {
             /*
             This is not built, and by intent it is not simulated.
 
-            The rule protocol crosses once per node. The native form exists to
-            avoid that shape: 120 crossings per file over a pipe would be
-            slower than the wasm path this form must beat. Rules for a native
-            worm arrive with the batched protocol, not before it.
+            The per node protocol crosses once per node. The native form
+            exists to avoid that shape: 120 crossings per file over a pipe
+            would be slower than the wasm path this form must beat. The rules
+            of a native worm cross with [`Worm::run_rules_batched`], once per
+            file.
             */
             Backend::Native(_) => {
                 let _ = (rule, index, file, matched);
 
                 anyhow::bail!(
-                    "worm `{}` is native, which does not run rules yet",
+                    "worm `{}` is native, whose rules run batched and not per node",
                     self.manifest.name
                 )
             }
+        }
+    }
+
+    /*
+    Run every enabled rule of the worm over one file, in one crossing.
+
+    Only the native form answers this. A pipe crossing costs 24 µs, and a
+    rule worm visits about 120 nodes per file, so the batch is the shape that
+    keeps this form fast. The in-process forms keep their per node calls,
+    because a crossing costs them 1.2 µs in Luau and 6.9 µs in wasm.
+    */
+    pub fn run_rules_batched(
+        &mut self,
+        source: &str,
+        rules: &[proto::RuleCall],
+    ) -> Result<Vec<crate::rules::edits::Edit>> {
+        match &mut self.backend {
+            Backend::Native(worm) => worm.rules(source, rules),
+
+            Backend::Luau(_) | Backend::Wasm(_) => bail!(
+                "worm `{}` is {}, whose rules run one node at a time",
+                self.manifest.name,
+                self.manifest.form.name()
+            ),
         }
     }
 
@@ -249,16 +275,9 @@ impl Worm {
         match &mut self.backend {
             Backend::Native(worm) => worm.format(source),
 
-            /*
-            The payload types do not depend on the transport. Thus these arms
-            wait on guest-side work and not on a redesign: a wasm export that
-            returns the reply as JSON bytes, and a Luau table contract.
-            */
-            Backend::Luau(_) | Backend::Wasm(_) => bail!(
-                "worm `{}` is {}, which cannot format yet — only native worms format for now",
-                self.manifest.name,
-                self.manifest.form.name()
-            ),
+            Backend::Luau(worm) => worm.format(source),
+
+            Backend::Wasm(worm) => worm.format(source),
         }
         .with_context(|| format!("worm `{}`", self.manifest.name))
     }
@@ -268,14 +287,34 @@ impl Worm {
         match &mut self.backend {
             Backend::Native(worm) => worm.lint(source),
 
-            Backend::Luau(_) | Backend::Wasm(_) => bail!(
-                "worm `{}` is {}, which cannot lint yet — only native worms lint for now",
-                self.manifest.name,
-                self.manifest.form.name()
-            ),
+            Backend::Wasm(worm) => worm.lint(source),
+
+            Backend::Luau(worm) => worm.lint(source),
         }
         .with_context(|| format!("worm `{}`", self.manifest.name))
     }
+}
+
+/*
+The path of the entry of a native worm.
+
+Windows runs a file by its extension, and a manifest written on unix names
+the entry without one. When the named file is absent and a sibling with
+`.exe` exists, larvae takes the sibling. Thus one manifest serves every
+platform, and a platform zip can still name an exact file.
+*/
+fn native_entry(dir: &Path, entry: &str) -> std::path::PathBuf {
+    let plain = dir.join(entry);
+
+    if cfg!(windows) && !plain.exists() {
+        let exe = dir.join(format!("{entry}.exe"));
+
+        if exe.exists() {
+            return exe;
+        }
+    }
+
+    plain
 }
 
 /*

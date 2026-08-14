@@ -37,13 +37,24 @@ pub fn run(
     paths: Vec<PathBuf>,
     check: bool,
     stdin: bool,
+    stdin_filepath: Option<PathBuf>,
     config: Option<PathBuf>,
 ) -> Result<ExitCode> {
     let mut cfg = discover(root, config.clone())?;
 
-    // Stdin has no file path that routes to a worm, so stdin formats only Luau.
+    /*
+    Stdin alone has no file path, so it formats only Luau. An editor that
+    pipes a claimed file names the path with --stdin-filepath, and the pool
+    routes on it exactly as a walk does.
+    */
     if stdin {
-        return from_stdin(&cfg);
+        let pool = match &stdin_filepath {
+            Some(_) => worm_pool(root, config, &mut cfg)?,
+
+            None => Pool::new(Vec::new(), 1),
+        };
+
+        return from_stdin(&cfg, stdin_filepath.as_deref(), &pool);
     }
 
     let pool = worm_pool(root, config, &mut cfg)?;
@@ -201,13 +212,17 @@ fn formatted(path: &Path, src: &str, cfg: &FmtConfig, pool: &Pool) -> Result<Str
 }
 
 /// One file over stdin and stdout; an editor uses this path
-fn from_stdin(cfg: &FmtConfig) -> Result<ExitCode> {
+fn from_stdin(cfg: &FmtConfig, path: Option<&Path>, pool: &Pool) -> Result<ExitCode> {
     let mut src = String::new();
     std::io::stdin()
         .read_to_string(&mut src)
         .context("cannot read stdin")?;
 
-    let out = format(&src, cfg)?;
+    let out = match path {
+        Some(path) => formatted(path, &src, cfg, pool)?,
+
+        None => format(&src, cfg)?,
+    };
 
     print!("{out}");
 
