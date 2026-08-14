@@ -111,8 +111,16 @@ worm; one `larvae.toml` describes all of it.
 
 The same answer, and the same respect. larvae reads `selene.toml`, keeps
 selene's lint names, levels, and `std` spellings, and honors
-`-- selene: allow(...)` comments, so a port costs nothing. Three things are
+`-- selene: allow(...)` comments, so a port costs nothing. Four things are
 different.
+
+**It carries lints that selene does not have.** Four so far, each for a
+problem no existing rule catches, and each cheap enough for a keystroke:
+`unreachable_code`, code after a `return`, a `break`, or a `continue`;
+`self_assignment`, a value assigned to itself; `loop_invariant_call`, a call
+in a loop whose result cannot change between iterations; and
+`string_concat_in_loop`, the accumulator pattern that copies the whole
+string on every pass.
 
 **It lints languages that selene cannot.** A worm reports findings that only
 its own parser can see, and the builtin lints run on the same files through
