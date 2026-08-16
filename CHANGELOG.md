@@ -4,6 +4,19 @@ Notable changes land here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow
 [semver](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- Flag comments that hold a tool off over a span of lines. `-- larvae: fmt
+  off` runs to the matching `-- larvae: fmt on`, or to the end of the file
+  when no `on` follows, so one marker at the top of a file holds the whole
+  file. `fmt off(5)` holds the marker line and five lines below it. `lint`
+  reads the same way, and a `lint` marker holds every lint where `allow(...)`
+  names the lints it holds
+- stylua's `ignore start` and `ignore end` are read as `fmt off` and `fmt on`,
+  so a project that comes from stylua keeps the markers already in its files
+
 ## 0.2.0 - 2026-08-16
 
 ### Added

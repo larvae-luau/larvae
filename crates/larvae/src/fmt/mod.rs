@@ -32,9 +32,27 @@ pub fn format(src: &str, cfg: &FmtConfig) -> Result<String> {
         .map_err(|e| anyhow::anyhow!("{}", e.message))
         .context("cannot format a file that does not parse")?;
 
+    let ignored = crate::flags::off_ranges(src, &lexed.comments, crate::flags::Subject::Fmt);
+
+    /*
+    A file held off in full comes back byte for byte.
+
+    The general path re-emits an ignored statement from its own source, which
+    keeps that statement exact. It does not promise the same for the space
+    between two statements, and a reader who switches the formatter off for a
+    whole file means the file. So the whole-file case returns early and
+    promises the stronger thing.
+    */
+    if ignored
+        .iter()
+        .any(|&(a, b)| a == 0 && b >= src.len() as u32)
+    {
+        return Ok(src.to_string());
+    }
+
     let trivia = trivia::Trivia::new(src, &lexed.comments);
     let rebindings = rebind::plan(src, &lexed.toks, &chunk, cfg.require_binding);
-    let emitter = emit::Emitter::new(src, &lexed.toks, &trivia, cfg, rebindings);
+    let emitter = emit::Emitter::new(src, &lexed.toks, &trivia, cfg, rebindings).ignoring(ignored);
     let document = emitter.chunk(&chunk);
     let out = doc::render(&document, cfg.style());
 

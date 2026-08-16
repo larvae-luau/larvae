@@ -1224,3 +1224,81 @@ fn a_chained_call_on_the_next_line_is_not_ambiguous() {
 
     assert!(out.contains("t.f(1).g(2)"), "{out}");
 }
+
+// --- fmt off ---------------------------------------------------------------
+
+/// A file held off in full comes back byte for byte, spacing included.
+#[test]
+fn a_file_held_off_in_full_is_untouched() {
+    let src = "-- larvae: fmt off\nlocal  matrix = {\n\t1,0,0,\n\t0,1,0,\n}\n";
+
+    assert_eq!(fmt(src), src);
+}
+
+#[test]
+fn a_region_between_two_markers_is_untouched() {
+    let src = "local  a   =  1\n-- larvae: fmt off\nlocal  m = {\n\t1,0,\n\t0,1,\n}\n-- larvae: fmt on\nlocal  b   =  2\n";
+
+    assert_eq!(
+        fmt(src),
+        "local a = 1\n-- larvae: fmt off\nlocal  m = {\n\t1,0,\n\t0,1,\n}\n-- larvae: fmt on\nlocal b = 2\n"
+    );
+}
+
+#[test]
+fn a_count_holds_that_many_lines_below_the_marker() {
+    let src = "local  a  = 1\n-- larvae: fmt off(2)\nlocal  x  = 1\nlocal  y  = 2\nlocal  c  = 3\n";
+
+    assert_eq!(
+        fmt(src),
+        "local a = 1\n-- larvae: fmt off(2)\nlocal  x  = 1\nlocal  y  = 2\nlocal c = 3\n"
+    );
+}
+
+/// A project that comes from stylua keeps the markers already in its files.
+#[test]
+fn styluas_markers_work_too() {
+    let src = "local  a  = 1\n-- stylua: ignore start\nlocal  m = {1,0,\n0,1}\n-- stylua: ignore end\nlocal  b  = 2\n";
+    let out = fmt(src);
+
+    assert!(out.contains("local  m = {1,0,\n0,1}"), "{out}");
+    assert!(out.contains("local a = 1"), "{out}");
+}
+
+/// The lines of a held region keep the indentation the author gave them.
+#[test]
+fn a_region_inside_a_block_keeps_its_own_shape() {
+    let src = "local function f()\n\t-- larvae: fmt off\n\tlocal  m = {\n\t\t1,0,\n\t}\n\t-- larvae: fmt on\nend\nreturn f\n";
+
+    assert_eq!(fmt(src), src);
+}
+
+#[test]
+fn holding_the_formatter_off_is_idempotent() {
+    let src =
+        "local  a  = 1\n-- larvae: fmt off\nlocal  m = {1,0}\n-- larvae: fmt on\nlocal  b  = 2\n";
+    let once = fmt(src);
+
+    assert_eq!(fmt(&once), once);
+}
+
+/*
+A count that larvae cannot read is an ordinary comment. Were it a flag, it
+would hold the formatter off to the end of the file and say nothing.
+*/
+#[test]
+fn a_marker_larvae_cannot_read_formats_as_usual() {
+    assert_eq!(
+        fmt("local  a  = 1\n-- larvae: fmt off(five)\nlocal  b  = 2\n"),
+        "local a = 1\n-- larvae: fmt off(five)\nlocal b = 2\n"
+    );
+}
+
+/// A lint marker is not a formatter marker.
+#[test]
+fn a_lint_marker_does_not_hold_the_formatter() {
+    assert_eq!(
+        fmt("-- larvae: lint off\nlocal  a  = 1\n"),
+        "-- larvae: lint off\nlocal a = 1\n"
+    );
+}

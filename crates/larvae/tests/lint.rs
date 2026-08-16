@@ -1773,3 +1773,50 @@ fn the_correct_walk_back_over_an_array_is_quiet() {
         "local t = {}\nfor i = #t, 2 do print(i) end\n"
     ));
 }
+
+// --- lint off --------------------------------------------------------------
+
+/// The count of findings, whatever they are
+fn count(src: &str) -> usize {
+    names(src).len()
+}
+
+#[test]
+fn a_file_held_off_in_full_reports_nothing() {
+    let body = "local unusedA = 1\nlocal unusedB = 2\nreturn 1\n";
+
+    assert_eq!(count(body), 2);
+    assert_eq!(count(&format!("-- larvae: lint off\n{body}")), 0);
+}
+
+#[test]
+fn a_region_between_two_markers_reports_nothing() {
+    let src = "local unusedA = 1\n-- larvae: lint off\nlocal unusedB = 2\n-- larvae: lint on\nlocal unusedC = 3\nreturn 1\n";
+    let found = names(src);
+
+    assert_eq!(found.len(), 2, "only B is held: {found:?}");
+}
+
+#[test]
+fn a_count_holds_that_many_lines_below_the_marker() {
+    let src = "local unusedA = 1\n-- larvae: lint off(1)\nlocal unusedB = 2\nlocal unusedC = 3\nreturn 1\n";
+
+    assert_eq!(names(src).len(), 2, "only B is held");
+}
+
+/// A marker holds every lint, not one named lint.
+#[test]
+fn a_region_holds_lints_of_every_kind() {
+    let src = "-- larvae: lint off\nlocal x = 1 / 0\nlocal t = { a = 1, a = 2 }\nreturn t\n";
+
+    assert!(names(src).is_empty(), "{:?}", names(src));
+}
+
+/// A formatter marker is not a lint marker.
+#[test]
+fn a_fmt_marker_does_not_hold_the_linter() {
+    assert_eq!(
+        count("-- larvae: fmt off\nlocal unusedA = 1\nreturn 1\n"),
+        1
+    );
+}

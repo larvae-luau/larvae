@@ -33,6 +33,8 @@ pub struct Emitter<'a> {
     cfg: &'a FmtConfig,
     /// The keywords that `require_binding` decided to change, by their token index
     rebindings: super::rebind::Rebindings,
+    /// Byte ranges that a `fmt off` flag holds the formatter out of
+    ignored: Vec<(u32, u32)>,
 }
 
 impl<'a> Emitter<'a> {
@@ -49,7 +51,40 @@ impl<'a> Emitter<'a> {
             trivia,
             cfg,
             rebindings,
+            ignored: Vec::new(),
         }
+    }
+
+    /// Holds the emitter out of these byte ranges
+    pub fn ignoring(mut self, ranges: Vec<(u32, u32)>) -> Self {
+        self.ignored = ranges;
+
+        self
+    }
+
+    /*
+    The source of a statement that a `fmt off` flag covers, or None.
+
+    The emitter writes those bytes instead of a rebuild. The first line loses
+    its indentation, because the document supplies that, and every later line
+    keeps the indentation the author gave it. The renderer treats a text with
+    newlines in it as written, so the shape of the block survives.
+    */
+    fn verbatim_stmt(&self, stmt: &Stmt) -> Option<&'a str> {
+        let (lo, hi) = self.byte_span(stmt.span());
+
+        if !crate::flags::within(&self.ignored, lo) {
+            return None;
+        }
+
+        // take whole lines, so a trailing comment on the last line comes too
+        let hi = match self.src[hi as usize..].find('\n') {
+            Some(n) => hi + n as u32,
+
+            None => self.src.len() as u32,
+        };
+
+        Some(self.src[lo as usize..hi as usize].trim_end_matches([' ', '\t']))
     }
 
     pub fn chunk(&self, chunk: &Chunk) -> Doc<'a> {
@@ -332,8 +367,14 @@ impl<'a> Emitter<'a> {
                 parts.push(Doc::Hard);
             }
 
-            parts.push(self.stmt(piece.stmt));
-            parts.push(self.terminator(piece.stmt, pieces.get(i + 1).map(|p| p.stmt)));
+            match self.verbatim_stmt(piece.stmt) {
+                Some(raw) => parts.push(Doc::text(raw)),
+
+                None => {
+                    parts.push(self.stmt(piece.stmt));
+                    parts.push(self.terminator(piece.stmt, pieces.get(i + 1).map(|p| p.stmt)));
+                }
+            }
         }
 
         if let Some(last) = pieces.last() {

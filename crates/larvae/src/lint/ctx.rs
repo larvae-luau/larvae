@@ -73,6 +73,8 @@ pub struct LintCtx<'a> {
     pub blocks: Vec<&'a Block>,
     /// The lints that the author suppresses on each line.
     allowed: HashMap<u32, Vec<String>>,
+    /// Byte ranges that a `lint off` flag holds every lint out of
+    silent: Vec<(u32, u32)>,
     /// The byte offset of the start of each line, for the line lookup.
     line_starts: Vec<u32>,
 }
@@ -89,6 +91,7 @@ impl<'a> LintCtx<'a> {
 
         let names = super::scope::resolve(src, toks, chunk);
         let allowed = collect_suppressions(src, comments, &line_starts);
+        let silent = crate::flags::off_ranges(src, comments, crate::flags::Subject::Lint);
         let (exprs, stmts, blocks) = flatten(chunk);
 
         Self {
@@ -102,6 +105,7 @@ impl<'a> LintCtx<'a> {
             stmts,
             blocks,
             allowed,
+            silent,
             line_starts,
         }
     }
@@ -142,7 +146,9 @@ impl<'a> LintCtx<'a> {
 
     /// Returns true if the author already suppressed this finding here, see [`allowed_here`].
     pub fn suppressed(&self, finding: &Finding) -> bool {
-        allowed_here(&self.allowed, self.line(finding.span.0), &finding.lint)
+        // a `lint off` region holds every lint, so it is checked first
+        crate::flags::within(&self.silent, finding.span.0)
+            || allowed_here(&self.allowed, self.line(finding.span.0), &finding.lint)
     }
 
     /*
