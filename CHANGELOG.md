@@ -16,6 +16,9 @@ Notable changes land here. Format follows
   names the lints it holds
 - stylua's `ignore start` and `ignore end` are read as `fmt off` and `fmt on`,
   so a project that comes from stylua keeps the markers already in its files
+- A file that a worm claims reads the markers too. The comments come from the
+  reply of the worm, because larvae does not read such a file as Luau and so
+  finds no comment in it itself
 
 ## 0.2.0 - 2026-08-16
 

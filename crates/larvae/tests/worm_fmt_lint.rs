@@ -238,6 +238,47 @@ fn an_allow_comment_suppresses_a_worm_finding() {
     );
 }
 
+/*
+A `lint off` region holds the findings of a worm too.
+
+Where `allow(...)` names one lint, the region holds every finding on those
+lines. A reader who switches the linter off does not care which tool found
+one.
+*/
+#[test]
+fn a_lint_off_region_suppresses_a_worm_finding() {
+    let root = project(true);
+    write(
+        root.path(),
+        "src/app.luaux",
+        "-- larvae: lint off\nlocal bad = 1\n-- larvae: lint on\n",
+    );
+
+    let (ok, text) = run(root.path(), &["lint"]);
+
+    assert!(ok, "{text}");
+    assert!(
+        !text.contains("markup.bad_word"),
+        "the region must hold it: {text}"
+    );
+}
+
+/// A file held off in full reports nothing from the worm.
+#[test]
+fn a_claimed_file_can_hold_the_linter_off_in_full() {
+    let root = project(true);
+    write(
+        root.path(),
+        "src/app.luaux",
+        "-- larvae: lint off\nlocal bad = 1\n",
+    );
+
+    let (ok, text) = run(root.path(), &["lint"]);
+
+    assert!(ok, "{text}");
+    assert!(!text.contains("markup.bad_word"), "{text}");
+}
+
 #[test]
 fn worm_run_fmt_is_the_dev_loop() {
     let root = project(true);

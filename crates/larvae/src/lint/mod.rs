@@ -156,6 +156,15 @@ fn worm_findings(
     let line_starts = ctx::line_starts_of(src);
     let allowed = ctx::collect_suppressions(src, &reply.comments, &line_starts);
 
+    /*
+    A `lint off` in a claimed file holds the findings of the worm too.
+
+    The comments come from the reply, because larvae does not read a claimed
+    file as Luau. A reader who holds the linter off over a span means every
+    finding on those lines, and which tool found one is not their concern.
+    */
+    let silent = crate::flags::off_ranges(src, &reply.comments, crate::flags::Subject::Lint);
+
     let mut findings = Vec::new();
 
     for finding in reply.findings {
@@ -184,6 +193,10 @@ fn worm_findings(
         let level = cfg.level_for(&name, decl.default);
 
         if level == Level::Allow {
+            continue;
+        }
+
+        if crate::flags::within(&silent, finding.span.0) {
             continue;
         }
 

@@ -86,6 +86,17 @@ pub(crate) fn doc_of(src: &str, cfg: &FmtConfig) -> Result<doc::Doc<'static>> {
     */
     let emitter = emit::Emitter::new(src, &lexed.toks, &trivia, cfg, rebind::Rebindings::new());
 
+    /*
+    A `fmt off` inside the slice holds here too.
+
+    The flags are read from the comments of this slice, so they carry the
+    offsets of the slice and need no rebase. A file that a worm claims reaches
+    the formatter only through this function, so without this a marker in such
+    a file would do nothing.
+    */
+    let ignored = crate::flags::off_ranges(src, &lexed.comments, crate::flags::Subject::Fmt);
+    let emitter = emitter.ignoring(ignored);
+
     Ok(emitter.block_body(&chunk.block).into_owned())
 }
 

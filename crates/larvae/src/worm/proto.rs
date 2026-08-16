@@ -212,6 +212,22 @@ pub fn render_format(src: &str, reply: &FormatReply, cfg: &FmtConfig) -> Result<
         slice(src, start, end).context("in a comment span")?;
     }
 
+    /*
+    A file that a worm claims can hold the formatter off in full.
+
+    The comments come from the reply, because larvae does not read a claimed
+    file as Luau and so finds no comment in it itself. The worm reports where
+    they are, and the markers read the same as they do in a Luau file.
+    */
+    let ignored = crate::flags::off_ranges(src, &reply.comments, crate::flags::Subject::Fmt);
+
+    if ignored
+        .iter()
+        .any(|&(a, b)| a == 0 && b >= src.len() as u32)
+    {
+        return Ok(src.to_string());
+    }
+
     let document = match &reply.document {
         Some(document) => convert(document, src, cfg)?,
 
@@ -740,5 +756,94 @@ mod semicolon_after_a_span {
             rendered(src, vec![(start, end)], &cfg),
             "<F>\nlocal x = 1;\n</F>\n"
         );
+    }
+}
+
+#[cfg(test)]
+mod flags_in_a_claimed_file {
+    use super::*;
+
+    fn comment_at(src: &str, text: &str) -> (u32, u32) {
+        let at = src.find(text).expect("the marker is in the source") as u32;
+
+        (at, at + text.len() as u32)
+    }
+
+    fn render(src: &str, spans: Vec<(u32, u32)>, comments: Vec<(u32, u32)>) -> String {
+        let reply = FormatReply {
+            doc: DOC_VERSION,
+            document: None,
+            spans,
+            comments,
+        };
+
+        render_format(src, &reply, &FmtConfig::default()).unwrap()
+    }
+
+    /*
+    A marker inside a claimed file reads as it does in a Luau file.
+
+    Larvae does not read a claimed file as Luau, so it finds no comment in one
+    itself. The worm reports where the comments are, and the flags come from
+    that list.
+    */
+    #[test]
+    fn a_region_inside_a_claimed_file_is_untouched() {
+        let src = "<F>\n-- larvae: fmt off\nlocal  m = {1,0}\n-- larvae: fmt on\n</F>\n";
+        let off = comment_at(src, "-- larvae: fmt off");
+        let on = comment_at(src, "-- larvae: fmt on");
+        let end = src.find("\n</F>").unwrap() as u32;
+
+        let out = render(src, vec![(off.0, end)], vec![off, on]);
+
+        assert!(out.contains("local  m = {1,0}"), "{out}");
+    }
+
+    #[test]
+    fn a_claimed_file_held_off_in_full_comes_back_unchanged() {
+        let src = "<F>\n-- larvae: fmt off\nlocal  m = {1,0}\n</F>\n";
+        let off = comment_at(src, "-- larvae: fmt off");
+        let end = src.find("\n</F>").unwrap() as u32;
+
+        assert_eq!(render(src, vec![(off.0, end)], vec![off]), src);
+    }
+
+    /// The Luau outside the region still gets laid out.
+    #[test]
+    fn only_the_held_lines_are_left_alone() {
+        let src = "<F>\nlocal  a  = 1\n-- larvae: fmt off\nlocal  m = {1,0}\n-- larvae: fmt on\nlocal  b  = 2\n</F>\n";
+        let off = comment_at(src, "-- larvae: fmt off");
+        let on = comment_at(src, "-- larvae: fmt on");
+        let start = src.find("local  a").unwrap() as u32;
+        let end = src.find("\n</F>").unwrap() as u32;
+
+        let out = render(src, vec![(start, end)], vec![off, on]);
+
+        assert!(out.contains("local a = 1"), "outside the region: {out}");
+        assert!(out.contains("local b = 2"), "outside the region: {out}");
+        assert!(out.contains("local  m = {1,0}"), "inside it: {out}");
+    }
+
+    #[test]
+    fn a_count_holds_that_many_lines_in_a_claimed_file() {
+        let src = "<F>\n-- larvae: fmt off(1)\nlocal  m = {1,0}\nlocal  n  = 2\n</F>\n";
+        let off = comment_at(src, "-- larvae: fmt off(1)");
+        let start = off.0;
+        let end = src.find("\n</F>").unwrap() as u32;
+
+        let out = render(src, vec![(start, end)], vec![off]);
+
+        assert!(out.contains("local  m = {1,0}"), "held: {out}");
+        assert!(out.contains("local n = 2"), "not held: {out}");
+    }
+
+    /// A worm that reports no comment gets the formatter, as before.
+    #[test]
+    fn a_reply_with_no_comments_formats_as_usual() {
+        let src = "<F>\nlocal  m = {1,0}\n</F>\n";
+        let start = src.find("local").unwrap() as u32;
+        let end = src.find("\n</F>").unwrap() as u32;
+
+        assert!(render(src, vec![(start, end)], Vec::new()).contains("local m = { 1, 0 }"));
     }
 }
