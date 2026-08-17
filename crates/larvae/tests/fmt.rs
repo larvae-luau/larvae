@@ -276,6 +276,73 @@ fn a_leading_comment_keeps_its_own_line_and_its_gap() {
     assert_eq!(out, "local a = 1\n\n-- section\nlocal b = 2\n");
 }
 
+/*
+A comment is a paragraph of its own, and the gap below one is the author's.
+
+The formatter used to give a leading comment a plain line break below it, so
+`-- note` and the code below it became one paragraph, whatever the author
+wrote. The gap above the comment survived, which made the loss look like a
+rule about comments and code rather than a defect.
+*/
+#[test]
+fn a_gap_below_a_comment_is_kept() {
+    assert_eq!(
+        fmt("local a = 1\n-- section\n\nlocal b = 2\n"),
+        "local a = 1\n-- section\n\nlocal b = 2\n"
+    );
+}
+
+#[test]
+fn no_gap_below_a_comment_stays_no_gap() {
+    assert_eq!(
+        fmt("local a = 1\n-- attached\nlocal b = 2\n"),
+        "local a = 1\n-- attached\nlocal b = 2\n"
+    );
+}
+
+#[test]
+fn a_gap_between_two_comments_is_kept() {
+    assert_eq!(
+        fmt("-- one\n\n-- two\nlocal a = 1\n"),
+        "-- one\n\n-- two\nlocal a = 1\n"
+    );
+}
+
+/// A directive belongs to the file, and the gap below it separates it from the code
+#[test]
+fn a_gap_below_a_directive_is_kept() {
+    assert_eq!(
+        fmt("--!strict\n\nlocal a = 1\n"),
+        "--!strict\n\nlocal a = 1\n"
+    );
+}
+
+#[test]
+fn a_gap_below_a_comment_is_kept_inside_a_block() {
+    assert_eq!(
+        fmt("if x then\n\t-- why\n\n\tfoo()\nend\n"),
+        "if x then\n\t-- why\n\n\tfoo()\nend\n"
+    );
+}
+
+/// Two comments close a block, and the gap between them is the author's too
+#[test]
+fn a_gap_between_two_comments_that_close_a_block_is_kept() {
+    assert_eq!(
+        fmt("do\n\tx()\n\t-- one\n\n\t-- two\nend\n"),
+        "do\n\tx()\n\t-- one\n\n\t-- two\nend\n"
+    );
+}
+
+/// One blank line is the separator. More than one says nothing more.
+#[test]
+fn several_gaps_below_a_comment_become_one() {
+    assert_eq!(
+        fmt("local a = 1\n-- note\n\n\n\nlocal b = 2\n"),
+        "local a = 1\n-- note\n\nlocal b = 2\n"
+    );
+}
+
 #[test]
 fn a_comment_on_the_opening_keyword_is_not_lost() {
     assert_eq!(fmt("do -- note\n\tx()\nend"), "do -- note\n\tx()\nend\n");
@@ -1253,6 +1320,25 @@ fn a_count_holds_that_many_lines_below_the_marker() {
         fmt(src),
         "local a = 1\n-- larvae: fmt off(2)\nlocal  x  = 1\nlocal  y  = 2\nlocal c = 3\n"
     );
+}
+
+/// `format` says the same as `fmt`, because an author reaches for either one
+#[test]
+fn the_format_spelling_holds_a_region_too() {
+    let src = "local  a  = 1\n-- larvae: format off\nlocal  m = {1,0}\n-- larvae: format on\nlocal  b  = 2\n";
+
+    assert_eq!(
+        fmt(src),
+        "local a = 1\n-- larvae: format off\nlocal  m = {1,0}\n-- larvae: format on\nlocal b = 2\n"
+    );
+}
+
+/// A marker is a comment, so the gap an author leaves below one is theirs
+#[test]
+fn a_gap_below_an_on_marker_is_kept() {
+    let src = "-- larvae: format off\nlocal  m = {1,0}\n-- larvae: format on\n\nlocal b = 2\n";
+
+    assert_eq!(fmt(src), src);
 }
 
 /// A project that comes from stylua keeps the markers already in its files.

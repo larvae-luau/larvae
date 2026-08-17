@@ -346,8 +346,7 @@ impl<'a> Emitter<'a> {
         let mut parts: Vec<Doc<'a>> = Vec::with_capacity(pieces.len() * 3 + 2);
 
         for c in &prologue {
-            parts.push(self.comment_doc(*c));
-            parts.push(Doc::Hard);
+            parts.push(self.comment_line(*c));
         }
 
         for (i, piece) in pieces.iter().enumerate() {
@@ -363,8 +362,7 @@ impl<'a> Emitter<'a> {
             }
 
             for c in &piece.leading {
-                parts.push(self.comment_doc(*c));
-                parts.push(Doc::Hard);
+                parts.push(self.comment_line(*c));
             }
 
             match self.verbatim_stmt(piece.stmt) {
@@ -391,9 +389,14 @@ impl<'a> Emitter<'a> {
                 });
             }
 
+            /*
+            The break comes before the comment here, and not after it. The
+            closer of the block follows the last comment, and the caller
+            supplies the break above that closer.
+            */
             for (i, c) in tail.leading.iter().enumerate() {
                 if i > 0 {
-                    parts.push(Doc::Hard);
+                    parts.push(self.break_after(tail.leading[i - 1]));
                 }
 
                 parts.push(self.comment_doc(*c));
@@ -488,6 +491,27 @@ impl<'a> Emitter<'a> {
         };
 
         (prologue, pieces, tail)
+    }
+
+    /// A comment on its own line, with the break that the author put below it.
+    fn comment_line(&self, c: Comment) -> Doc<'a> {
+        Doc::concat([self.comment_doc(c), self.break_after(c)])
+    }
+
+    /*
+    The break that goes below this comment.
+
+    A leading comment took a plain hard break before, so a blank line below a
+    comment was lost. The gap above the comment survived, because the piece
+    carries it. That made a comment behave as one more line of the code below
+    it, and an author who separated a note from the code got the two joined.
+    */
+    fn break_after(&self, c: Comment) -> Doc<'a> {
+        match self.trivia.blank_after(c) {
+            true => Doc::Blank,
+
+            false => Doc::Hard,
+        }
     }
 
     fn trailing_doc(&self, comment: Option<Comment>) -> Doc<'a> {

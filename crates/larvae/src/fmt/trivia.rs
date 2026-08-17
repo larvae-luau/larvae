@@ -122,6 +122,29 @@ impl<'a> Trivia<'a> {
         }
     }
 
+    /*
+    Reports if the author left a blank line directly below this comment.
+
+    A comment is a paragraph of its own. The author who puts a blank line
+    below one separates it from the code that follows, and the author who
+    does not attaches it to that code. The two say different things, so the
+    formatter keeps the difference.
+
+    The question goes to the source and not to the comment list. The next
+    item below a comment is another comment, or code, or the closer of a
+    block, or the end of the file. All four read the same way here, so the
+    caller does not have to know which one it has.
+    */
+    pub fn blank_after(&self, c: Comment) -> bool {
+        let rest = &self.src[c.end as usize..];
+
+        let next = rest
+            .find(|ch: char| !ch.is_whitespace())
+            .unwrap_or(rest.len());
+
+        self.blank_between(c.end, c.end + next as u32)
+    }
+
     /// Reports if a blank line separates the code that ends at `lo` from the code at `hi`.
     /// It looks past the comments in between, so a commented statement keeps its gap.
     pub fn blank_before_code(&self, lo: u32, hi: u32) -> bool {
@@ -279,6 +302,33 @@ mod tests {
 
         assert!(!t.split(lo, hi).blank_before_leading);
         assert!(!t.blank_before_code(lo, hi));
+    }
+
+    /*
+    The gap below a comment reads the same whatever comes next.
+
+    Four things can follow a comment: another comment, code, the closer of a
+    block, and the end of the file. The check goes to the source, so the
+    caller does not have to know which one it has.
+    */
+    #[test]
+    fn the_gap_below_a_comment_is_reported() {
+        let cases = [
+            ("-- a\n\nlocal b = 2\n", true),
+            ("-- a\nlocal b = 2\n", false),
+            ("-- a\n\n-- b\nlocal c = 3\n", true),
+            ("-- a\n-- b\nlocal c = 3\n", false),
+            ("do\n-- a\n\nend\n", true),
+            ("do\n-- a\nend\n", false),
+            ("local a = 1\n-- a\n", false),
+        ];
+
+        for (src, want) in cases {
+            let t = trivia(src);
+            let first = t.comments[0];
+
+            assert_eq!(t.blank_after(first), want, "{src:?}");
+        }
     }
 
     /// A trailing comment must not hide the blank line after it.

@@ -100,7 +100,17 @@ pub fn switch(text: &str) -> Option<(Subject, Switch)> {
         };
     }
 
+    /*
+    `format` says the same thing as `fmt`, and an author reaches for either
+    one. A marker that larvae does not know stays in the file as an ordinary
+    comment, and the author sees no message and no effect. So larvae reads
+    both spellings. `format` comes first, because `fmt` is not a prefix of it
+    and the order between them does not matter, but a future longer name
+    could collide.
+    */
     let (subject, tail) = match () {
+        _ if let Some(tail) = rest.strip_prefix("format") => (Subject::Fmt, tail),
+
         _ if let Some(tail) = rest.strip_prefix("fmt") => (Subject::Fmt, tail),
 
         _ if let Some(tail) = rest.strip_prefix("lint") => (Subject::Lint, tail),
@@ -301,6 +311,23 @@ mod tests {
         assert_eq!(
             switch("-- larvae: lint off( 12 )"),
             Some((Subject::Lint, Switch::OffLines(12)))
+        );
+    }
+
+    /// An author reaches for either name, and both mean the formatter
+    #[test]
+    fn format_says_the_same_as_fmt() {
+        assert_eq!(
+            switch("-- larvae: format off"),
+            Some((Subject::Fmt, Switch::Off))
+        );
+        assert_eq!(
+            switch("-- larvae: format on"),
+            Some((Subject::Fmt, Switch::On))
+        );
+        assert_eq!(
+            switch("-- larvae: format off(3)"),
+            Some((Subject::Fmt, Switch::OffLines(3)))
         );
     }
 
