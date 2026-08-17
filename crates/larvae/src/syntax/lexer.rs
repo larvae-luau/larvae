@@ -61,6 +61,11 @@ escape from Lua 5.2, and it is how an author writes one long string over
 several lines. Without the rule the newline after `\z` closes the literal, and
 larvae refuses a file that Luau accepts.
 
+A `\` before the end of the line continues the string onto the next line. On
+a file with CRLF endings that escape is three bytes, `\`, CR, LF, and Luau
+reads it as one continuation. Two bytes here would leave a bare LF inside
+the literal, and larvae would refuse a Windows checkout that Luau accepts.
+
 Every other escape is two bytes here. The lexer only needs the extent, so it
 does not read what the escape means.
 */
@@ -71,6 +76,8 @@ fn past_escape(b: &[u8], at: usize) -> usize {
         while i < b.len() && b[i].is_ascii_whitespace() {
             i += 1;
         }
+    } else if b.get(at + 1) == Some(&b'\r') && b.get(i) == Some(&b'\n') {
+        i += 1;
     }
 
     i
@@ -520,6 +527,27 @@ mod tests {
 
         assert_eq!(toks[0].kind, TokKind::InterpStr);
         assert_eq!(toks[1].kind, TokKind::Ident);
+    }
+
+    /*
+    A Windows checkout turns LF into CRLF, and Luau still reads the file.
+    The `\` continuation is then `\`, CR, LF, one escape over three bytes,
+    and `\z` swallows CR like any other whitespace. The same file must lex
+    here, or a checkout on one platform refuses what another accepts.
+    */
+    #[test]
+    fn string_continuations_survive_crlf_endings() {
+        let quoted = "print(\"Hello \\\r\n\tWorld\")\r\n";
+        assert!(lex(quoted).is_ok(), "backslash continuation over CRLF");
+
+        let z = "print(\"testing \\z\r\n   twelve\")\r\n";
+        assert!(lex(z).is_ok(), "\\z over CRLF");
+
+        let interp = "print(`interp \\z\r\n   twelve`)\r\n";
+        assert!(lex(interp).is_ok(), "interp \\z over CRLF");
+
+        let interp_cont = "print(`a \\\r\n b`)\r\n";
+        assert!(lex(interp_cont).is_ok(), "interp continuation over CRLF");
     }
 
     #[test]
