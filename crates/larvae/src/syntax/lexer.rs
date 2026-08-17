@@ -53,6 +53,29 @@ pub struct Lexed {
     pub comments: Vec<(u32, u32)>,
 }
 
+/*
+The byte just past an escape sequence that opens at `at`.
+
+`\z` takes the whitespace that follows it, newlines included. Luau keeps this
+escape from Lua 5.2, and it is how an author writes one long string over
+several lines. Without the rule the newline after `\z` closes the literal, and
+larvae refuses a file that Luau accepts.
+
+Every other escape is two bytes here. The lexer only needs the extent, so it
+does not read what the escape means.
+*/
+fn past_escape(b: &[u8], at: usize) -> usize {
+    let mut i = at + 2;
+
+    if b.get(at + 1) == Some(&b'z') {
+        while i < b.len() && b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+    }
+
+    i
+}
+
 pub fn lex(src: &str) -> Result<Lexed, LexError> {
     let b = src.as_bytes();
     let mut toks = Vec::with_capacity(src.len() / 6);
@@ -128,7 +151,7 @@ pub fn lex(src: &str) -> Result<Lexed, LexError> {
                     }
 
                     match b[i] {
-                        b'\\' => i += 2,
+                        b'\\' => i = past_escape(b, i),
 
                         b'\n' => err!(start, "unterminated string literal (newline)"),
 
@@ -162,7 +185,7 @@ pub fn lex(src: &str) -> Result<Lexed, LexError> {
                     }
 
                     match b[i] {
-                        b'\\' => i += 2,
+                        b'\\' => i = past_escape(b, i),
 
                         b'{' => {
                             brace_depth += 1;

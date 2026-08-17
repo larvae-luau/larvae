@@ -77,7 +77,17 @@ impl<'a> Parser<'a> {
                 self.bump();
             } else if self.at("->") {
                 self.bump();
-                self.type_suffixed()?;
+
+                /*
+                The return type is a whole type, so `() -> | a | b` parses.
+
+                Luau allows a leading `|` or `&` there, and it allows a union
+                without one. The parser records the extent of a type and never
+                its structure, so it does not matter here whether `a -> b | c`
+                groups as `a -> (b | c)` or `(a -> b) | c`. The span covers the
+                same tokens either way.
+                */
+                self.type_body()?;
             } else {
                 break;
             }
@@ -112,10 +122,11 @@ impl<'a> Parser<'a> {
             }
 
             "..." => {
-                // This is the variadic element of a type pack.
+                // The variadic element of a type pack, and it can be a union:
+                // `...("critical" | "weak")` and `..."hit" | "miss"`.
                 self.bump();
 
-                self.type_suffixed()
+                self.type_body()
             }
 
             // This is a generic function type: `<T>(T) -> T`.
@@ -135,7 +146,7 @@ impl<'a> Parser<'a> {
                             self.bump();
 
                             if !self.at(")") && !self.at(",") {
-                                self.type_suffixed()?;
+                                self.type_body()?;
                             }
                         } else {
                             // The parameter can have a name.
