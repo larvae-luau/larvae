@@ -1,5 +1,8 @@
 {
   "luau-lsp.types.definitionFiles": {
     "worm": "worm.d.luau"
+  },
+  "files.exclude": {
+    "dist": true
   }
 }
