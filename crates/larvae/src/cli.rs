@@ -8,11 +8,12 @@ use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::{self, self_cmd::SelfCommand};
 use crate::{art, ui};
+
 #[derive(Parser)]
 #[command(
     name = "larvae",
     version,
-    about = "One toolchain for all of Luau: transforms today, formatting and linting next",
+    about = "Format, lint, and ship Luau",
     disable_help_flag = true
 )]
 struct Cli {

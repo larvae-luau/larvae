@@ -1,7 +1,7 @@
 [package]
 name = "larvae"
-description = "One toolchain for all of Luau: transforms today, formatting and linting next, in one parallel Rust binary"
-keywords = ["luau", "roblox", "toolchain", "rojo", "require"]
+description = "Format, lint, and ship Luau"
+keywords = ["luau", "roblox", "toolchai", "rojo", "require"]
 categories = ["development-tools::build-utils", "command-line-utilities"]
 version.workspace = true
 edition.workspace = true
