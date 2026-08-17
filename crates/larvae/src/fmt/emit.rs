@@ -21,7 +21,7 @@ use crate::syntax::lexer::{Tok, TokKind};
 
 use super::config::{
     BlockNewlineGaps, CallParens, CollapseSimpleStatement, FmtConfig, IfExpansion, IfPlacement,
-    QuoteStyle, RequireGrouping, Semicolons,
+    IfStyle, QuoteStyle, RequireGrouping, Semicolons,
 };
 use super::doc::Doc;
 use super::trivia::{Attached, Comment, Trivia};
@@ -1274,20 +1274,53 @@ impl<'a> Emitter<'a> {
 
         let mut out: Vec<Doc<'a>> = Vec::with_capacity(parts.len() * 4 + 3);
 
-        for (i, (cond, value)) in parts.into_iter().enumerate() {
-            if i > 0 {
-                out.push(split());
-            }
+        /*
+        The two shapes break on the two sides of the keyword.
 
-            out.push(Doc::text(if i == 0 { "if " } else { "elseif " }));
-            out.push(cond);
-            out.push(Doc::text(" then"));
-            out.push(self.indented(vec![split(), value]));
+        `block` ends a line after `then`, so the value sits below it. `leading`
+        ends a line before `then`, so the keyword starts the line and takes
+        its value. Flat, the two produce the same characters, because the
+        break is one space either way.
+        */
+        for (i, (cond, value)) in parts.into_iter().enumerate() {
+            let keyword = Doc::text(if i == 0 { "if " } else { "elseif " });
+
+            match self.cfg.if_expression.style {
+                IfStyle::Block => {
+                    if i > 0 {
+                        out.push(split());
+                    }
+
+                    out.push(keyword);
+                    out.push(cond);
+                    out.push(Doc::text(" then"));
+                    out.push(self.indented(vec![split(), value]));
+                }
+
+                IfStyle::Leading => {
+                    match i {
+                        0 => out.push(keyword),
+
+                        _ => out.push(self.indented(vec![split(), keyword])),
+                    }
+
+                    out.push(cond);
+                    out.push(self.indented(vec![split(), Doc::text("then "), value]));
+                }
+            }
         }
 
-        out.push(split());
-        out.push(Doc::text("else"));
-        out.push(self.indented(vec![split(), other]));
+        match self.cfg.if_expression.style {
+            IfStyle::Block => {
+                out.push(split());
+                out.push(Doc::text("else"));
+                out.push(self.indented(vec![split(), other]));
+            }
+
+            IfStyle::Leading => {
+                out.push(self.indented(vec![split(), Doc::text("else "), other]));
+            }
+        }
 
         Doc::group(Doc::concat(out))
     }

@@ -189,6 +189,43 @@ pub enum IfExpansion {
     WhenLarge,
 }
 
+/*
+Selects the shape of an opened `if` expression.
+
+Both shapes put one clause on a line. They differ on which side of the
+keyword the line breaks, and so on where the reader's eye finds the keyword.
+*/
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum IfStyle {
+    /*
+    The value goes below its keyword, in the shape of an `if` statement.
+
+    ```
+    local a = if bar then
+        "baz"
+    else
+        "foo"
+    ```
+    */
+    #[default]
+    Block,
+    /*
+    The keyword starts the line and takes its value.
+
+    ```
+    local a = if bar
+        then "baz"
+        else "foo"
+    ```
+
+    This is the position the formatter already gives the operator of a long
+    binary chain. The reader finds the keyword at one column instead of at
+    the uneven right edge.
+    */
+    Leading,
+}
+
 /// Selects where the `if` sits when the formatter opens the expression.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -222,8 +259,10 @@ pub struct IfExpression {
     #[serde(default = "default_if_width")]
     pub width: usize,
     #[serde(default)]
+    pub style: IfStyle,
+    #[serde(default)]
     pub placement: IfPlacement,
-    /// The indent levels between a keyword line and the value below it.
+    /// The indent levels that a continuation line of the expression takes.
     #[serde(default = "default_if_indent")]
     pub indent: usize,
 }
@@ -233,6 +272,7 @@ impl Default for IfExpression {
         Self {
             expand: IfExpansion::default(),
             width: default_if_width(),
+            style: IfStyle::default(),
             placement: IfPlacement::default(),
             indent: default_if_indent(),
         }

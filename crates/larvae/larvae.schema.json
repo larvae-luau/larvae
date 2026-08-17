@@ -803,6 +803,14 @@
               "default": 60,
               "description": "The width at which \"when-large\" opens an expression. It also governs a nested expression in every mode, so an if inside an if waits until it earns the room on its own.\n\n[if_expression.width \u2192](https://larvae-luau.github.io/docs/reference/formatting#if-expression-width)"
             },
+            "style": {
+              "enum": [
+                "block",
+                "leading"
+              ],
+              "default": "block",
+              "description": "The shape of an opened expression. \"block\" puts the value below its keyword, in the shape of an if statement. \"leading\" starts the line with the keyword and takes its value: \"if bar\" / \"then a\" / \"else b\".\n\n[if_expression.style \u2192](https://larvae-luau.github.io/docs/reference/formatting#if-expression-style)"
+            },
             "placement": {
               "enum": [
                 "same-line",

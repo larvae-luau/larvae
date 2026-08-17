@@ -9,8 +9,8 @@ whitespace, and every comment must stay.
 */
 
 use larvae::fmt::config::{
-    CallParens, CollapseSimpleStatement, IfExpansion, IfExpression, IfPlacement, IndentType,
-    LineEndings, QuoteStyle, SpaceAfterFunctionNames,
+    CallParens, CollapseSimpleStatement, IfExpansion, IfExpression, IfPlacement, IfStyle,
+    IndentType, LineEndings, QuoteStyle, SpaceAfterFunctionNames,
 };
 use larvae::fmt::{FmtConfig, format};
 
@@ -1578,6 +1578,70 @@ fn the_indent_levels_are_the_projects_to_choose() {
     );
 }
 
+fn leading(expand: IfExpansion) -> FmtConfig {
+    FmtConfig {
+        if_expression: IfExpression {
+            expand,
+            style: IfStyle::Leading,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+/// The keyword starts the line and takes its value.
+#[test]
+fn the_leading_style_puts_the_keyword_first() {
+    assert_eq!(
+        fmt_with(
+            "local a = if bar then 'baz' else 'foo'",
+            leading(IfExpansion::Always)
+        ),
+        "local a = if bar\n\tthen \"baz\"\n\telse \"foo\"\n"
+    );
+}
+
+#[test]
+fn the_leading_style_gives_each_clause_of_a_chain_a_line() {
+    assert_eq!(
+        fmt_with(
+            "local a = if x then 1 elseif y then 2 else 3",
+            leading(IfExpansion::Always)
+        ),
+        "local a = if x\n\tthen 1\n\telseif y\n\tthen 2\n\telse 3\n"
+    );
+}
+
+/// Flat, the two styles write the same characters.
+#[test]
+fn the_leading_style_is_the_same_on_one_line() {
+    assert_eq!(
+        fmt_with(
+            "local a = if bar then 'baz' else 'foo'",
+            leading(IfExpansion::WhenLarge)
+        ),
+        "local a = if bar then \"baz\" else \"foo\"\n"
+    );
+}
+
+#[test]
+fn the_leading_style_takes_next_line_too() {
+    let cfg = FmtConfig {
+        if_expression: IfExpression {
+            expand: IfExpansion::Always,
+            style: IfStyle::Leading,
+            placement: IfPlacement::NextLine,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    assert_eq!(
+        fmt_with("local a = if bar then 'baz' else 'foo'", cfg),
+        "local a =\n\tif bar\n\t\tthen \"baz\"\n\t\telse \"foo\"\n"
+    );
+}
+
 /// An opened expression must still reparse and must still be stable.
 #[test]
 fn every_if_layout_is_idempotent_and_parses() {
@@ -1600,6 +1664,19 @@ fn every_if_layout_is_idempotent_and_parses() {
             if_expression: IfExpression {
                 expand: IfExpansion::Always,
                 placement: IfPlacement::NextLine,
+                style: IfStyle::Block,
+                width: 5,
+                indent: 2,
+            },
+            ..Default::default()
+        },
+        leading(IfExpansion::Always),
+        leading(IfExpansion::WhenLarge),
+        FmtConfig {
+            if_expression: IfExpression {
+                expand: IfExpansion::Always,
+                placement: IfPlacement::NextLine,
+                style: IfStyle::Leading,
                 width: 5,
                 indent: 2,
             },
