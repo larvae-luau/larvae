@@ -1119,7 +1119,32 @@ impl<'a> Emitter<'a> {
             }
 
             Expr::Paren { inner, .. } => {
-                Doc::concat([Doc::text("("), self.expr(inner), Doc::text(")")])
+                let doc = self.expr(inner);
+
+                /*
+                A parenthesised `if` expression that opens takes the shape of
+                the parentheses with it.
+
+                Without this the `(` sits against the `if` and the `)` sits
+                against the last value, and the reader has to find where the
+                expression starts and stops inside a line that is already
+                broken over four of them. A table and a function body already
+                read this way.
+
+                Only an `if` that opened is treated so. One that stays on a
+                line keeps its parentheses against it, which is what every
+                other parenthesised expression does.
+                */
+                if matches!(**inner, Expr::IfElse { .. }) && doc.flat_width().is_none() {
+                    return Doc::concat([
+                        Doc::text("("),
+                        Doc::indent(Doc::concat([Doc::Hard, doc])),
+                        Doc::Hard,
+                        Doc::text(")"),
+                    ]);
+                }
+
+                Doc::concat([Doc::text("("), doc, Doc::text(")")])
             }
 
             Expr::Index { object, key, .. } => match key {
@@ -1350,22 +1375,40 @@ impl<'a> Emitter<'a> {
 
         let prec = precedence(self.one(*op));
         let mut ops: Vec<&'a str> = Vec::new();
-        let mut operands: Vec<Doc<'a>> = Vec::new();
+        let mut operands: Vec<(Doc<'a>, bool)> = Vec::new();
 
         self.flatten_binary(e, prec, &mut ops, &mut operands);
 
+        let count = ops.len();
         let mut operands = operands.into_iter();
-        let first = operands.next().expect("a chain has a left operand");
-        let mut rest = Vec::with_capacity(ops.len() * 3);
+        let (first, _) = operands.next().expect("a chain has a left operand");
+        let mut rest = Vec::with_capacity(count * 3);
+        let mut tail = Doc::Nil;
 
-        for (op, operand) in ops.into_iter().zip(operands) {
+        for (i, (op, (operand, hangs))) in ops.into_iter().zip(operands).enumerate() {
+            /*
+            The last operand hangs off the operator instead of moving below
+            it.
+
+            `a .. (if c then x else y)` with the `if` opened reads as one
+            thing that starts at the `(`. A break before the `..` would put
+            the operator on a line of its own above a block that already has
+            its own lines. A table argument hangs off a `=` for the same
+            reason.
+            */
+            if i + 1 == count && hangs {
+                tail = Doc::concat([Doc::text(" "), Doc::text(op), Doc::text(" "), operand]);
+
+                break;
+            }
+
             rest.push(Doc::Line);
             rest.push(Doc::text(op));
             rest.push(Doc::text(" "));
             rest.push(operand);
         }
 
-        Doc::group(Doc::concat([first, Doc::indent(Doc::concat(rest))]))
+        Doc::group(Doc::concat([first, Doc::indent(Doc::concat(rest)), tail]))
     }
 
     fn flatten_binary(
@@ -1373,7 +1416,7 @@ impl<'a> Emitter<'a> {
         e: &Expr,
         prec: u8,
         ops: &mut Vec<&'a str>,
-        operands: &mut Vec<Doc<'a>>,
+        operands: &mut Vec<(Doc<'a>, bool)>,
     ) {
         match e {
             Expr::Binary { op, lhs, rhs, .. } if precedence(self.one(*op)) == prec => {
@@ -1382,7 +1425,22 @@ impl<'a> Emitter<'a> {
                 self.flatten_binary(rhs, prec, ops, operands);
             }
 
-            _ => operands.push(self.expr(e)),
+            _ => {
+                let doc = self.expr(e);
+
+                /*
+                Only a parenthesised `if` that opened hangs here.
+
+                A table and a function already reach this point on a line of
+                their own, through paths that predate the `if` option, and
+                widening the rule to them would move the output of every
+                project that never asked for it.
+                */
+                let hangs = matches!(e, Expr::Paren { inner, .. } if matches!(**inner, Expr::IfElse { .. }))
+                    && doc.flat_width().is_none();
+
+                operands.push((doc, hangs));
+            }
         }
     }
 

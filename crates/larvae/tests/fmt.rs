@@ -1497,8 +1497,13 @@ fn a_nested_expression_over_the_width_opens_as_well() {
         if_cfg(IfExpansion::Always),
     );
 
-    assert!(out.contains("(if someLongCondition then\n"), "{out}");
-    assert!(out.contains("\t\t\"a long inner branch\"\n"), "{out}");
+    // the parentheses take their own lines, so the reader sees where it starts
+    assert!(
+        out.contains("\t(\n\t\tif someLongCondition then\n"),
+        "{out}"
+    );
+    assert!(out.contains("\t\t\t\"a long inner branch\"\n"), "{out}");
+    assert!(out.contains("\n\t)\n"), "{out}");
 }
 
 /// A small width reaches the inner expression too.
@@ -1515,7 +1520,7 @@ fn the_width_reaches_a_nested_expression() {
 
     let out = fmt_with("local a = if x then (if y then 1 else 2) else 3", cfg);
 
-    assert!(out.contains("(if y then\n"), "{out}");
+    assert!(out.contains("(\n\t\tif y then\n"), "{out}");
 }
 
 #[test]
@@ -1639,6 +1644,111 @@ fn the_leading_style_takes_next_line_too() {
     assert_eq!(
         fmt_with("local a = if bar then 'baz' else 'foo'", cfg),
         "local a =\n\tif bar\n\t\tthen \"baz\"\n\t\telse \"foo\"\n"
+    );
+}
+
+fn next_line(width: usize) -> FmtConfig {
+    FmtConfig {
+        column_width: width,
+        indent_type: IndentType::Spaces,
+        indent_width: 4,
+        if_expression: IfExpression {
+            expand: IfExpansion::Always,
+            style: IfStyle::Block,
+            placement: IfPlacement::NextLine,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+/*
+A real case, from a terminal UI that builds a line out of colour codes.
+
+The nested expression is an operand of `..` and it sits in parentheses. Two
+rules meet here. The parentheses take their own lines, so the reader sees
+where the inner expression starts and stops. And the `..` stays on the line
+above rather than moving below, because the operand it joins already has
+lines of its own.
+*/
+#[test]
+fn a_parenthesised_nested_expression_hangs_off_the_operator() {
+    let src = concat!(
+        "local option_line =\n",
+        "    if option_index == selected then\n",
+        "        `{\" \" .. colors.bold.green(\">\")} {index_for_display} {colors.style.underline(option)}` .. (\n",
+        "            if submit_on_click then\n",
+        "                string.rep(\" \", 4) .. GREEN_BACKGROUND_WITH_WHITE_TEXT .. \" Click again to confirm \" .. colors.codes.RESET\n",
+        "            else\n",
+        "                \"\"\n",
+        "        )\n",
+        "    else\n",
+        "        `   {index_for_display} {option}`\n",
+    );
+
+    // 140 columns, because the inner concat runs to 122 and a narrower
+    // budget would break it and say nothing about the shape under test
+    assert_eq!(fmt_with(src, next_line(140)), src);
+}
+
+/// The same shape holds when the width forces the inner chain to break.
+#[test]
+fn the_parentheses_keep_their_lines_when_the_inner_chain_breaks() {
+    let src = concat!(
+        "local option_line =\n",
+        "    if selected then\n",
+        "        `a` .. (\n",
+        "            if submit then\n",
+        "                string.rep(\" \", 4) .. GREEN_BACKGROUND .. \" Click again to confirm \" .. colors.codes.RESET\n",
+        "            else\n",
+        "                \"\"\n",
+        "        )\n",
+        "    else\n",
+        "        `b`\n",
+    );
+
+    let out = fmt_with(src, next_line(80));
+
+    assert!(
+        out.contains("`a` .. (\n"),
+        "the operator stays on the line: {out}"
+    );
+    assert!(
+        out.contains("\n        )\n"),
+        "the closer takes its own line: {out}"
+    );
+    assert!(
+        out.contains("string.rep(\" \", 4)\n"),
+        "the inner chain breaks at this width: {out}"
+    );
+    assert_eq!(fmt_with(&out, next_line(80)), out, "and it is stable");
+}
+
+/// An `elseif` arm reads the same way as the first one.
+#[test]
+fn an_elseif_chain_opens_below_the_equals() {
+    let src = concat!(
+        "local scroller_message =\n",
+        "    if current_size.x > 60 then\n",
+        "        `Scroll up or down to see more options ({options_window.x}-{options_window.y} of {#options} visible)`\n",
+        "    elseif current_size.x > 20 then\n",
+        "        `({options_window.x}-{options_window.y}/{#options} visible)`\n",
+        "    else\n",
+        "        \"pls widen\"\n",
+    );
+
+    assert_eq!(fmt_with(src, next_line(120)), src);
+}
+
+/// A parenthesised expression that stays on one line keeps its parentheses against it.
+#[test]
+fn parentheses_that_did_not_open_are_left_alone() {
+    assert_eq!(
+        fmt_with(
+            "local a = if x then (if y then 1 else 2) else 3",
+            if_cfg(IfExpansion::Always)
+        ),
+        "local a = if x then\n\t(if y then 1 else 2)\nelse\n\t3\n"
     );
 }
 
