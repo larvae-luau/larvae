@@ -19,6 +19,27 @@ Notable changes land here. Format follows
 - A file that a worm claims reads the markers too. The comments come from the
   reply of the worm, because larvae does not read such a file as Luau and so
   finds no comment in it itself
+- `format` is read as a name for the formatter beside `fmt`, in each of the
+  three forms, because an author reaches for either one
+- `[fmt] if_expression`, which lays out Luau's `if` expression. `expand`
+  takes `never`, `always`, or `when-large`; `width` gives the boundary that
+  `when-large` measures against; `style` takes `block` or `leading`;
+  `placement` selects whether the `if` stays on the line of the binding;
+  `indent` gives the levels a continuation line takes. `expand` is `never` by
+  default, and that layout is what larvae always wrote. A nested expression
+  waits for `width` in every mode, because `always` at each level gives a
+  stair of keywords for an expression that reads well on one line
+
+### Fixed
+
+- A comment keeps the blank line below it. The formatter gave a leading
+  comment a plain line break, so a note that an author had separated from the
+  code below it came back joined to that code
+- Every marker form now holds in a file that a worm claims. A worm sends the
+  layout for the whole file, so a marker held the Luau of a region and not
+  the markup around it: with `attribute_per_line` on, the attributes of an
+  element inside `fmt off` still moved. Larvae writes the source back over
+  each held region after it renders what the worm sent
 
 ## 0.2.0 - 2026-08-16
 
