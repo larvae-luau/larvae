@@ -73,6 +73,19 @@ stack frame. This conversion copies data, so `format` does not call these
 functions.
 */
 pub(crate) fn doc_of(src: &str, cfg: &FmtConfig) -> Result<doc::Doc<'static>> {
+    doc_of_holding(src, cfg, true)
+}
+
+/*
+The same, and `holds` says whether a marker inside the slice takes effect.
+
+A worm that sends a whole document gets its regions held by the caller, over
+the rendered text, because the layout of the markup around the Luau is the
+worm's and not larvae's. That pass covers the Luau in the region as well. So
+the caller turns this one off, and the region is written back one time rather
+than two.
+*/
+pub(crate) fn doc_of_holding(src: &str, cfg: &FmtConfig, holds: bool) -> Result<doc::Doc<'static>> {
     let lexed = lexer::lex(src)
         .map_err(|e| anyhow::anyhow!("syntax error at byte {}, {}", e.offset, e.message))?;
 
@@ -94,7 +107,12 @@ pub(crate) fn doc_of(src: &str, cfg: &FmtConfig) -> Result<doc::Doc<'static>> {
     the formatter only through this function, so without this a marker in such
     a file would do nothing.
     */
-    let ignored = crate::flags::off_ranges(src, &lexed.comments, crate::flags::Subject::Fmt);
+    let ignored = match holds {
+        true => crate::flags::off_ranges(src, &lexed.comments, crate::flags::Subject::Fmt),
+
+        false => Vec::new(),
+    };
+
     let emitter = emitter.ignoring(ignored);
 
     Ok(emitter.block_body(&chunk.block).into_owned())

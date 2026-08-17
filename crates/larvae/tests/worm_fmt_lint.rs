@@ -263,6 +263,49 @@ fn a_lint_off_region_suppresses_a_worm_finding() {
     );
 }
 
+/*
+The count form holds a worm finding too.
+
+A finding of a worm carries a source span, and the three forms of the marker
+all arrive as a range of the source. So the count needs nothing of its own
+here, and this test says so.
+*/
+#[test]
+fn a_lint_count_suppresses_a_worm_finding_on_those_lines() {
+    let root = project(true);
+    write(
+        root.path(),
+        "src/app.luaux",
+        "-- larvae: lint off(1)\nlocal bad = 1\n",
+    );
+
+    let (ok, text) = run(root.path(), &["lint"]);
+
+    assert!(ok, "{text}");
+    assert!(
+        !text.contains("markup.bad_word"),
+        "the count must hold it: {text}"
+    );
+}
+
+/// A count that runs out leaves the lines below it alone.
+#[test]
+fn a_lint_count_stops_where_it_says() {
+    let root = project(true);
+    write(
+        root.path(),
+        "src/app.luaux",
+        "-- larvae: lint off(1)\nlocal fine = 1\nlocal bad = 2\n",
+    );
+
+    let (_, text) = run(root.path(), &["lint"]);
+
+    assert!(
+        text.contains("markup.bad_word"),
+        "the line past the count still reports: {text}"
+    );
+}
+
 /// A file held off in full reports nothing from the worm.
 #[test]
 fn a_claimed_file_can_hold_the_linter_off_in_full() {
