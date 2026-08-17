@@ -46,6 +46,11 @@ jobs:
         # corpus round trip, coverage, mutation and truncation sweeps
         run: cargo test -p larvae --test parser
 
+      - name: Parser agrees with Luau
+        # Recorded verdicts of the real Luau parser, so this needs no Luau.
+        # scripts/parser_oracle.sh makes the recording and checks it again.
+        run: cargo test -p larvae --test parser_oracle
+
   smoke:
     name: CLI smoke test
     runs-on: ubuntu-latest
