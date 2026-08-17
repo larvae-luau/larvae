@@ -68,6 +68,40 @@ impl<'a> Doc<'a> {
         Self::IfBreak(Box::new(flat), Box::new(broken))
     }
 
+    /*
+    The width this document takes on one line, or None when it cannot take
+    one line.
+
+    A caller that must choose a layout before the renderer runs asks this.
+    `fits` answers a related question, but it answers it against a column and
+    a style, and it stops as soon as it knows. This returns the width itself,
+    which a caller compares against a width of its own.
+    */
+    pub fn flat_width(&self) -> Option<usize> {
+        match self {
+            Self::Nil | Self::Soft => Some(0),
+
+            Self::Text(s) => match s.contains('\n') {
+                true => None,
+
+                false => Some(width_of(s)),
+            },
+
+            Self::Line => Some(1),
+
+            // A forced break already answers the flat question.
+            Self::Hard | Self::Blank => None,
+
+            Self::IfBreak(flat, _) => flat.flat_width(),
+
+            Self::Group(inner) | Self::Indent(inner) => inner.flat_width(),
+
+            Self::Concat(parts) => parts
+                .iter()
+                .try_fold(0, |sum, part| Some(sum + part.flat_width()?)),
+        }
+    }
+
     pub fn concat(parts: impl IntoIterator<Item = Doc<'a>>) -> Self {
         let parts: Vec<_> = parts.into_iter().filter(|d| !d.is_nil()).collect();
 

@@ -20,8 +20,8 @@ use crate::syntax::ast::*;
 use crate::syntax::lexer::{Tok, TokKind};
 
 use super::config::{
-    BlockNewlineGaps, CallParens, CollapseSimpleStatement, FmtConfig, QuoteStyle, RequireGrouping,
-    Semicolons,
+    BlockNewlineGaps, CallParens, CollapseSimpleStatement, FmtConfig, IfExpansion, IfPlacement,
+    QuoteStyle, RequireGrouping, Semicolons,
 };
 use super::doc::Doc;
 use super::trivia::{Attached, Comment, Trivia};
@@ -35,6 +35,16 @@ pub struct Emitter<'a> {
     rebindings: super::rebind::Rebindings,
     /// Byte ranges that a `fmt off` flag holds the formatter out of
     ignored: Vec<(u32, u32)>,
+    /*
+    The count of `if` expressions that enclose the one the emitter is on.
+
+    An `if` expression inside another one follows a rule of its own, so the
+    emitter has to know which it has. The whole emitter runs behind `&self`,
+    because a document borrows the source. A counter is the one piece of
+    state the walk carries, so it sits in a `Cell` rather than turn every
+    method into `&mut self`.
+    */
+    if_depth: std::cell::Cell<usize>,
 }
 
 impl<'a> Emitter<'a> {
@@ -52,6 +62,7 @@ impl<'a> Emitter<'a> {
             cfg,
             rebindings,
             ignored: Vec::new(),
+            if_depth: std::cell::Cell::new(0),
         }
     }
 
@@ -843,6 +854,24 @@ impl<'a> Emitter<'a> {
         deserves its own lines.
         */
         if values.len() == 1 {
+            /*
+            An `if` expression that opens is the one exception, and only when
+            the user asks for it.
+
+            The test is the document and not the option, because the option
+            says `next-line` for an expression that stays on one line as
+            well. A document that cannot go flat is one that `if_else`
+            settled on opening. So the break after the `=` follows the
+            expression, and the two never disagree.
+            */
+            let next_line = self.cfg.if_expression.placement == IfPlacement::NextLine
+                && matches!(values[0], Expr::IfElse { .. })
+                && list.flat_width().is_none();
+
+            if next_line {
+                return self.indented(vec![Doc::Hard, list]);
+            }
+
             return Doc::concat([Doc::text(" "), list]);
         }
 
@@ -1124,22 +1153,7 @@ impl<'a> Emitter<'a> {
                 branches,
                 else_value,
                 ..
-            } => {
-                let mut parts = Vec::with_capacity(branches.len() * 4 + 2);
-
-                for (i, (cond, value)) in branches.iter().enumerate() {
-                    parts.push(Doc::text(if i == 0 { "if " } else { "elseif " }));
-                    parts.push(self.expr(cond));
-                    parts.push(Doc::text(" then "));
-                    parts.push(self.expr(value));
-                    parts.push(Doc::Line);
-                }
-
-                parts.push(Doc::text("else "));
-                parts.push(self.expr(else_value));
-
-                Doc::group(Doc::indent(Doc::concat(parts)))
-            }
+            } => self.if_else(branches, else_value),
 
             Expr::TypeAssert { expr, ty, .. } => Doc::concat([
                 self.expr(expr),
@@ -1147,6 +1161,145 @@ impl<'a> Emitter<'a> {
                 Doc::text(self.verbatim(*ty)),
             ]),
         }
+    }
+
+    /*
+    Emits `if c then a else b`, the expression and not the statement.
+
+    Two layouts exist. The flat one is what larvae always wrote, and it is
+    still the default. The open one puts each keyword at the start of a line
+    and each value below its keyword:
+
+    ```
+    if cond then
+        first
+    else
+        second
+    ```
+
+    `if_expression.expand` selects between them. The open layout uses a hard
+    break, so the choice happens here and not in the renderer. The renderer
+    decides by width alone, and it cannot know that a user asked for the open
+    layout at every width.
+    */
+    fn if_else(&self, branches: &[(Expr, Expr)], else_value: &Expr) -> Doc<'a> {
+        let cfg = &self.cfg.if_expression;
+
+        let nested = self.if_depth.get() > 0;
+        self.if_depth.set(self.if_depth.get() + 1);
+
+        /*
+        The old layout stays byte for byte where the option is off.
+
+        It indents the whole expression and breaks once, before the `else`.
+        That shape is not the shape below, so a rewrite of it would move the
+        output of every project that never asked for this option.
+        */
+        if cfg.expand == IfExpansion::Never {
+            let mut parts = Vec::with_capacity(branches.len() * 5 + 2);
+
+            for (i, (cond, value)) in branches.iter().enumerate() {
+                parts.push(Doc::text(if i == 0 { "if " } else { "elseif " }));
+                parts.push(self.expr(cond));
+                parts.push(Doc::text(" then "));
+                parts.push(self.expr(value));
+                parts.push(Doc::Line);
+            }
+
+            parts.push(Doc::text("else "));
+            parts.push(self.expr(else_value));
+
+            self.if_depth.set(self.if_depth.get() - 1);
+
+            return Doc::group(Doc::indent(Doc::concat(parts)));
+        }
+
+        /*
+        The children are emitted once, and the width comes from them.
+
+        The choice needs the flat width, and the flat width is the width of
+        the children plus the keywords around them. Measuring the children
+        alone lets the emitter build the document one time, with the break it
+        settled on. An assemble, measure, and re-assemble would cost one more
+        build for every level of nesting.
+        */
+        let parts: Vec<(Doc<'a>, Doc<'a>)> = branches
+            .iter()
+            .map(|(cond, value)| (self.expr(cond), self.expr(value)))
+            .collect();
+
+        let other = self.expr(else_value);
+
+        self.if_depth.set(self.if_depth.get() - 1);
+
+        // `if ` + cond + ` then ` + value per branch, and ` else ` + the last value
+        let mut flat = other.flat_width().map(|w| w + " else ".len());
+
+        for (i, (cond, value)) in parts.iter().enumerate() {
+            let keyword = match i {
+                0 => "if ".len(),
+
+                _ => " elseif ".len(),
+            };
+
+            flat = match (flat, cond.flat_width(), value.flat_width()) {
+                (Some(sum), Some(c), Some(v)) => Some(sum + keyword + c + " then ".len() + v),
+
+                _ => None,
+            };
+        }
+
+        /*
+        A nested expression waits for the width, whatever the mode says.
+
+        `always` at every level gives a stair of keywords for an expression
+        that reads well on one line. The width is the measure of whether the
+        inner one has earned its own lines.
+        */
+        let wide = flat.is_none_or(|w| w > cfg.width);
+        let open = match cfg.expand {
+            IfExpansion::Never => false,
+
+            IfExpansion::Always => !nested || wide,
+
+            IfExpansion::WhenLarge => wide,
+        };
+
+        // The open layout is a request, so it breaks at every width.
+        let split = || match open {
+            true => Doc::Hard,
+
+            false => Doc::Line,
+        };
+
+        let mut out: Vec<Doc<'a>> = Vec::with_capacity(parts.len() * 4 + 3);
+
+        for (i, (cond, value)) in parts.into_iter().enumerate() {
+            if i > 0 {
+                out.push(split());
+            }
+
+            out.push(Doc::text(if i == 0 { "if " } else { "elseif " }));
+            out.push(cond);
+            out.push(Doc::text(" then"));
+            out.push(self.indented(vec![split(), value]));
+        }
+
+        out.push(split());
+        out.push(Doc::text("else"));
+        out.push(self.indented(vec![split(), other]));
+
+        Doc::group(Doc::concat(out))
+    }
+
+    /*
+    Wraps parts in the indent levels that `if_expression.indent` asks for.
+
+    Zero levels is a valid answer, and it means the value sits at the column
+    of its keyword.
+    */
+    fn indented(&self, parts: Vec<Doc<'a>>) -> Doc<'a> {
+        (0..self.cfg.if_expression.indent).fold(Doc::concat(parts), |doc, _| Doc::indent(doc))
     }
 
     /*

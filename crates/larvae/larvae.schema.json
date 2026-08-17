@@ -783,6 +783,42 @@
           "default": "never",
           "description": "Whether a statement ends with a semicolon. Luau requires one only before a statement opening with \"(\", and larvae emits that one whatever this says. \"never\" and \"as-needed\" therefore name the same output; both are accepted.\n\n[semicolons \u2192](https://larvae-luau.github.io/docs/reference/formatting#semicolons)"
         },
+        "if_expression": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "How an \"if ... then ... else ...\" expression is laid out. Luau has an if expression and stylua has no option for it, so a long one runs off to the right.\n\n[if_expression \u2192](https://larvae-luau.github.io/docs/reference/formatting#if-expression)",
+          "properties": {
+            "expand": {
+              "enum": [
+                "never",
+                "always",
+                "when-large"
+              ],
+              "default": "never",
+              "description": "When the expression is opened over several lines. \"never\" keeps it on one line where it fits, which is what larvae has always done. \"always\" opens every one. \"when-large\" opens one wider than \"width\".\n\n[if_expression.expand \u2192](https://larvae-luau.github.io/docs/reference/formatting#if-expression-expand)"
+            },
+            "width": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 60,
+              "description": "The width at which \"when-large\" opens an expression. It also governs a nested expression in every mode, so an if inside an if waits until it earns the room on its own.\n\n[if_expression.width \u2192](https://larvae-luau.github.io/docs/reference/formatting#if-expression-width)"
+            },
+            "placement": {
+              "enum": [
+                "same-line",
+                "next-line"
+              ],
+              "default": "same-line",
+              "description": "Where the \"if\" sits once the expression is opened. \"same-line\" keeps it on the line of the binding. \"next-line\" ends the line after \"=\" and starts the \"if\" below.\n\n[if_expression.placement \u2192](https://larvae-luau.github.io/docs/reference/formatting#if-expression-placement)"
+            },
+            "indent": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 1,
+              "description": "The indent levels between a keyword line and the value below it. 0 puts the value at the column of its keyword.\n\n[if_expression.indent \u2192](https://larvae-luau.github.io/docs/reference/formatting#if-expression-indent)"
+            }
+          }
+        },
         "final_newline": {
           "type": "boolean",
           "default": true,

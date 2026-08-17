@@ -9,8 +9,8 @@ whitespace, and every comment must stay.
 */
 
 use larvae::fmt::config::{
-    CallParens, CollapseSimpleStatement, IndentType, LineEndings, QuoteStyle,
-    SpaceAfterFunctionNames,
+    CallParens, CollapseSimpleStatement, IfExpansion, IfExpression, IfPlacement, IndentType,
+    LineEndings, QuoteStyle, SpaceAfterFunctionNames,
 };
 use larvae::fmt::{FmtConfig, format};
 
@@ -1387,4 +1387,242 @@ fn a_lint_marker_does_not_hold_the_formatter() {
         fmt("-- larvae: lint off\nlocal  a  = 1\n"),
         "-- larvae: lint off\nlocal a = 1\n"
     );
+}
+
+// --- if expressions ---------------------------------------------------------
+
+fn if_cfg(expand: IfExpansion) -> FmtConfig {
+    FmtConfig {
+        if_expression: IfExpression {
+            expand,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+/// The option is off by default, so no project moves until it asks.
+#[test]
+fn an_if_expression_stays_on_one_line_by_default() {
+    assert_eq!(
+        fmt("local a = if bar then 'baz' else 'foo'"),
+        "local a = if bar then \"baz\" else \"foo\"\n"
+    );
+}
+
+#[test]
+fn always_opens_an_if_expression_at_every_width() {
+    assert_eq!(
+        fmt_with(
+            "local a = if bar then 'baz' else 'foo'",
+            if_cfg(IfExpansion::Always)
+        ),
+        "local a = if bar then\n\t\"baz\"\nelse\n\t\"foo\"\n"
+    );
+}
+
+#[test]
+fn always_opens_each_arm_of_an_elseif_chain() {
+    assert_eq!(
+        fmt_with(
+            "local a = if x then 1 elseif y then 2 else 3",
+            if_cfg(IfExpansion::Always)
+        ),
+        "local a = if x then\n\t1\nelseif y then\n\t2\nelse\n\t3\n"
+    );
+}
+
+#[test]
+fn when_large_keeps_a_short_expression_on_one_line() {
+    assert_eq!(
+        fmt_with(
+            "local a = if bar then 'baz' else 'foo'",
+            if_cfg(IfExpansion::WhenLarge)
+        ),
+        "local a = if bar then \"baz\" else \"foo\"\n"
+    );
+}
+
+#[test]
+fn when_large_opens_an_expression_over_the_width() {
+    let out = fmt_with(
+        "local a = if someCondition then 'a rather long branch value' else 'another long branch value'",
+        if_cfg(IfExpansion::WhenLarge),
+    );
+
+    assert_eq!(
+        out,
+        "local a = if someCondition then\n\t\"a rather long branch value\"\nelse\n\t\"another long branch value\"\n"
+    );
+}
+
+/// The width is the boundary, so a project can move it where it wants.
+#[test]
+fn the_width_decides_where_when_large_opens() {
+    let src = "local a = if bar then 'baz' else 'foo'";
+
+    let wide = FmtConfig {
+        if_expression: IfExpression {
+            expand: IfExpansion::WhenLarge,
+            width: 4,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    assert!(fmt_with(src, wide).contains("if bar then\n"));
+}
+
+/*
+A nested expression waits for the width, whatever the mode says.
+
+`always` at every level gives a stair of keywords for an expression that
+reads well on one line.
+*/
+#[test]
+fn a_short_nested_expression_stays_on_one_line_under_always() {
+    assert_eq!(
+        fmt_with(
+            "local a = if x then (if y then 1 else 2) else 3",
+            if_cfg(IfExpansion::Always)
+        ),
+        "local a = if x then\n\t(if y then 1 else 2)\nelse\n\t3\n"
+    );
+}
+
+#[test]
+fn a_nested_expression_over_the_width_opens_as_well() {
+    let out = fmt_with(
+        "local a = if x then (if someLongCondition then 'a long inner branch' else 'another long inner') else 3",
+        if_cfg(IfExpansion::Always),
+    );
+
+    assert!(out.contains("(if someLongCondition then\n"), "{out}");
+    assert!(out.contains("\t\t\"a long inner branch\"\n"), "{out}");
+}
+
+/// A small width reaches the inner expression too.
+#[test]
+fn the_width_reaches_a_nested_expression() {
+    let cfg = FmtConfig {
+        if_expression: IfExpression {
+            expand: IfExpansion::Always,
+            width: 10,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let out = fmt_with("local a = if x then (if y then 1 else 2) else 3", cfg);
+
+    assert!(out.contains("(if y then\n"), "{out}");
+}
+
+#[test]
+fn next_line_starts_the_if_below_the_equals() {
+    let cfg = FmtConfig {
+        if_expression: IfExpression {
+            expand: IfExpansion::Always,
+            placement: IfPlacement::NextLine,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    assert_eq!(
+        fmt_with("local a = if bar then 'baz' else 'foo'", cfg),
+        "local a =\n\tif bar then\n\t\t\"baz\"\n\telse\n\t\t\"foo\"\n"
+    );
+}
+
+/// `next-line` names a layout for an opened expression, not for every one.
+#[test]
+fn next_line_leaves_an_expression_that_stays_flat_where_it_is() {
+    let cfg = FmtConfig {
+        if_expression: IfExpression {
+            expand: IfExpansion::WhenLarge,
+            placement: IfPlacement::NextLine,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    assert_eq!(
+        fmt_with("local a = if bar then 'baz' else 'foo'", cfg),
+        "local a = if bar then \"baz\" else \"foo\"\n"
+    );
+}
+
+#[test]
+fn the_indent_levels_are_the_projects_to_choose() {
+    let cfg = |indent| FmtConfig {
+        if_expression: IfExpression {
+            expand: IfExpansion::Always,
+            indent,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let src = "local a = if bar then 'baz' else 'foo'";
+
+    assert_eq!(
+        fmt_with(src, cfg(2)),
+        "local a = if bar then\n\t\t\"baz\"\nelse\n\t\t\"foo\"\n"
+    );
+
+    // Zero levels puts the value at the column of its keyword.
+    assert_eq!(
+        fmt_with(src, cfg(0)),
+        "local a = if bar then\n\"baz\"\nelse\n\"foo\"\n"
+    );
+}
+
+/// An opened expression must still reparse and must still be stable.
+#[test]
+fn every_if_layout_is_idempotent_and_parses() {
+    let sources = [
+        "local a = if bar then 'baz' else 'foo'",
+        "local a = if x then 1 elseif y then 2 else 3",
+        "return if x then 1 else 2",
+        "f(if x then 1 else 2)",
+        "local t = { a = if x then 1 else 2, b = 3 }",
+        "local a = if x then (if y then 1 else 2) else 3",
+        "local a = (if x then 1 else 2) + 5",
+        "x = if x then 1 else 2",
+    ];
+
+    let configs = [
+        if_cfg(IfExpansion::Never),
+        if_cfg(IfExpansion::Always),
+        if_cfg(IfExpansion::WhenLarge),
+        FmtConfig {
+            if_expression: IfExpression {
+                expand: IfExpansion::Always,
+                placement: IfPlacement::NextLine,
+                width: 5,
+                indent: 2,
+            },
+            ..Default::default()
+        },
+    ];
+
+    for src in sources {
+        for cfg in &configs {
+            let once = fmt_with(src, cfg.clone());
+            let twice = fmt_with(&once, cfg.clone());
+
+            assert_eq!(once, twice, "unstable for {src:?}");
+
+            let lexed = larvae::syntax::lexer::lex(&once)
+                .unwrap_or_else(|e| panic!("{src:?} gave unlexable output, {}", e.message));
+
+            larvae::syntax::parser::parse(&once, &lexed.toks)
+                .unwrap_or_else(|e| panic!("{src:?} gave unparsable output, {}", e.message));
+
+            for line in once.lines() {
+                assert_eq!(line, line.trim_end(), "trailing whitespace from {src:?}");
+            }
+        }
+    }
 }
