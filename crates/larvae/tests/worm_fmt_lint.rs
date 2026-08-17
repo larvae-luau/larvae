@@ -322,6 +322,45 @@ fn a_claimed_file_can_hold_the_linter_off_in_full() {
     assert!(!text.contains("markup.bad_word"), "{text}");
 }
 
+/*
+The generated schema names every worm, so its two tables close.
+
+Each table held an open `additionalProperties` beside its `properties`, to
+describe a worm that the shipped schema cannot know. A project schema knows
+them all. Taplo reads both branches for one key, so with both present every
+option of a described worm reached the completion list two times.
+*/
+#[test]
+fn the_project_schema_closes_the_tables_it_filled() {
+    let root = project(true);
+    write(root.path(), "src/app.luaux", "local x = 1\n");
+
+    let (ok, text) = run(root.path(), &["lint"]);
+    assert!(ok, "{text}");
+
+    let path = root.path().join(".larvae").join("larvae.schema.json");
+    let raw = std::fs::read_to_string(&path).expect("the schema is generated");
+    let schema: serde_json::Value = serde_json::from_str(&raw).expect("it is JSON");
+
+    for table in ["fmt", "lint_rules"] {
+        assert_eq!(
+            schema["$defs"][table]["additionalProperties"],
+            serde_json::json!(false),
+            "[{table}] must offer one branch per key"
+        );
+    }
+
+    // the worm is named in both, so closing them refuses nothing it should allow
+    assert!(
+        schema["$defs"]["lint_rules"]["properties"]["markup"].is_object(),
+        "the lints of the worm are missing"
+    );
+    assert!(
+        schema["$defs"]["fmt"]["properties"]["markup"].is_object(),
+        "the format table of the worm is missing"
+    );
+}
+
 #[test]
 fn worm_run_fmt_is_the_dev_loop() {
     let root = project(true);

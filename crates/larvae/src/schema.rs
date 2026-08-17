@@ -51,13 +51,14 @@ pub fn for_project(registry: &crate::worm::registry::Registry) -> Result<Value> 
             props.insert(name.clone(), entry);
         }
 
-        if props.is_empty() {
-            continue;
-        }
-
         /*
         The lints of a worm sit in a table under its key, so the editor
         completes them where the project writes them.
+
+        A worm that declares no lint still gets a table, and that table takes
+        no key. Without the entry the closed table below would refuse
+        `[lint.rules.<worm>]`, and with it the editor says the true reason:
+        this worm has no lint to set.
         */
         schema["$defs"]["lint_rules"]["properties"][worm] = json!({
             "type": "object",
@@ -75,10 +76,6 @@ pub fn for_project(registry: &crate::worm::registry::Registry) -> Result<Value> 
             props.insert(name.clone(), option_schema(option));
         }
 
-        if props.is_empty() {
-            continue;
-        }
-
         /*
         The format options of a worm sit in a table under its key, the same
         way its lints do, so the editor completes them where a project writes
@@ -90,6 +87,20 @@ pub fn for_project(registry: &crate::worm::registry::Registry) -> Result<Value> 
             "description": format!("The format options of worm `{worm}`."),
             "properties": Value::Object(props),
         });
+    }
+
+    /*
+    The two tables close, now that every worm of the project is named in them.
+
+    Each held an open `additionalProperties` beside its `properties`, to
+    describe a worm that the schema could not know. A project schema knows
+    them all, so that branch has no work left. It also has a cost: Taplo reads
+    both branches for one key, so every option of a described worm arrived in
+    the completion list two times. Closing the table leaves one branch, and it
+    reports a name that no worm and no lint owns.
+    */
+    for table in ["fmt", "lint_rules"] {
+        schema["$defs"][table]["additionalProperties"] = json!(false);
     }
 
     let entry = schema["$defs"]["worms"]["additionalProperties"].clone();
@@ -204,6 +215,18 @@ fn option_schema(option: &crate::worm::manifest::OptionDecl) -> Value {
         entry["enum"] = Value::Array(option.values.iter().map(value_of).collect());
     }
 
+    /*
+    A boolean states its two values, though the type already implies them.
+
+    Taplo builds the completion list from `enum` when an entry has one, and
+    from the type when it does not. In the second case it adds the `default`
+    to that list as well, so a boolean that defaults to false offers false two
+    times. With the values written out, the list comes from one place.
+    */
+    if entry["enum"].is_null() && option.kind == crate::worm::manifest::OptionType::Boolean {
+        entry["enum"] = json!([true, false]);
+    }
+
     entry
 }
 
@@ -233,5 +256,40 @@ mod tests {
 
         assert!(schema["$defs"]["lint_rules"]["properties"].is_object());
         assert!(schema["$defs"]["worms"]["additionalProperties"].is_object());
+    }
+
+    fn option(kind: &str, default: &str) -> crate::worm::manifest::OptionDecl {
+        let text = format!("type = \"{kind}\"\ndefault = {default}\n");
+
+        toml::from_str(&text).expect("the declaration parses")
+    }
+
+    /*
+    Taplo builds the completion list from the type when an entry has no
+    `enum`, and it adds the `default` to that list as well. So a boolean that
+    defaults to false offered false two times. The values written out leave
+    one source for the list.
+    */
+    #[test]
+    fn a_boolean_option_states_its_two_values() {
+        let entry = option_schema(&option("boolean", "false"));
+
+        assert_eq!(entry["enum"], json!([true, false]));
+        assert_eq!(entry["default"], json!(false));
+    }
+
+    /// A declared list wins, because the worm named the values it takes.
+    #[test]
+    fn a_declared_list_is_left_alone() {
+        let decl: crate::worm::manifest::OptionDecl =
+            toml::from_str("type = \"string\"\nvalues = [\"a\", \"b\"]\n").unwrap();
+
+        assert_eq!(option_schema(&decl)["enum"], json!(["a", "b"]));
+    }
+
+    /// A type with more values than a reader can list keeps the open form.
+    #[test]
+    fn an_integer_option_gets_no_list() {
+        assert!(option_schema(&option("integer", "5"))["enum"].is_null());
     }
 }

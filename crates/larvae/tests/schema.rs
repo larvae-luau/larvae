@@ -305,3 +305,46 @@ fn every_fmt_option_links_to_its_own_anchor() {
         }
     }
 }
+
+/*
+Every boolean states its two values, though the type already implies them.
+
+Taplo builds the completion list from `enum` when an entry has one, and from
+the type when it does not. In the second case it adds the `default` to that
+list as well, so a boolean that defaults to false offered false two times.
+Users read that as a defect in larvae, because larvae wrote the schema.
+*/
+#[test]
+fn every_boolean_states_its_two_values() {
+    fn walk(node: &serde_json::Value, path: &str, bare: &mut Vec<String>) {
+        match node {
+            serde_json::Value::Object(map) => {
+                if map.get("type").and_then(|t| t.as_str()) == Some("boolean")
+                    && !map.contains_key("enum")
+                {
+                    bare.push(path.to_string());
+                }
+
+                for (key, value) in map {
+                    walk(value, &format!("{path}/{key}"), bare);
+                }
+            }
+
+            serde_json::Value::Array(items) => {
+                for (i, item) in items.iter().enumerate() {
+                    walk(item, &format!("{path}[{i}]"), bare);
+                }
+            }
+
+            _ => {}
+        }
+    }
+
+    let mut bare = Vec::new();
+    walk(&schema(), "", &mut bare);
+
+    assert!(
+        bare.is_empty(),
+        "these boolean entries need \"enum\": [true, false]: {bare:#?}"
+    );
+}

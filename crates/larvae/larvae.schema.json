@@ -204,12 +204,20 @@
         },
         "strip_flags": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": true,
           "description": "Drop flag comments, the `-- larvae: allow(...)` and `-- selene: allow(...)` ones, from the output. They are instructions to larvae rather than notes to a reader, so they are scaffolding the build does not need to ship. Ordinary comments are untouched. Set false when the output is read by people rather than by a game. Ignored when [rules] remove_comments is on, since that speaks for every comment already.",
           "$comment": "Flag comments are read by `larvae lint` to suppress a finding on the line they sit on, and the line below."
         },
         "cache": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": true,
           "description": "Incremental builds via content hashing."
         },
@@ -248,11 +256,19 @@
         },
         "strict": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Upgrade warn-level classes (missing target file, case mismatch) to errors. Unknown aliases and inexpressible/realm-violating requires are ALWAYS errors."
         },
         "instance_input": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": true,
           "description": "Read require(script.Parent.Foo) style requires as input and rewrite them to the configured target. Turn it off to leave instance requires exactly as written."
         },
@@ -351,6 +367,10 @@
       "properties": {
         "const_requires": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "larvae only. Turn `local X = require(...)` into `const X = require(...)`. Skips multi bindings and annotated locals. Implemented."
         },
@@ -358,7 +378,11 @@
           "description": "Remove comments. `true`, or a table with `except` regexes for comments to keep (defaults to [\"^--!\"] so Luau directives survive; set [] to match darklua). Implemented.",
           "oneOf": [
             {
-              "type": "boolean"
+              "type": "boolean",
+              "enum": [
+                true,
+                false
+              ]
             },
             {
               "type": "object",
@@ -433,6 +457,10 @@
                 },
                 "preserve_arguments_side_effects": {
                   "type": "boolean",
+                  "enum": [
+                    true,
+                    false
+                  ],
                   "default": true,
                   "description": "Keep calls whose arguments call something, since that inner call may be the point of the line"
                 }
@@ -442,11 +470,19 @@
         },
         "use_get_service": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "larvae only. Rewrite `game.Players` into `game:GetService(\"Players\")` for the known services, which keeps working when a service is renamed or not created yet. A local named game defeats it. Implemented."
         },
         "dedupe_requires": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "larvae only. Top level `local X = require(...)` statements that resolve to the same module collapse, the later ones become aliases of the first. Skips const, annotated and multi binding locals. Implemented."
         },
@@ -459,51 +495,91 @@
         },
         "freeze_module": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "larvae only. Wrap a module's returned table in `table.freeze`, only when nothing can write to it, so field writes, rebinds and metatable patterns turn the rule off for that file. Implemented."
         },
         "compute_expression": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Fold constant expressions to their value. Only folds when the result prints back exactly, so fractions, values past exact double range and strings holding escapes are left alone. Implemented."
         },
         "convert_function_to_assignment": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Rewrite `function foo()` into `foo = function()`, and `function o:m()` into `o.m = function(self)`. Attributed functions are left alone. Implemented."
         },
         "convert_index_to_field": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Rewrite `t[\"field\"]` into `t.field`, and the same for table constructor keys, when the literal spells a valid name that is not a reserved word. Implemented."
         },
         "convert_local_function_to_assign": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Rewrite `local function f()` into `local f = function()`, only when the body never mentions f, since the local form is in scope inside itself. Implemented."
         },
         "convert_luau_number": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Rewrite binary literals like 0b1010 as hex and strip digit separators, both being Luau only syntax. Implemented."
         },
         "convert_square_root_call": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Rewrite `math.sqrt(x)` into `(x ^ 0.5)`. The result is always parenthesised so it survives being the base of another power. Implemented."
         },
         "filter_after_early_return": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Delete the statements after a `do ... return ... end` block, which can never run. Stops if a type alias is among them, since an exported one is visible outside the block. Implemented."
         },
         "group_local_assignment": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Merge a run of adjacent local declarations into one. Conservative, it stops at a call, a dependency between them, an annotation, a comment or anything but whitespace in between. Implemented."
         },
         "make_assignment_local": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Turn a `const` declaration back into a `local` one, the inverse of const_requires, for output that has to stay plain Lua. Implemented."
         },
@@ -511,7 +587,11 @@
           "description": "Remove `assert(...)` statements. Implemented.",
           "oneOf": [
             {
-              "type": "boolean"
+              "type": "boolean",
+              "enum": [
+                true,
+                false
+              ]
             },
             {
               "type": "object",
@@ -519,6 +599,10 @@
               "properties": {
                 "preserve_arguments_side_effects": {
                   "type": "boolean",
+                  "enum": [
+                    true,
+                    false
+                  ],
                   "default": true,
                   "description": "Keep calls whose arguments call something, since that inner call may be the point of the line"
                 }
@@ -530,7 +614,11 @@
           "description": "Strip function attributes, ex: @native. `true` removes every one, or a table with `match` regexes tested against the attribute name without its @. Implemented.",
           "oneOf": [
             {
-              "type": "boolean"
+              "type": "boolean",
+              "enum": [
+                true,
+                false
+              ]
             },
             {
               "type": "object",
@@ -550,11 +638,19 @@
         },
         "remove_compound_assignment": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Expand `x += 1` into `x = x + 1` for every compound operator. Targets that would have to run code twice, ex: a computed key holding a call, are left alone. Implemented."
         },
         "remove_continue": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Rewrite a loop containing `continue` into the `repeat ... until true` form with `continue` spelled `break`. Loops that also break at the same level, and repeat loops whose condition can read body locals, are left alone. Implemented."
         },
@@ -562,7 +658,11 @@
           "description": "Remove `debug.profilebegin` and `debug.profileend` statements. Implemented.",
           "oneOf": [
             {
-              "type": "boolean"
+              "type": "boolean",
+              "enum": [
+                true,
+                false
+              ]
             },
             {
               "type": "object",
@@ -570,6 +670,10 @@
               "properties": {
                 "preserve_arguments_side_effects": {
                   "type": "boolean",
+                  "enum": [
+                    true,
+                    false
+                  ],
                   "default": true,
                   "description": "Keep calls whose arguments call something, since that inner call may be the point of the line"
                 }
@@ -579,21 +683,37 @@
         },
         "remove_empty_do": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Drop `do end` blocks that contain nothing. A lone semicolon counts as content. Nested empties shed one layer per run. Implemented."
         },
         "remove_floor_division": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Rewrite `a // b` into `math.floor(a / b)`, and `a //= b` into `a = math.floor(a / b)`. Implemented."
         },
         "remove_function_call_parens": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Rewrite `f(\"x\")` into `f\"x\"` and `f({})` into `f{}` when a call takes exactly one string or table argument. Implemented."
         },
         "remove_if_expression": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Rewrite `if c then a else b` into `c and a or b`. Only applied when the then value can never be false or nil, otherwise the and/or form would not be equivalent and the expression is left alone. Implemented."
         },
@@ -601,7 +721,11 @@
           "description": "Rewrite backtick strings into string.format calls. `true`, or a table with `strategy`, \"string\" wraps each value in tostring and formats with %s, \"tostring\" uses Luau's %*. Multi line and nested backtick strings are left alone. Implemented.",
           "oneOf": [
             {
-              "type": "boolean"
+              "type": "boolean",
+              "enum": [
+                true,
+                false
+              ]
             },
             {
               "type": "object",
@@ -620,26 +744,46 @@
         },
         "remove_method_call": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Rewrite `obj:m(x)` into `obj.m(obj, x)`. Only for a plain identifier receiver, anything else would be evaluated twice. Implemented."
         },
         "remove_method_definition": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Rewrite `function C:m()` into `function C.m(self)`, making the implicit self parameter explicit. Implemented."
         },
         "remove_nil_declaration": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Rewrite `local x = nil` into `local x` and drop trailing nil values from multi bindings. Skips const, which must keep a value. Implemented."
         },
         "remove_types": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Strip every type annotation, bindings, parameters, return types, generic lists, type aliases and the tail of a `::` assertion. Implemented."
         },
         "remove_unused_if_branch": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Prune if branches whose condition is a known constant. A branch that always runs is unwrapped, or becomes a `do` block when it declares locals so their scope is preserved. Implemented."
         },
@@ -649,6 +793,10 @@
         },
         "remove_unused_while": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Delete a while loop whose condition is a constant false. Implemented."
         },
@@ -752,6 +900,10 @@
           "properties": {
             "enabled": {
               "type": "boolean",
+              "enum": [
+                true,
+                false
+              ],
               "default": false,
               "description": "\n\n[sort_requires.enabled \u2192](https://larvae-luau.github.io/docs/reference/formatting#sort-requires-enabled)"
             },
@@ -829,31 +981,55 @@
         },
         "final_newline": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": true,
           "description": "Whether the file ends with a newline. On by default. POSIX defines a line as text up to a newline, so a file without a final one ends in something that is not a line. This covers the single trailing newline only. Larvae removes whitespace at the end of every line whatever this says.\n\n[final_newline \u2192](https://larvae-luau.github.io/docs/reference/formatting#final-newline)"
         },
         "magic_trailing_comma": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": true,
           "description": "A trailing comma the author left in a table means \"keep this expanded\", so line breaking becomes something an author decides per table rather than something width alone decides. Tables only: Luau rejects `f(a, b,)`, so a call has no trailing comma to read.\n\n[magic_trailing_comma \u2192](https://larvae-luau.github.io/docs/reference/formatting#magic-trailing-comma)"
         },
         "space_inside_parens": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "`f( a )` rather than `f(a)`.\n\n[space_inside_parens \u2192](https://larvae-luau.github.io/docs/reference/formatting#space-inside-parens)"
         },
         "space_inside_brackets": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "`t[ k ]` rather than `t[k]`.\n\n[space_inside_brackets \u2192](https://larvae-luau.github.io/docs/reference/formatting#space-inside-brackets)"
         },
         "space_inside_braces": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": true,
           "description": "`{ a }` rather than `{a}`, which is the Luau convention.\n\n[space_inside_braces \u2192](https://larvae-luau.github.io/docs/reference/formatting#space-inside-braces)"
         },
         "trailing_comma": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": true,
           "description": "A table that broke over several lines keeps a trailing comma on its last field.\n\n[trailing_comma \u2192](https://larvae-luau.github.io/docs/reference/formatting#trailing-comma)"
         },
@@ -1360,11 +1536,19 @@
           "properties": {
             "parameters": {
               "type": "boolean",
+              "enum": [
+                true,
+                false
+              ],
               "default": false,
               "description": "Report unused function parameters too. Off by default: a parameter is part of a signature the caller decides."
             },
             "loop_variables": {
               "type": "boolean",
+              "enum": [
+                true,
+                false
+              ],
               "default": false,
               "description": "Report unused `for` variables too. Off by default: `for k, v` where only `k` is wanted is how the language is written."
             },
@@ -1496,6 +1680,10 @@
               },
               "inherit_lints": {
                 "type": "boolean",
+                "enum": [
+                  true,
+                  false
+                ],
                 "description": "Run the lints of larvae on the files this worm claims. It overrides what the worm declared in its worm.toml."
               },
               "inherit": {
@@ -1550,6 +1738,10 @@
         },
         "tree_shake": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": true,
           "description": "Drop the modules that the entry cannot reach. Turn off to keep modules that only a dynamic require reaches."
         }
@@ -1568,6 +1760,10 @@
         },
         "rename_variables": {
           "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
           "default": false,
           "description": "Give every local a short name while minifying. The same rule as [rules] rename_variables, turned on for dense builds only."
         }
