@@ -35,6 +35,12 @@ Notable changes land here. Format follows
 - A comment keeps the blank line below it. The formatter gave a leading
   comment a plain line break, so a note that an author had separated from the
   code below it came back joined to that code
+- The editor no longer offers one value two times. A boolean carried a type
+  and a default and no list of values, and Taplo adds the default to a list it
+  built from the type, so a boolean that defaults to false offered false two
+  times. And the `[fmt]` and `[lint.rules]` tables each held an open
+  `additionalProperties` beside their `properties`, so Taplo read both
+  branches for a worm and offered every lint of that worm two times
 - Every marker form now holds in a file that a worm claims. A worm sends the
   layout for the whole file, so a marker held the Luau of a region and not
   the markup around it: with `attribute_per_line` on, the attributes of an
