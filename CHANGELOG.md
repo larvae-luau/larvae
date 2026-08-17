@@ -30,11 +30,27 @@ Notable changes land here. Format follows
   waits for `width` in every mode, because `always` at each level gives a
   stair of keywords for an expression that reads well on one line
 
+### Added
+
+- Differential tests against the real Luau parser. `luau-lsp` carries that
+  parser and reports a syntax error apart from a type error, so it serves as
+  an oracle. The verdicts are recorded under
+  `crates/larvae/tests/fixtures/parser`, so CI needs no Luau, and
+  `scripts/parser_oracle.sh` makes the recording and sweeps a corpus of your
+  own
+- `scripts/bench_selene.sh`, which measures the linter against selene
+
 ### Fixed
 
 - A comment keeps the blank line below it. The formatter gave a leading
   comment a plain line break, so a note that an author had separated from the
   code below it came back joined to that code
+- Three constructs that Luau parses and larvae refused. The `\z` escape, which
+  takes the whitespace that follows it and is how a long string is written
+  over several lines. A leading `|` or `&` in a function return type,
+  `() -> | string | number`. And a variadic type holding a union,
+  `(..."hit" | "miss") -> ()`. A file using any of them was refused by every
+  command
 - The editor no longer offers one value two times. A boolean carried a type
   and a default and no list of values, and Taplo adds the default to a list it
   built from the type, so a boolean that defaults to false offered false two
