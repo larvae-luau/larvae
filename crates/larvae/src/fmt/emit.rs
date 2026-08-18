@@ -900,7 +900,11 @@ impl<'a> Emitter<'a> {
         match stmt {
             Stmt::Empty(_) => Doc::Nil,
 
-            Stmt::Local(n) => self.local(n),
+            Stmt::Local(n) => match n.exported {
+                true => Doc::concat([Doc::text("export "), self.local(n)]),
+
+                false => self.local(n),
+            },
 
             Stmt::Assign(n) => self.assign(n),
 
@@ -933,9 +937,19 @@ impl<'a> Emitter<'a> {
 
             Stmt::GenericFor(n) => self.generic_for(n),
 
-            Stmt::Function(n) => self.function(n),
+            Stmt::Function(n) => match n.exported {
+                true => Doc::concat([Doc::text("export "), self.function(n)]),
 
-            Stmt::LocalFunction(n) => self.local_function(n),
+                false => self.function(n),
+            },
+
+            Stmt::Class(n) => self.class(n),
+
+            Stmt::LocalFunction(n) => match n.exported {
+                true => Doc::concat([Doc::text("export "), self.local_function(n)]),
+
+                false => self.local_function(n),
+            },
 
             Stmt::Return(n) => self.ret(n),
 
@@ -1136,6 +1150,74 @@ impl<'a> Emitter<'a> {
                 .iter()
                 .map(|a| Doc::concat([Doc::text(self.verbatim(*a)), Doc::Hard])),
         )
+    }
+
+    /*
+    A class prints one member per line: the fields as written, and the
+    methods through the same emitter every function uses. A field's
+    annotation goes through `type_doc`, so a wide table type in a field
+    opens exactly as it does on a binding.
+    */
+    fn class(&self, n: &Class) -> Doc<'a> {
+        /*
+        A comment between members has no member to attach to, the same
+        problem a type alias has. The class prints as the author wrote it,
+        so the comment survives.
+        */
+        let (lo, hi) = self.byte_span(n.span);
+
+        if !self.trivia.between(lo, hi).is_empty() {
+            return Doc::text(&self.src[lo as usize..hi as usize]);
+        }
+
+        let mut parts: Vec<Doc<'a>> = Vec::new();
+
+        if n.exported {
+            parts.push(Doc::text("export "));
+        }
+
+        if n.open {
+            parts.push(Doc::text("open "));
+        }
+
+        parts.push(Doc::text("class "));
+        parts.push(Doc::text(self.one(n.name)));
+
+        if let Some(base) = n.extends {
+            parts.push(Doc::text(" extends "));
+            parts.push(Doc::text(self.one(base)));
+        }
+
+        let mut body: Vec<Doc<'a>> = Vec::new();
+
+        for member in &n.members {
+            body.push(Doc::Hard);
+
+            match member {
+                ClassMember::Field {
+                    public, name, ty, ..
+                } => {
+                    if *public {
+                        body.push(Doc::text("public "));
+                    }
+
+                    body.push(Doc::text(self.one(*name)));
+
+                    if let Some(ty) = ty {
+                        body.push(Doc::text(": "));
+                        body.push(self.type_doc(*ty));
+                    }
+                }
+
+                ClassMember::Method(f) => body.push(self.function(f)),
+            }
+        }
+
+        parts.push(Doc::indent(Doc::concat(body)));
+        parts.push(Doc::Hard);
+        parts.push(Doc::text("end"));
+
+        Doc::concat(parts)
     }
 
     fn function(&self, n: &Function) -> Doc<'a> {

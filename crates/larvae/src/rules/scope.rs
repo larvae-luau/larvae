@@ -173,6 +173,21 @@ impl<'src> Binder<'_, 'src> {
 
             Stmt::Function(n) => self.body(&n.body),
 
+            Stmt::Class(n) => {
+                // The base name is a reference, or a rename would strand it.
+                if let Some(base) = n.extends {
+                    self.reference(base);
+                }
+
+                self.bind(n.name, Origin::Local);
+
+                for member in &n.members {
+                    if let crate::syntax::ast::ClassMember::Method(f) = member {
+                        self.body(&f.body);
+                    }
+                }
+            }
+
             Stmt::Assign(n) => {
                 for e in &n.targets {
                     self.expr(e);

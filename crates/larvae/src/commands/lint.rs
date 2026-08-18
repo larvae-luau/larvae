@@ -82,7 +82,7 @@ pub fn run(
 
     let mut diags: Vec<Diag> = files
         .par_iter()
-        .flat_map(|path| match std::fs::read_to_string(path) {
+        .flat_map(|path| match read_source(path) {
             Ok(src) => match one(path, &src, &cfg, &pool) {
                 Ok(found) => found,
 
@@ -136,10 +136,13 @@ fn from_stdin(
     path: Option<&Path>,
     config: Option<PathBuf>,
 ) -> Result<ExitCode> {
-    let mut src = String::new();
+    let mut bytes = Vec::new();
     std::io::stdin()
-        .read_to_string(&mut src)
+        .read_to_end(&mut bytes)
         .context("cannot read stdin")?;
+
+    // the same stand-in as a file read; a lint pass writes nothing back
+    let src = crate::sys::utf8_stand_in(bytes).0;
 
     let diags = match path {
         Some(path) => {
@@ -236,6 +239,11 @@ fn worm_lint(
     let decl = loaded.worm.manifest.lints.get(bare)?;
 
     Some((owner.to_owned(), decl.clone()))
+}
+
+/// The text of one file, with stand-ins for bytes that are not UTF-8
+fn read_source(path: &Path) -> std::io::Result<String> {
+    std::fs::read(path).map(|bytes| crate::sys::utf8_stand_in(bytes).0)
 }
 
 fn files(n: usize) -> String {

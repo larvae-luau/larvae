@@ -1992,3 +1992,51 @@ fn an_author_wrapped_short_alias_collapses() {
         "type T = { x: number, y: number }\n"
     );
 }
+
+// --- classes and export by value -----------------------------------------
+
+#[test]
+fn a_class_formats_one_member_per_line() {
+    let src = "open class Animal\n\tpublic species: string\n\tfunction speak(self)\n\t\treturn \"...\"\n\tend\nend\n";
+
+    assert_eq!(fmt(src), src);
+}
+
+#[test]
+fn an_extends_clause_and_export_survive() {
+    let src = "export class Cat extends Animal\n\tfunction speak(self)\n\t\treturn \"meow\"\n\tend\nend\n";
+
+    assert_eq!(fmt(src), src);
+}
+
+/// A wide table type in a field opens exactly as it does on a binding.
+#[test]
+fn a_field_annotation_takes_the_table_type_layout() {
+    let out = fmt(
+        "class C\n\tpublic stats: { health: number, stamina: number, position: Vector3, tags: { string } }\nend\n",
+    );
+
+    assert!(
+        out.contains("\tpublic stats: {\n\t\thealth: number,\n"),
+        "{out}"
+    );
+}
+
+/// A comment between members keeps the class as the author wrote it.
+#[test]
+fn a_comment_inside_a_class_keeps_the_authors_text() {
+    let src = "class C\n\t-- the species tag\n\tpublic species: string\nend\n";
+
+    assert_eq!(fmt(src), src);
+}
+
+#[test]
+fn export_by_value_prints_as_written() {
+    for src in [
+        "export local version = \"5.1\"\n",
+        "export const TAU = math.pi * 2\n",
+        "export function init()\nend\n",
+    ] {
+        assert_eq!(fmt(src), src);
+    }
+}

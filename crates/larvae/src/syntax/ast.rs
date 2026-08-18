@@ -56,6 +56,7 @@ pub enum Stmt {
     Break(TokSpan),
     Continue(TokSpan),
     TypeAlias(TypeAlias),
+    Class(Class),
 }
 
 impl Stmt {
@@ -68,6 +69,8 @@ impl Stmt {
             Stmt::Assign(n) => n.span,
 
             Stmt::Do(n) => n.span,
+
+            Stmt::Class(n) => n.span,
 
             Stmt::While(n) => n.span,
 
@@ -96,6 +99,8 @@ pub struct Local {
     /// The `local` or `const` keyword.
     pub keyword: TokSpan,
     pub is_const: bool,
+    /// `export local x = 1`; the module exposes the binding by value.
+    pub exported: bool,
     pub names: Vec<Binding>,
     pub values: Vec<Expr>,
     pub span: TokSpan,
@@ -167,6 +172,8 @@ pub struct GenericFor {
 #[derive(Debug)]
 pub struct Function {
     pub attributes: Vec<TokSpan>,
+    /// `export function f()`; the module exposes the function by value.
+    pub exported: bool,
     /// Every name token in the dotted path, with the `:` method name included.
     pub path: Vec<TokSpan>,
     pub is_method: bool,
@@ -177,6 +184,8 @@ pub struct Function {
 #[derive(Debug)]
 pub struct LocalFunction {
     pub attributes: Vec<TokSpan>,
+    /// `export local function f()`; accepted beside `export local`.
+    pub exported: bool,
     /// `const function f()` instead of `local function f()`.
     pub is_const: bool,
     pub name: TokSpan,
@@ -205,6 +214,36 @@ pub struct Param {
 pub struct Return {
     pub values: Vec<Expr>,
     pub span: TokSpan,
+}
+
+/*
+A class declaration, `[export] class Name ... end`.
+
+The RFC keeps the body to two member forms: a field, `[public] name [: T]`,
+and a method, an ordinary function with one name. Inheritance is deferred
+there, so no `extends` exists here either.
+*/
+#[derive(Debug)]
+pub struct Class {
+    pub exported: bool,
+    /// `open class`; the inheritance RFC lets an open class be extended.
+    pub open: bool,
+    pub name: TokSpan,
+    /// The base class name in `class Name extends Base`.
+    pub extends: Option<TokSpan>,
+    pub members: Vec<ClassMember>,
+    pub span: TokSpan,
+}
+
+#[derive(Debug)]
+pub enum ClassMember {
+    Field {
+        public: bool,
+        name: TokSpan,
+        ty: Option<TokSpan>,
+        span: TokSpan,
+    },
+    Method(Function),
 }
 
 /// `type X<T> = ...`, `export type ...`, `type function f() ... end`.

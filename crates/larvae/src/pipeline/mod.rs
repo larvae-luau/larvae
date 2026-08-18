@@ -269,15 +269,34 @@ fn run_inner(
 
         let source_hash = hash_bytes(&source);
 
+        /*
+        A read-only pass analyzes a stand-in for a file that is not UTF-8,
+        because Luau reads any byte inside a string and a check must not
+        refuse a file the compiler accepts. A writing pass still refuses:
+        it would splice the stand-in bytes into the output.
+        */
         let mut text = match String::from_utf8(source) {
             Ok(t) => t,
 
-            Err(e) => {
+            Err(e) if write => {
                 shared_diags
                     .lock()
                     .unwrap()
                     .push(Diag::error(path, format!("file is not UTF-8: {e}")));
                 return;
+            }
+
+            Err(e) => {
+                let (text, replaced) = crate::sys::utf8_stand_in(e.into_bytes());
+
+                shared_diags.lock().unwrap().push(Diag::warning(
+                    path,
+                    format!(
+                        "{replaced} byte(s) are not UTF-8; the analysis reads stand-ins for them"
+                    ),
+                ));
+
+                text
             }
         };
 

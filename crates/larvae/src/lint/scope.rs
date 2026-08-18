@@ -384,6 +384,35 @@ impl<'a> Binder<'a> {
                     self.expr(e);
                 }
             }
+
+            /*
+            A class binds its name like a local, so a later use of the
+            name resolves. A method whose first parameter is `self` reads
+            as a method, and the walk gives it the same implicit binding.
+            A field binds nothing; its annotation still reads its types.
+            */
+            Stmt::Class(n) => {
+                // `extends Base` reads the base before the new name binds.
+                if let Some(base) = n.extends {
+                    self.read(base);
+                }
+
+                self.declare(n.name, Origin::Local);
+
+                for member in &n.members {
+                    match member {
+                        crate::syntax::ast::ClassMember::Field { ty, .. } => {
+                            if let Some(ty) = ty {
+                                self.type_reads(*ty);
+                            }
+                        }
+
+                        crate::syntax::ast::ClassMember::Method(f) => {
+                            self.function_body(&f.body, false);
+                        }
+                    }
+                }
+            }
         }
     }
 

@@ -259,6 +259,15 @@ impl<'a> Collected<'a> {
             Stmt::LocalFunction(n) => self.block(&n.body.block),
 
             Stmt::Return(n) => self.exprs_of(&n.values),
+
+            // A field holds no expression; the bodies of the methods do.
+            Stmt::Class(n) => {
+                for member in &n.members {
+                    if let crate::syntax::ast::ClassMember::Method(f) = member {
+                        self.block(&f.body.block);
+                    }
+                }
+            }
         }
     }
 

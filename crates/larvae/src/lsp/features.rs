@@ -108,6 +108,13 @@ impl Server {
                     (path.join("."), 12, n.span)
                 }
 
+                Stmt::Class(n) => (
+                    lexed.toks[n.name.start as usize].text(src).to_string(),
+                    // 5 is Class, in the numbering of the protocol.
+                    5,
+                    n.span,
+                ),
+
                 Stmt::LocalFunction(n) => (
                     lexed.toks[n.name.start as usize].text(src).to_string(),
                     12,
