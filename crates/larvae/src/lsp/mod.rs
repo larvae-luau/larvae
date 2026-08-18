@@ -98,7 +98,7 @@ impl Server {
     pub(super) fn handle(&mut self, message: &rpc::Message, out: &mut impl Write) -> Result<bool> {
         match message.method.as_str() {
             "initialize" => {
-                self.initialize(&message.params);
+                self.initialize(&message.params, out)?;
 
                 self.reply(message, out, capabilities())?;
             }
@@ -120,7 +120,7 @@ impl Server {
             broken.
             */
             "workspace/didChangeConfiguration" => {
-                self.load_config();
+                self.load_config(out)?;
 
                 for uri in self.documents.keys().cloned().collect::<Vec<_>>() {
                     self.publish(&uri, out)?;

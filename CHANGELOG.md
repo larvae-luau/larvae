@@ -14,6 +14,12 @@ Notable changes land here. Format follows
   reports what waits and fails without writing, for CI. The edit is textual
   and keeps every other byte, comments included, and a worm that an
   `extends` base declares is reported rather than edited behind its owner
+- The editor reports a config that fails to resolve. The server raised no
+  sign before, so a broken larvae.toml meant defaults for a whole session
+  and an editor that looked broken in a quiet way. One warning toast now
+  carries the reason, on start and on each settings reload, and the server
+  still serves defaults until the config loads. A project without a
+  larvae.toml stays quiet, because zero config is a supported state
 
 ## 0.3.0 - 2026-08-17
 

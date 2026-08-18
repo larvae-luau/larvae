@@ -562,7 +562,107 @@ fn a_project_config_that_does_not_load_leaves_the_server_with_no_worms() {
         ..Default::default()
     };
 
-    server.load_config();
+    server.load_config(&mut Vec::new()).unwrap();
 
     assert!(server.worms.is_empty());
+}
+
+/// The uri of a directory on disk, in the form the editor sends
+fn dir_uri(path: &std::path::Path) -> String {
+    let text = path.display().to_string().replace('\\', "/");
+
+    format!("file:///{}", text.trim_start_matches('/'))
+}
+
+fn initialized_at(dir: &std::path::Path) -> String {
+    let mut server = Server::default();
+    let mut out = Vec::new();
+
+    server
+        .handle(
+            &message("initialize", Some(1), json!({ "rootUri": dir_uri(dir) })),
+            &mut out,
+        )
+        .unwrap();
+
+    String::from_utf8(out).unwrap()
+}
+
+/// A config that fails to resolve raises one editor notification.
+#[test]
+fn a_broken_config_raises_a_warning_toast() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("larvae.toml"), "[process]\ninpt = \"x\"\n").unwrap();
+
+    let out = initialized_at(dir.path());
+
+    assert!(out.contains("window/showMessage"), "{out}");
+    assert!(out.contains("larvae serves defaults"), "{out}");
+    // The server still answers initialize; a broken config does not stop it.
+    assert!(out.contains("documentFormattingProvider"), "{out}");
+}
+
+/// No larvae.toml is the zero config case, and it raises nothing.
+#[test]
+fn a_missing_config_stays_quiet() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let out = initialized_at(dir.path());
+
+    assert!(!out.contains("window/showMessage"), "{out}");
+}
+
+#[test]
+fn a_clean_config_stays_quiet() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("larvae.toml"),
+        "[fmt]\ncolumn_width = 100\n",
+    )
+    .unwrap();
+
+    let out = initialized_at(dir.path());
+
+    assert!(!out.contains("window/showMessage"), "{out}");
+}
+
+/// A settings change reloads the config, so the report happens there too.
+#[test]
+fn a_config_change_reports_the_break_again() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("larvae.toml"),
+        "[fmt]\ncolumn_width = 100\n",
+    )
+    .unwrap();
+
+    let mut server = Server::default();
+    let mut out = Vec::new();
+    server
+        .handle(
+            &message(
+                "initialize",
+                Some(1),
+                json!({ "rootUri": dir_uri(dir.path()) }),
+            ),
+            &mut out,
+        )
+        .unwrap();
+
+    std::fs::write(dir.path().join("larvae.toml"), "[process]\ninpt = \"x\"\n").unwrap();
+
+    let mut out = Vec::new();
+    server
+        .handle(
+            &message("workspace/didChangeConfiguration", None, json!({})),
+            &mut out,
+        )
+        .unwrap();
+
+    assert!(
+        String::from_utf8(out)
+            .unwrap()
+            .contains("window/showMessage"),
+        "the reload reports the break"
+    );
 }

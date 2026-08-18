@@ -3,20 +3,22 @@ What the server holds between requests: the config of the project and its
 worms, and the reloads that keep both current.
 */
 
+use std::io::Write;
 use std::path::Path;
 
-use serde_json::Value;
+use anyhow::Result;
+use serde_json::{Value, json};
 
 use crate::commands::fmt::pool_with;
 use crate::fmt::FmtConfig;
 use crate::lint::LintConfig;
 use crate::worm::pool::Pool;
 
-use super::Server;
 use super::uri::path_of_uri;
+use super::{Server, rpc};
 
 impl Server {
-    pub(super) fn initialize(&mut self, params: &Value) {
+    pub(super) fn initialize(&mut self, params: &Value, out: &mut impl Write) -> Result<()> {
         self.root = params["rootUri"]
             .as_str()
             .and_then(path_of_uri)
@@ -26,43 +28,71 @@ impl Server {
                     .and_then(path_of_uri)
             });
 
-        self.load_config();
+        self.load_config(out)
     }
 
     /*
     Read the config of the project, with the defaults as the fallback.
 
-    The server does not report a broken config here. The user edits that
-    config in the editor. A server that refuses to start because the file is
-    incomplete is worse than one that formats with defaults until the save.
+    A broken config does not stop the server, because the user edits that
+    config in the editor, and a server that refuses to start over an
+    incomplete file is not usable. But silence is wrong too: a project that
+    formats with defaults for a whole session looks broken in a quieter
+    way. So a config that fails to resolve raises one editor notification,
+    and the message carries the reason. A project without a larvae.toml is
+    the zero config case and raises nothing.
     */
-    pub(super) fn load_config(&mut self) {
+    pub(super) fn load_config(&mut self, out: &mut impl Write) -> Result<()> {
         // The load of the worms takes `&mut self`, so the root arrives as a copy.
         let Some(root) = self.root.clone() else {
-            return;
+            return Ok(());
         };
 
-        let project = crate::config::Config::load(&root.join("larvae.toml")).ok();
+        let path = root.join("larvae.toml");
 
-        if let Ok(cfg) = FmtConfig::discover(&root, project.as_ref().and_then(|c| c.fmt.as_ref())) {
-            self.fmt = cfg;
+        let project = match path.exists() {
+            true => match crate::config::Config::load(&path) {
+                Ok(cfg) => Some(cfg),
+
+                Err(e) => {
+                    warn(
+                        out,
+                        &format!("{e:#}; larvae serves defaults until it loads"),
+                    )?;
+
+                    None
+                }
+            },
+
+            false => None,
+        };
+
+        match FmtConfig::discover(&root, project.as_ref().and_then(|c| c.fmt.as_ref())) {
+            Ok(cfg) => self.fmt = cfg,
+
+            Err(e) => warn(out, &format!("{e:#}"))?,
         }
 
-        if let Ok(cfg) = LintConfig::discover(&root, project.as_ref().and_then(|c| c.lint.as_ref()))
-        {
-            // The root lists apply here too, so the editor and the command agree.
-            let (root_in, root_ex) = project
-                .as_ref()
-                .map(|c| (c.include.as_slice(), c.exclude.as_slice()))
-                .unwrap_or((&[], &[]));
+        match LintConfig::discover(&root, project.as_ref().and_then(|c| c.lint.as_ref())) {
+            Ok(cfg) => {
+                // The root lists apply here too, so the editor and the command agree.
+                let (root_in, root_ex) = project
+                    .as_ref()
+                    .map(|c| (c.include.as_slice(), c.exclude.as_slice()))
+                    .unwrap_or((&[], &[]));
 
-            self.excluded = cfg
-                .excludes_under(&root, root_in, root_ex)
-                .unwrap_or_default();
-            self.lint = cfg;
+                self.excluded = cfg
+                    .excludes_under(&root, root_in, root_ex)
+                    .unwrap_or_default();
+                self.lint = cfg;
+            }
+
+            Err(e) => warn(out, &format!("{e:#}"))?,
         }
 
         self.load_worms(&root);
+
+        Ok(())
     }
 
     /*
@@ -113,6 +143,20 @@ impl Server {
             self.load_worms(&root);
         }
     }
+}
+
+/*
+One warning toast in the editor; `window/showMessage` type 2 is Warning.
+
+The protocol allows this notification before the reply to `initialize`, so
+a config that is broken at startup reports right away.
+*/
+fn warn(out: &mut impl Write, message: &str) -> Result<()> {
+    rpc::notify(
+        out,
+        "window/showMessage",
+        json!({ "type": 2, "message": message }),
+    )
 }
 
 /*
