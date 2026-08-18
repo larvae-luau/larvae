@@ -5,7 +5,7 @@ members = ["crates/larvae", "crates/larvae-worm"]
 exclude = ["crates/larvae/fuzz", "crates/larvae/tests/fixtures/echo-worm"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/larvae-luau/larvae"
