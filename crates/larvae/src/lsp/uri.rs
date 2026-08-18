@@ -24,33 +24,28 @@ project config; no other function breaks.
 pub(super) fn path_of_uri(uri: &str) -> Option<PathBuf> {
     let rest = uri.strip_prefix("file://")?;
 
-    // On Windows the path arrives as /C:/thing; remove the leading slash.
-    let rest = match rest.get(..3) {
-        Some(p) if p.starts_with('/') && p.as_bytes()[2] == b':' => &rest[1..],
+    let mut bytes = Vec::with_capacity(rest.len());
+    let mut it = rest.bytes();
 
-        _ => rest,
-    };
-
-    let mut out = String::with_capacity(rest.len());
-    let mut chars = rest.chars();
-
-    while let Some(c) = chars.next() {
-        if c != '%' {
-            out.push(c);
-
+    while let Some(b) = it.next() {
+        if b != b'%' {
+            bytes.push(b);
             continue;
         }
 
-        let hex: String = chars.by_ref().take(2).collect();
+        let (hi, lo) = (it.next()?, it.next()?);
 
-        match u8::from_str_radix(&hex, 16) {
-            Ok(byte) => out.push(byte as char),
-
-            Err(_) => {
-                out.push('%');
-                out.push_str(&hex);
-            }
+        match u8::from_str_radix(std::str::from_utf8(&[hi, lo]).ok()?, 16) {
+            Ok(byte) => bytes.push(byte),
+            Err(_) => bytes.extend([b'%', hi, lo]),
         }
+    }
+
+    // Decode first, then the drive check sees the real colon.
+    let mut out = String::from_utf8(bytes).ok()?;
+
+    if out.len() >= 3 && out.as_bytes()[0] == b'/' && out.as_bytes()[2] == b':' {
+        out.remove(0);
     }
 
     Some(PathBuf::from(out))
