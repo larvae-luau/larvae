@@ -516,12 +516,156 @@ fn run_inner(
         }
     }
 
+    let mut graph = shared_graph.into_inner().unwrap();
+    let mut sources = shared_sources.into_inner().unwrap();
+
+    if keep_sources && collect_graph {
+        absorb_external(&resolver, &mut graph, &mut sources, &mut diags);
+    }
+
     diag::sort(&mut diags);
     Ok(Outcome {
         stats,
         diags,
         build_project,
-        graph: shared_graph.into_inner().unwrap(),
-        sources: shared_sources.into_inner().unwrap(),
+        graph,
+        sources,
     })
+}
+
+/*
+The modules outside the input roots, resolved into the graph.
+
+A project requires a vendored package, and the package requires its own
+files. The pipeline resolves the input tree only, so the graph used to end
+at the package's door: the file was a node, but its own requires stayed
+unknown, and a bundle shipped them raw, `require("./lib")` and all. This
+pass walks those doors until the graph closes. Each node without processed
+text is read and resolved exactly as an input file is: the same resolver,
+the same `.luaurc` walk, the same `@self`. What it requires joins the
+worklist, so a package that requires a package follows too.
+
+The text goes into `sources` untouched, and the recorded sites index it.
+So the bundler rewrites the requires of a vendored file without larvae
+editing a byte of it first.
+
+A node that cannot be read still gains an entry, because the worklist
+keys on absence, and the error beside it stops the bundle before the
+entry could ship.
+*/
+fn absorb_external(
+    resolver: &crate::requires::resolve::Resolver,
+    graph: &mut crate::requires::graph::Graph,
+    sources: &mut std::collections::BTreeMap<PathBuf, String>,
+    diags: &mut Vec<Diag>,
+) {
+    loop {
+        let missing: Vec<PathBuf> = graph
+            .nodes()
+            .filter(|n| !sources.contains_key(*n))
+            .map(Path::to_path_buf)
+            .collect();
+
+        if missing.is_empty() {
+            return;
+        }
+
+        for node in missing {
+            let file = match external_file(&node) {
+                Some(file) => file,
+
+                None => {
+                    diags.push(Diag::error(
+                        &node,
+                        "a module resolves here, and no file answers to it",
+                    ));
+                    sources.insert(node, String::new());
+
+                    continue;
+                }
+            };
+
+            let text = match std::fs::read_to_string(&file) {
+                Ok(text) => text,
+
+                Err(e) => {
+                    diags.push(Diag::error(&file, format!("cannot read file: {e}")));
+                    sources.insert(node, String::new());
+
+                    continue;
+                }
+            };
+
+            let lexed = match crate::syntax::lexer::lex(&text) {
+                Ok(lexed) => lexed,
+
+                Err(e) => {
+                    diags.push(
+                        Diag::error(&file, format!("lex error: {}", e.message)).at(&text, e.offset),
+                    );
+                    sources.insert(node, text);
+
+                    continue;
+                }
+            };
+
+            let scanned = crate::syntax::scan::scan(&text, &lexed.toks);
+            let ctx = crate::requires::resolve::FileCtx::new(
+                &file,
+                resolver.mounts,
+                resolver.target,
+                resolver.style,
+            );
+
+            for site in &scanned.sites {
+                let spec = &text[site.inner_start as usize..site.inner_end as usize];
+                let before = ctx.required.borrow().len();
+
+                /*
+                The rewrite decision is dropped: this text is never
+                spliced. A resolution failure downgrades to a warning,
+                because the module is vendored and its author is not here:
+                a package can hold a require for another runtime, ex:
+                `task or require("@lune/task")`, that never runs where the
+                bundle runs. The require ships into the bundle as written,
+                which is what the module does without a bundle too.
+                */
+                let mut local: Vec<Diag> = Vec::new();
+                let _ = resolver.resolve(&ctx, spec, &text, site.at as usize, &mut local);
+
+                for mut d in local {
+                    d.severity = diag::Severity::Warning;
+                    diags.push(d);
+                }
+
+                if let Some(target) = ctx.required.borrow().get(before) {
+                    graph.add(&node, target);
+                    graph.add_site(
+                        &node,
+                        crate::requires::graph::Site {
+                            at: site.at,
+                            tok_start: site.tok_start,
+                            tok_end: site.tok_end,
+                            target: target.clone(),
+                        },
+                    );
+                }
+            }
+
+            graph.see(&node);
+            sources.insert(node, text);
+        }
+    }
+}
+
+/// The file behind a graph node; a directory node answers with its init file
+fn external_file(node: &Path) -> Option<PathBuf> {
+    if node.is_dir() {
+        return ["init.luau", "init.lua"]
+            .iter()
+            .map(|name| node.join(name))
+            .find(|p| p.is_file());
+    }
+
+    node.is_file().then(|| node.to_path_buf())
 }

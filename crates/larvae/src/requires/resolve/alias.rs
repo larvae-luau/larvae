@@ -43,7 +43,22 @@ impl<'a> Resolver<'a> {
             return self.emit_fs(ctx, spec, &target_base, src, offset, diags);
         }
 
-        // @self is natively valid for the other targets, so it passes through.
+        /*
+        The other targets keep @self as written, because Luau resolves it
+        natively. The graph still needs the edge: `check` follows cycles
+        through it, and a bundle ships the module it names. So the module
+        is located and recorded, and the text stays untouched. A spec that
+        does not locate stays silent here, exactly as it did before the
+        graph learned about @self.
+        */
+        if let Some(base) = normalize_join(&ctx.dir, rest)
+            && let Ok(Some(node)) = super::spec::resolve_module(&base)
+        {
+            ctx.required
+                .borrow_mut()
+                .push(node.dm_key_path().to_path_buf());
+        }
+
         Rewrite::Keep
     }
 

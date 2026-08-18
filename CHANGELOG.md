@@ -6,6 +6,25 @@ Notable changes land here. Format follows
 
 ## Unreleased
 
+### Fixed
+
+- A bundle follows the requires of a vendored package. The pipeline
+  resolves the input tree only, so the graph ended at the door of a module
+  outside the roots: `require("./lib")` inside a package shipped raw and
+  failed inside the bundle. The bundler now walks those modules until the
+  graph closes, with the same resolver, the same `.luaurc` walk, and the
+  same `@self`, so a package that requires a package follows too
+- `@self` requires enter the require graph. They passed through as
+  natively valid and never recorded an edge, so `check` could not follow a
+  cycle through one and a bundle dropped what one named
+- A resolution failure inside a vendored module warns instead of stopping
+  the bundle, because a package can require another runtime, ex:
+  `task or require("@lune/task")`; the require ships as written
+- `export type` loses its `export` inside a bundle. The keyword is legal
+  at the top level of a module only, and the bundle wraps every module in
+  a function, so the bundle of a module that re-exported types did not
+  parse
+
 ### Added
 
 - The syntax of three merged Luau RFCs. Classes: `[export] [open] class

@@ -463,3 +463,120 @@ fn a_dense_bundle_still_runs() {
     assert!(!text.contains("a comment"), "comments are trivia: {text}");
     assert_eq!(run_luau(&text).unwrap(), "ok");
 }
+
+/*
+The shape of a vendored dependency: a package outside the input roots,
+reached through an alias, whose own files require each other with `./`
+and `@self`. The pipeline resolves the input tree only, so the bundler
+absorbs the rest by walking the graph until it closes.
+*/
+#[test]
+fn a_vendored_package_outside_the_roots_bundles_whole() {
+    let dir = project(
+        &[(
+            "init.luau",
+            "local lib = require(\"@pkg/lib\")\nreturn lib.word()\n",
+        )],
+        concat!(
+            "[process]\ninput = \"src\"\n\n[requires]\ntarget = \"path\"\n\n",
+            "[bundle]\nentry = \"src/init.luau\"\noutput = \"out.luau\"\n"
+        ),
+    );
+    let root = dir.path();
+
+    write(
+        root,
+        ".luaurc",
+        "{ \"aliases\": { \"pkg\": \"packages\" } }",
+    );
+    write(
+        root,
+        "packages/lib.luau",
+        "local module = require(\"./.vendor/lib/src\")\nreturn module\n",
+    );
+    write(
+        root,
+        "packages/.vendor/lib/src/init.luau",
+        "local greet = require(\"@self/greet\")\nreturn { word = function() return greet.hello() end }\n",
+    );
+    write(
+        root,
+        "packages/.vendor/lib/src/greet.luau",
+        "local tail = require(\"./tail\")\nreturn { hello = function() return \"hi\" .. tail end }\n",
+    );
+    write(root, "packages/.vendor/lib/src/tail.luau", "return \"!\"\n");
+
+    let text = run_bundle(root, &[]).expect("bundles");
+
+    assert_eq!(run_luau(&text).expect("runs"), "hi!");
+    assert!(
+        !text.contains("require(\"./"),
+        "a relative require survived: {text}"
+    );
+    assert!(!text.contains("@self"), "an @self require survived: {text}");
+}
+
+/*
+A vendored module can require another runtime, ex: `task or
+require("@lune/task")`. The author of that file is not here, so the
+resolution failure warns instead of stopping the bundle, and the require
+ships as written, which is what the module does without a bundle too.
+*/
+#[test]
+fn an_unknown_alias_inside_a_vendored_module_warns_and_ships() {
+    let dir = project(
+        &[(
+            "init.luau",
+            "local lib = require(\"@pkg/lib\")\nreturn lib\n",
+        )],
+        concat!(
+            "[process]\ninput = \"src\"\n\n[requires]\ntarget = \"path\"\n\n",
+            "[bundle]\nentry = \"src/init.luau\"\noutput = \"out.luau\"\n"
+        ),
+    );
+    let root = dir.path();
+
+    write(
+        root,
+        ".luaurc",
+        "{ \"aliases\": { \"pkg\": \"packages\" } }",
+    );
+    write(
+        root,
+        "packages/lib.luau",
+        "local t = string or require(\"@lune/task\")\nreturn \"ok\"\n",
+    );
+
+    let text = run_bundle(root, &[]).expect("a vendored unknown alias must not stop the bundle");
+
+    assert!(text.contains("require(\"@lune/task\")"), "{text}");
+    assert_eq!(run_luau(&text).expect("runs"), "ok");
+}
+
+/*
+`export type` is legal at the top level of a module only, and the bundle
+wraps every module in a function. The `export` is erased; the alias stays,
+because a plain `type` is legal in any block and free at run time.
+*/
+#[test]
+fn an_export_type_loses_its_export_inside_the_bundle() {
+    let text = bundle(
+        &[
+            (
+                "main.luau",
+                "local m = require(\"./shim\")\nreturn m.word\n",
+            ),
+            (
+                "shim.luau",
+                "local module = require(\"./real\")\nexport type Word = module.Word\nreturn module\n",
+            ),
+            ("real.luau", "export type Word = string\nreturn { word = \"typed\" }\n"),
+        ],
+        "src/main.luau",
+    )
+    .expect("bundles");
+
+    assert!(!text.contains("export type"), "{text}");
+    assert!(text.contains("type Word"), "the alias itself stays: {text}");
+    assert_eq!(run_luau(&text).expect("runs"), "typed");
+}

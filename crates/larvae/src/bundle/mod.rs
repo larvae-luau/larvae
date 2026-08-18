@@ -154,7 +154,43 @@ pub fn rewrite(src: &str, path: &Path, plan: &Plan, diags: &mut Vec<Diag>) -> Re
         );
     }
 
-    let mut out = src.to_string();
+    /*
+    Every change is one splice list, sorted and applied back to front, so
+    each earlier offset stays valid whatever order the changes were found
+    in. Two kinds of change land here. A require splice points the call
+    into the bundle. An `export type` loses its `export`: the keyword is
+    legal at the top level of a module only, the bundle wraps every module
+    in a function, and a plain `type` alias is legal in any block while
+    changing nothing at run time.
+
+    `export local` and its siblings stay, because their run time meaning
+    is the module's value, and a bundle cannot erase that without changing
+    what the module returns. A runtime that accepts them at the top level
+    is the runtime this bundle targets.
+    */
+    let mut splices: Vec<(usize, usize, String)> = Vec::new();
+
+    if let Ok(chunk) = crate::syntax::parser::parse(src, &lexed.toks) {
+        for stmt in &chunk.block.stmts {
+            if let crate::syntax::ast::Stmt::TypeAlias(alias) = stmt
+                && alias.exported
+            {
+                let tok = &lexed.toks[alias.span.start as usize];
+
+                if tok.text(src) == "export" {
+                    let start = tok.start as usize;
+                    let end = start
+                        + "export".len()
+                        + src[start + "export".len()..]
+                            .chars()
+                            .take_while(|c| *c == ' ')
+                            .count();
+
+                    splices.push((start, end, String::new()));
+                }
+            }
+        }
+    }
 
     /*
     Two splices per require: the string token becomes the module id, and the
@@ -164,20 +200,30 @@ pub fn rewrite(src: &str, path: &Path, plan: &Plan, diags: &mut Vec<Diag>) -> Re
     halves. `f "x"` without parentheses is a call too, and the two splices
     handle it without more knowledge.
     */
-    for site in plan.graph.sites_of(path).iter().rev() {
+    for site in plan.graph.sites_of(path) {
         let Some(id) = plan.modules.get(&site.target) else {
             continue;
         };
 
-        out.replace_range(
-            site.tok_start as usize..site.tok_end as usize,
-            &emit::quote(id),
-        );
+        splices.push((
+            site.tok_start as usize,
+            site.tok_end as usize,
+            emit::quote(id),
+        ));
 
-        out.replace_range(
-            site.at as usize..site.at as usize + "require".len(),
-            "__require",
-        );
+        splices.push((
+            site.at as usize,
+            site.at as usize + "require".len(),
+            "__require".to_string(),
+        ));
+    }
+
+    splices.sort_by_key(|(start, _, _)| *start);
+
+    let mut out = src.to_string();
+
+    for (start, end, text) in splices.iter().rev() {
+        out.replace_range(start..end, text);
     }
 
     Ok(out)
