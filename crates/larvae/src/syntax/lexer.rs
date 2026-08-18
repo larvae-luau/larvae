@@ -451,6 +451,21 @@ fn scan_number(b: &[u8], mut i: usize) -> usize {
         }
     }
 
+    /*
+    The integer suffix: `123i`, `0xABABi`, `0b1000_1000i`.
+
+    The `i` joins the number only when it ends the word. So `3if` still
+    lexes as the number and the keyword, exactly as it did before the
+    suffix existed.
+    */
+    if i < b.len()
+        && b[i] == b'i'
+        && b.get(i + 1)
+            .is_none_or(|c| !c.is_ascii_alphanumeric() && *c != b'_')
+    {
+        i += 1;
+    }
+
     i
 }
 
@@ -518,6 +533,30 @@ mod tests {
         };
 
         assert_eq!(&src[inner_start as usize..inner_end as usize], "hello");
+    }
+
+    /// The suffix joins only when it ends the word; `3if` keeps its old split.
+    #[test]
+    fn integer_suffixes_join_their_number() {
+        let toks = lex("local n = 123i + 0xf_fi + 0b10i").unwrap().toks;
+        let numbers: Vec<TokKind> = toks
+            .iter()
+            .filter(|t| t.kind == TokKind::Number)
+            .map(|t| t.kind)
+            .collect();
+
+        assert_eq!(numbers.len(), 3);
+
+        let src = "local n = 123i";
+        let toks = lex(src).unwrap().toks;
+
+        assert_eq!(toks.last().unwrap().text(src), "123i");
+
+        let src = "x = 3if";
+        let toks = lex(src).unwrap().toks;
+
+        assert_eq!(toks[2].text(src), "3");
+        assert_eq!(toks[3].text(src), "if");
     }
 
     #[test]

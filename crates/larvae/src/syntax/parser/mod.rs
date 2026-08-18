@@ -101,6 +101,11 @@ impl<'a> Parser<'a> {
         matches!(self.kind_at(0), Some(TokKind::Ident)) && !is_reserved(self.text())
     }
 
+    /// Reports if the token `n` ahead is a name and not a reserved word.
+    fn name_at(&self, n: usize) -> bool {
+        matches!(self.kind_at(n), Some(TokKind::Ident)) && !is_reserved(self.text_at(n))
+    }
+
     fn bump(&mut self) -> usize {
         let i = self.pos;
         self.pos += 1;

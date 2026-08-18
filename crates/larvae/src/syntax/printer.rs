@@ -109,6 +109,16 @@ fn nested_blocks(stmt: &Stmt) -> Vec<&Block> {
 
         Stmt::LocalFunction(n) => vec![&n.body.block],
 
+        Stmt::Class(n) => n
+            .members
+            .iter()
+            .filter_map(|m| match m {
+                crate::syntax::ast::ClassMember::Method(f) => Some(&f.body.block),
+
+                crate::syntax::ast::ClassMember::Field { .. } => None,
+            })
+            .collect(),
+
         Stmt::If(n) => {
             let mut v: Vec<&Block> = n.branches.iter().map(|(_, b)| b).collect();
 

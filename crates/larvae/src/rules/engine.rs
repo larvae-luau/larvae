@@ -228,6 +228,14 @@ pub fn walk_stmt(s: &Stmt, v: &mut impl Visit) {
 
         Stmt::LocalFunction(n) => walk_block(&n.body.block, v),
 
+        Stmt::Class(n) => {
+            for member in &n.members {
+                if let crate::syntax::ast::ClassMember::Method(f) = member {
+                    walk_block(&f.body.block, v);
+                }
+            }
+        }
+
         Stmt::Return(n) => {
             for e in &n.values {
                 walk_expr(e, v);

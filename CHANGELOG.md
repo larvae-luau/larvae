@@ -8,6 +8,25 @@ Notable changes land here. Format follows
 
 ### Added
 
+- The syntax of three merged Luau RFCs. Classes: `[export] [open] class
+  Name [extends Base]` with `[public]` fields, methods, the RFC's
+  metamethod whitelist plus `__init` from the constructors RFC, and a
+  syntax error for any other `__` name. Export by value: `export local`,
+  `export const`, `export function`, composing with attributes. Integer
+  literals: the `i` suffix on decimal, hex, and binary numbers. `class`,
+  `open`, and `export` stay contextual, so code that uses them as names
+  parses as before. The formatter lays a class out one member per line, a
+  field annotation takes the table type layout, and a class holding a
+  comment between members prints as written
+- A read-only pass reads a file that is not UTF-8. Luau accepts any byte
+  inside a string, and larvae reads files as UTF-8, so `larvae check` and
+  `larvae lint` now analyze a stand-in: every invalid byte becomes one
+  stand-in byte, so every offset holds. A pass that writes output still
+  refuses the file, because a splice of the stand-in would write it
+- The upstream Luau conformance corpus as a parser regression net: all 55
+  files of `luau-lang/luau tests/conformance` are vendored, and every one
+  must lex, parse, tile its token stream, and print back byte for byte
+
 - `larvae worm update`, which bumps every worm in larvae.toml to its latest
   release: the newest GitHub release for a `repo@version` source, the newest
   stable crate for a `cargo` source, and nothing for a path worm. `--check`

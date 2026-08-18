@@ -35,6 +35,7 @@ pub enum Kind {
     Break,
     Continue,
     TypeAlias,
+    Class,
     Empty,
     // expressions
     Nil,
@@ -76,6 +77,7 @@ impl Kind {
             Self::Break => "Break",
             Self::Continue => "Continue",
             Self::TypeAlias => "TypeAlias",
+            Self::Class => "Class",
             Self::Empty => "Empty",
             Self::Nil => "Nil",
             Self::True => "True",
@@ -247,6 +249,7 @@ impl NodeTable {
             Stmt::Break(span) => (Kind::Break, *span),
             Stmt::Continue(span) => (Kind::Continue, *span),
             Stmt::TypeAlias(n) => (Kind::TypeAlias, n.span),
+            Stmt::Class(n) => (Kind::Class, n.span),
         };
 
         let id = self.open(kind, bytes(span), Some(parent));
@@ -312,6 +315,15 @@ impl NodeTable {
             Stmt::Function(n) => self.push_block(&n.body.block, Some(id), bytes),
 
             Stmt::LocalFunction(n) => self.push_block(&n.body.block, Some(id), bytes),
+
+            // the method bodies, so a worm can walk into a class
+            Stmt::Class(n) => {
+                for member in &n.members {
+                    if let crate::syntax::ast::ClassMember::Method(f) = member {
+                        self.push_block(&f.body.block, Some(id), bytes);
+                    }
+                }
+            }
 
             Stmt::Return(n) => {
                 for e in &n.values {

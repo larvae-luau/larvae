@@ -352,3 +352,65 @@ fn truncations_never_panic() {
         }
     }
 }
+
+// --- classes, export by value, and integer literals ----------------------
+
+#[test]
+fn a_class_with_fields_and_methods_parses() {
+    round_trip(
+        "class Point\n\tpublic x: number\n\tpublic y\n\tfunction magnitude(self)\n\t\treturn math.sqrt(self.x * self.x + self.y * self.y)\n\tend\nend\n",
+    );
+}
+
+#[test]
+fn class_forms_all_parse() {
+    round_trip("export class Empty\nend\n");
+    round_trip("open class Animal\n\tpublic species: string\nend\n");
+    round_trip(
+        "class Cat extends Animal\n\tfunction speak(self)\n\t\treturn \"meow\"\n\tend\nend\n",
+    );
+    round_trip("export open class Base\nend\n");
+    round_trip(
+        "class M\n\tfunction __init(self)\n\tend\n\tfunction __tostring(self)\n\t\treturn \"m\"\n\tend\nend\n",
+    );
+}
+
+/// `class` and `open` stay ordinary names outside a declaration.
+#[test]
+fn class_and_open_stay_contextual() {
+    round_trip("local class = 1\nclass = class + 1\n");
+    round_trip("local open = io.open\nopen(\"f\")\n");
+    round_trip("class.method()\n");
+    round_trip("return open\n");
+}
+
+#[test]
+fn a_class_rejects_what_the_rfc_rejects() {
+    rejects("class Point\n\tfunction __index(self)\n\tend\nend\n");
+    rejects("class Point\n\tfunction a.b(self)\n\tend\nend\n");
+    rejects("class Point\n\tpublic x: number\n");
+}
+
+#[test]
+fn export_by_value_forms_parse() {
+    round_trip("export local version = \"5.1\"\n");
+    round_trip("export const TAU = math.pi * 2\n");
+    round_trip("export local a, b, c = 1, 2, 3\n");
+    round_trip("export function init()\nend\n");
+    round_trip("@native\nexport function fast()\nend\n");
+}
+
+/// A variable named export keeps parsing as an expression.
+#[test]
+fn export_stays_contextual() {
+    round_trip("local export = 1\nexport = export + 1\n");
+    round_trip("export.field = 2\n");
+}
+
+#[test]
+fn integer_literals_parse() {
+    round_trip("local n = 123i\n");
+    round_trip("local h = 0xABABi + 0xf_fi\n");
+    round_trip("local b = 0b1000_1000i\n");
+    round_trip("local big = 0xFFFF_FFFF_FFFF_FFFFi\n");
+}
