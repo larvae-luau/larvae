@@ -979,6 +979,36 @@
             }
           }
         },
+        "table_types": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "How a table type is laid out, in every position a type takes: an alias, an annotation, a parameter, a return type, and a :: assertion. A table wider than \"width\" opens with one field per line.\n\n[table_types \u2192](https://larvae-luau.github.io/docs/reference/formatting#table-types)",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Off keeps the one-line replay, byte for byte what larvae wrote before.\n\n[table_types.enabled \u2192](https://larvae-luau.github.io/docs/reference/formatting#table-types-enabled)",
+              "enum": [
+                true,
+                false
+              ]
+            },
+            "width": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 60,
+              "description": "The width at which a table type opens over several lines. The measure is the flat form of one table alone, so a short table nested in a long one keeps its line.\n\n[table_types.width \u2192](https://larvae-luau.github.io/docs/reference/formatting#table-types-width)"
+            },
+            "separator": {
+              "enum": [
+                "comma",
+                "semicolon"
+              ],
+              "default": "comma",
+              "description": "The separator between fields, in both layouts. Luau reads both.\n\n[table_types.separator \u2192](https://larvae-luau.github.io/docs/reference/formatting#table-types-separator)"
+            }
+          }
+        },
         "final_newline": {
           "type": "boolean",
           "enum": [

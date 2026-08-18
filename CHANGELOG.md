@@ -14,6 +14,17 @@ Notable changes land here. Format follows
   reports what waits and fails without writing, for CI. The edit is textual
   and keeps every other byte, comments included, and a worm that an
   `extends` base declares is reported rather than edited behind its owner
+- `[fmt] table_types`, which lays out table types in every position a type
+  takes: an alias, an annotation on a binding or a parameter, a return
+  type, and a `::` assertion. A table wider than `width` (60 by default)
+  opens with one field per line and a trailing separator; the measure is
+  one table alone, so a short table nested in a long one keeps its line.
+  `separator` selects `comma` or `semicolon`, in both layouts. On by
+  default; `enabled = false` keeps the one-line replay byte for byte. The
+  new solver's forms hold: `read` and `write` modifiers, indexers,
+  intersections, and generic arguments split no field. A comment inside a
+  table type keeps the author's text, and `type function` bodies are never
+  touched
 - The editor reports a config that fails to resolve. The server raised no
   sign before, so a broken larvae.toml meant defaults for a whole session
   and an editor that looked broken in a quiet way. One warning toast now

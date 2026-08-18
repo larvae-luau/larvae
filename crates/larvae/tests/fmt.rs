@@ -10,7 +10,7 @@ whitespace, and every comment must stay.
 
 use larvae::fmt::config::{
     CallParens, CollapseSimpleStatement, IfExpansion, IfExpression, IfPlacement, IfStyle,
-    IndentType, LineEndings, QuoteStyle, SpaceAfterFunctionNames,
+    IndentType, LineEndings, QuoteStyle, SpaceAfterFunctionNames, TableTypes, TypeSeparator,
 };
 use larvae::fmt::{FmtConfig, format};
 
@@ -44,6 +44,7 @@ const SAMPLES: &[&str] = &[
     "repeat\n\tx()\nuntil done\n",
     "do\n\tlocal scoped = 1\nend\n",
     "export type Thing = { a: number, b: string? }\n",
+    "type Wide = {\n\tname: string,\n\thealth: number,\n\tposition: Vector3,\n\tinventory: { [string]: number },\n}\n",
     "local x = a and b or c\n",
     "local x = -y + #z\n",
     "local x = (a + b) * c\n",
@@ -1812,4 +1813,182 @@ fn every_if_layout_is_idempotent_and_parses() {
             }
         }
     }
+}
+
+// --- table types ---------------------------------------------------------
+
+fn table_types(enabled: bool, width: usize, separator: TypeSeparator) -> FmtConfig {
+    FmtConfig {
+        table_types: TableTypes {
+            enabled,
+            width,
+            separator,
+        },
+        ..Default::default()
+    }
+}
+
+/// The default: a table type wider than 60 opens, one field per line.
+#[test]
+fn a_wide_table_type_opens_one_field_per_line() {
+    let out =
+        fmt("type Big = { name: string, health: number, position: Vector3, tags: { string } }\n");
+
+    assert_eq!(
+        out,
+        "type Big = {\n\tname: string,\n\thealth: number,\n\tposition: Vector3,\n\ttags: { string },\n}\n"
+    );
+}
+
+#[test]
+fn a_small_table_type_keeps_its_line() {
+    let src = "type Small = { x: number, y: number }\n";
+
+    assert_eq!(fmt(src), src);
+}
+
+/// Every position a type takes gets the same layout.
+#[test]
+fn annotations_params_returns_and_asserts_all_open() {
+    let long = "alpha: number, beta: string, gamma: boolean, delta: Vector3, epsilon: string";
+
+    for src in [
+        format!("local x: {{ {long} }} = {{}}\n"),
+        format!("local function f(e: {{ {long} }})\nend\n"),
+        format!("local function f(): {{ {long} }}\n\treturn {{}}\nend\n"),
+        format!("local x = (y :: {{ {long} }})\n"),
+    ] {
+        let out = fmt(&src);
+
+        // The indent depth differs by position; one field per line is the claim.
+        assert!(out.contains("\talpha: number,\n"), "{src} gave {out}");
+        assert!(out.contains("\tepsilon: string,\n"), "{src} gave {out}");
+        assert!(fmt(&out) == out, "must be a fixed point: {out}");
+    }
+}
+
+/// The measure is one table alone, so a short nested table keeps its line.
+#[test]
+fn a_short_nested_table_stays_flat_inside_an_open_one() {
+    let out = fmt(
+        "type T = { first: string, second: number, inner: { deeply: { nested: boolean } }, last: string }\n",
+    );
+
+    assert!(
+        out.contains("\tinner: { deeply: { nested: boolean } },\n"),
+        "{out}"
+    );
+}
+
+/// A wide inner table opens, and its parent cannot stay flat around it.
+#[test]
+fn a_wide_inner_table_opens_its_parent() {
+    let out = fmt_with(
+        "type T = { inner: { one: number, two: string } }\n",
+        table_types(true, 20, TypeSeparator::Comma),
+    );
+
+    assert_eq!(
+        out,
+        "type T = {\n\tinner: {\n\t\tone: number,\n\t\ttwo: string,\n\t},\n}\n"
+    );
+}
+
+/// The author's separators normalize to the option, flat and open alike.
+#[test]
+fn the_separator_option_covers_both_layouts() {
+    let semi = table_types(true, 60, TypeSeparator::Semicolon);
+
+    assert_eq!(
+        fmt_with("type T = { a: number, b: string }\n", semi.clone()),
+        "type T = { a: number; b: string }\n"
+    );
+
+    let out = fmt_with(
+        "type Big = { name: string, health: number, position: Vector3, tags: { string } }\n",
+        semi,
+    );
+
+    assert!(out.contains("name: string;\n"), "{out}");
+    assert!(out.contains("tags: { string };\n"), "{out}");
+}
+
+/// The new solver's forms survive: read, write, indexers, intersections.
+#[test]
+fn solver_forms_survive_the_layout() {
+    let out = fmt(
+        "type M = { read id: string; write score: number; data: { [string]: number }, list: { string }, tail: boolean }\n",
+    );
+
+    assert!(out.contains("\tread id: string,\n"), "{out}");
+    assert!(out.contains("\twrite score: number,\n"), "{out}");
+    assert!(out.contains("\tdata: { [string]: number },\n"), "{out}");
+    assert!(out.contains("\tlist: { string },\n"), "{out}");
+
+    let sect = fmt("type S = { a: number } & { b: string }\n");
+
+    assert_eq!(sect, "type S = { a: number } & { b: string }\n");
+}
+
+/// A separator inside generics or an indexer splits no field.
+#[test]
+fn separators_inside_generics_and_indexers_do_not_split() {
+    let src = "type T = { meta: Map<string, Set<number>>, call: (x: number, y: number) -> { ok: boolean } }\n";
+    let out = fmt(src);
+
+    assert!(out.contains("\tmeta: Map<string, Set<number>>,\n"), "{out}");
+    assert!(
+        out.contains("\tcall: (x: number, y: number) -> { ok: boolean },\n"),
+        "{out}"
+    );
+}
+
+/// An author's trailing separator does not make an empty field.
+#[test]
+fn a_trailing_separator_in_the_source_is_not_a_field() {
+    assert_eq!(fmt("type T = { x: number, }\n"), "type T = { x: number }\n");
+}
+
+#[test]
+fn an_empty_table_type_stays_flat() {
+    assert_eq!(fmt("type T = {}\n"), "type T = {}\n");
+}
+
+/// Off restores the one line replay, byte for byte.
+#[test]
+fn disabled_keeps_the_old_output() {
+    let cfg = table_types(false, 60, TypeSeparator::Comma);
+    let src = "type Big = { name: string, health: number, position: Vector3, tags: { string } }\n";
+
+    assert_eq!(fmt_with(src, cfg.clone()), src);
+
+    // A multi-line alias without comments keeps the author's text when off.
+    let wrapped = "type W = {\n\ta: number,\n\tb: string,\n}\n";
+
+    assert_eq!(fmt_with(wrapped, cfg), wrapped);
+}
+
+/// A comment inside a table type keeps the author's text, in either mode.
+#[test]
+fn a_comment_inside_a_table_type_keeps_the_authors_text() {
+    let src = "type T = {\n\t-- the id of the row\n\tid: string,\n\tvalue: number,\n}\n";
+
+    assert_eq!(fmt(src), src);
+}
+
+/// `type function` holds arbitrary Luau, and the layout never touches it.
+#[test]
+fn a_type_function_prints_as_written() {
+    let src = "type function pick(t)\n\treturn t\nend\n";
+
+    assert_eq!(fmt(src), src);
+}
+
+/// An author's manual wrap re-lays by the option, so one style wins.
+#[test]
+fn an_author_wrapped_short_alias_collapses() {
+    assert_eq!(
+        fmt("type T = {\n\tx: number,\n\ty: number,\n}\n"),
+        "type T = { x: number, y: number }\n"
+    );
 }

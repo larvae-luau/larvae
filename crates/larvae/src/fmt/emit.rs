@@ -175,6 +175,184 @@ impl<'a> Emitter<'a> {
         Cow::Owned(out)
     }
 
+    /*
+    A type, with each table type inside it given a layout.
+
+    The replay in `verbatim` keeps a type on one line. This method replays
+    the same tokens, and treats each `{ ... }` region as a body: flat when
+    its flat form fits `table_types.width`, one field per line otherwise.
+    The separator between fields follows the option in both layouts.
+
+    A comment inside the span keeps the author's text unchanged, for the
+    reason `verbatim` states: a replay has no position to put one back.
+    */
+    fn type_doc(&self, span: TokSpan) -> Doc<'a> {
+        if span.is_empty() || !self.cfg.table_types.enabled {
+            return Doc::text(self.verbatim(span));
+        }
+
+        let (lo, hi) = self.byte_span(span);
+
+        if !self.trivia.between(lo, hi).is_empty() {
+            return Doc::text(self.verbatim(span));
+        }
+
+        self.type_region(span.start, span.end)
+    }
+
+    /// The tokens of one type stretch: tables laid out, the rest replayed
+    fn type_region(&self, from: u32, to: u32) -> Doc<'a> {
+        let mut parts: Vec<Doc<'a>> = Vec::new();
+        let mut flat = String::new();
+        let mut prev: Option<u32> = None;
+        let mut i = from;
+
+        while i < to {
+            let spaced = prev.is_some_and(|p| needs_space(self.tok(p), self.tok(i)));
+
+            if self.tok(i) == "{"
+                && let Some(close) = self.matching_brace(i, to)
+            {
+                if spaced {
+                    flat.push(' ');
+                }
+
+                if !flat.is_empty() {
+                    parts.push(Doc::text(std::mem::take(&mut flat)));
+                }
+
+                parts.push(self.table_type(i, close));
+                prev = Some(close);
+                i = close + 1;
+
+                continue;
+            }
+
+            if spaced {
+                flat.push(' ');
+            }
+
+            flat.push_str(self.tok(i));
+            prev = Some(i);
+            i += 1;
+        }
+
+        if !flat.is_empty() {
+            parts.push(Doc::text(flat));
+        }
+
+        Doc::concat(parts)
+    }
+
+    /// Finds the `}` that closes the `{` at this token, inside the bound
+    fn matching_brace(&self, open: u32, to: u32) -> Option<u32> {
+        let mut depth = 0usize;
+
+        for i in open..to {
+            match self.tok(i) {
+                "{" => depth += 1,
+
+                "}" => {
+                    depth -= 1;
+
+                    if depth == 0 {
+                        return Some(i);
+                    }
+                }
+
+                _ => {}
+            }
+        }
+
+        None
+    }
+
+    /*
+    One table type, `{` fields `}`.
+
+    The fields split at the separators of the top level. Depth counts every
+    bracket pair, and the generic brackets count by character, because the
+    lexer reads the `>>` at the end of a nested generic as one token. A `->`
+    holds a `>` too and closes nothing, so the count reads only the runs
+    that are all one character.
+
+    The width measures the flat form of this table alone. So a short table
+    nested inside a long one keeps its line, and a long inner one opens its
+    parent with it, because a parent holding a broken child cannot stay
+    flat.
+    */
+    fn table_type(&self, open: u32, close: u32) -> Doc<'a> {
+        let cfg = &self.cfg.table_types;
+
+        let mut fields: Vec<Doc<'a>> = Vec::new();
+        let mut depth = 0i32;
+        let mut start = open + 1;
+
+        for i in open + 1..close {
+            let t = self.tok(i);
+
+            match t {
+                "{" | "(" | "[" => depth += 1,
+
+                "}" | ")" | "]" => depth -= 1,
+
+                "," | ";" if depth == 0 => {
+                    if start < i {
+                        fields.push(self.type_region(start, i));
+                    }
+
+                    start = i + 1;
+                }
+
+                _ if t.bytes().all(|b| b == b'<') => depth += t.len() as i32,
+
+                _ if t.bytes().all(|b| b == b'>') => depth -= t.len() as i32,
+
+                _ => {}
+            }
+        }
+
+        if start < close {
+            fields.push(self.type_region(start, close));
+        }
+
+        if fields.is_empty() {
+            return Doc::text("{}");
+        }
+
+        let sep = cfg.separator.text();
+
+        // `{ ` and ` }` around the fields, and a separator with a space between them
+        let mut width = Some(4 + (fields.len() - 1) * (sep.len() + 1));
+
+        for field in &fields {
+            width = match (width, field.flat_width()) {
+                (Some(sum), Some(w)) => Some(sum + w),
+
+                _ => None,
+            };
+        }
+
+        if width.is_some_and(|w| w <= cfg.width) {
+            return Doc::concat([
+                Doc::text("{ "),
+                Doc::join(Doc::text(format!("{sep} ")), fields),
+                Doc::text(" }"),
+            ]);
+        }
+
+        let broken = fields
+            .into_iter()
+            .map(|field| Doc::concat([Doc::Hard, field, Doc::text(sep)]));
+
+        Doc::concat([
+            Doc::text("{"),
+            Doc::indent(Doc::concat(broken)),
+            Doc::Hard,
+            Doc::text("}"),
+        ])
+    }
+
     /// Reports if the author left a newline between two adjacent tokens.
     fn newline_between(&self, a: u32, b: u32) -> bool {
         let (lo, hi) = (self.tok_end(a) as usize, self.tok_start(b) as usize);
@@ -781,6 +959,20 @@ impl<'a> Emitter<'a> {
                 let (lo, hi) = self.byte_span(n.span);
                 let raw = &self.src[lo as usize..hi as usize];
 
+                /*
+                `type function f()` holds arbitrary Luau, and a replay of
+                its tokens joins lines into malformed code. It prints as
+                the author wrote it, whatever the options say.
+                */
+                let s = n.span.start;
+                let type_function = self.tok(s + 1) == "function"
+                    || (self.tok(s) == "export" && self.tok(s + 2) == "function");
+
+                if !type_function && self.cfg.table_types.enabled {
+                    // `type_doc` keeps the author's text when a comment sits inside.
+                    return self.type_doc(n.span);
+                }
+
                 match raw.contains('\n') {
                     true => Doc::text(raw),
 
@@ -795,7 +987,7 @@ impl<'a> Emitter<'a> {
             Some(ty) => Doc::concat([
                 Doc::text(self.one(b.name)),
                 Doc::text(": "),
-                Doc::text(self.verbatim(ty)),
+                self.type_doc(ty),
             ]),
 
             None => Doc::text(self.one(b.name)),
@@ -1002,7 +1194,7 @@ impl<'a> Emitter<'a> {
 
         if let Some(ret) = body.ret_type {
             parts.push(Doc::text(": "));
-            parts.push(Doc::text(self.verbatim(ret)));
+            parts.push(self.type_doc(ret));
         }
 
         parts.push(self.collapsible(&body.block, self.collapse_functions()));
@@ -1033,7 +1225,7 @@ impl<'a> Emitter<'a> {
             Some(ty) => Doc::concat([
                 Doc::text(self.one(p.name)),
                 Doc::text(": "),
-                Doc::text(self.verbatim(ty)),
+                self.type_doc(ty),
             ]),
 
             None => Doc::text(self.one(p.name)),
@@ -1180,11 +1372,9 @@ impl<'a> Emitter<'a> {
                 ..
             } => self.if_else(branches, else_value),
 
-            Expr::TypeAssert { expr, ty, .. } => Doc::concat([
-                self.expr(expr),
-                Doc::text(" :: "),
-                Doc::text(self.verbatim(*ty)),
-            ]),
+            Expr::TypeAssert { expr, ty, .. } => {
+                Doc::concat([self.expr(expr), Doc::text(" :: "), self.type_doc(*ty)])
+            }
         }
     }
 

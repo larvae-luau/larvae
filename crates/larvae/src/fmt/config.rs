@@ -294,6 +294,71 @@ fn default_if_indent() -> usize {
     1
 }
 
+/*
+How a table type is laid out.
+
+The emitter replays a type from its tokens, and a replay keeps a type on
+one line. A table type is the one type with a body, and a body of many
+fields on one line is a wall. These options open it over several lines
+instead, in every position a type takes: an alias, an annotation on a
+binding or a parameter, a return type, and a `::` assertion.
+*/
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct TableTypes {
+    /// Off keeps the one line replay, byte for byte what larvae wrote before
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /*
+    The width at which a table type opens.
+
+    The measure is the flat form of one table alone, so a short table nested
+    inside a long one stays on its line. The default matches
+    `if_expression.width`: a type is part of a statement, and one that takes
+    more than half the column budget is the one that makes the line hard to
+    read.
+    */
+    #[serde(default = "default_table_type_width")]
+    pub width: usize,
+
+    /// The separator between fields; Luau reads both
+    #[serde(default)]
+    pub separator: TypeSeparator,
+}
+
+impl Default for TableTypes {
+    fn default() -> Self {
+        Self {
+            enabled: default_true(),
+            width: default_table_type_width(),
+            separator: TypeSeparator::default(),
+        }
+    }
+}
+
+fn default_table_type_width() -> usize {
+    60
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TypeSeparator {
+    #[default]
+    Comma,
+    Semicolon,
+}
+
+impl TypeSeparator {
+    pub fn text(self) -> &'static str {
+        match self {
+            Self::Comma => ",",
+
+            Self::Semicolon => ";",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct FmtConfig {
@@ -340,6 +405,10 @@ pub struct FmtConfig {
     /// Selects how an `if` expression opens over several lines.
     #[serde(default)]
     pub if_expression: IfExpression,
+
+    /// Selects how a table type opens over several lines.
+    #[serde(default)]
+    pub table_types: TableTypes,
 
     /*
     Whether the file ends with a newline.
