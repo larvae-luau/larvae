@@ -194,6 +194,35 @@ impl Lines {
         (line as u32, character as u32)
     }
 
+    /*
+    The byte offset for a zero based line and UTF-16 character.
+
+    The inverse of `position`, for a request that names a place rather than
+    reporting one. A character past the end of the line clamps to the end of
+    it, because an editor may send the caret past the last code unit.
+    */
+    pub fn offset(&self, src: &str, line: u32, character: u32) -> u32 {
+        let Some(&start) = self.starts.get(line as usize) else {
+            return src.len() as u32;
+        };
+
+        let rest = src.get(start as usize..).unwrap_or("");
+        let end = rest.find('\n').map_or(rest.len(), |n| n + 1);
+        let text = &rest[..end];
+
+        let mut units = 0usize;
+
+        for (byte, ch) in text.char_indices() {
+            if units >= character as usize {
+                return start + byte as u32;
+            }
+
+            units += ch.len_utf16();
+        }
+
+        start + text.len() as u32
+    }
+
     pub fn range(&self, src: &str, span: (u32, u32)) -> Value {
         let (start_line, start_char) = self.position(src, span.0);
         let (end_line, end_char) = self.position(src, span.1);

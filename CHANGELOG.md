@@ -6,8 +6,20 @@ Notable changes land here. Format follows
 
 ## Unreleased
 
+### Added
+
+- A code action for `unused_variable` and `unused_function`: prefix the name
+  with an underscore, which is the fix those lints already print in their
+  help. It renames the declaration and every write of the name, because
+  prefixing the declaration alone would leave an assignment pointing at a name
+  nothing declares, which is a global and a worse bug than the warning
+
 ### Fixed
 
+- A global `function f() end` that no line reads now reports
+  `unused_function`. It is dead code, a global belongs to the script that runs
+  it, and both selene and the Luau compiler report it. Larvae reported nothing
+  once the `unscoped_variables` fix below stopped it reporting the wrong thing
 - `function f() end` no longer reports `unscoped_variables`. The statement
   creates a global the same way `f = 1` does, and the two do not read the
   same way: neither selene nor the Luau compiler reports the declaration, and

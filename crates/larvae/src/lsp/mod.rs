@@ -23,6 +23,7 @@ the Luau parser reads the first markup character and reports a syntax error.
 
 pub mod rpc;
 
+mod actions;
 mod diagnostics;
 pub mod extend;
 mod features;
@@ -205,10 +206,11 @@ impl Server {
             }
 
             /*
-            The worms have nothing to offer here yet, so the reply is an
-            empty list. An empty list and an error read the same to a user
-            and are not the same to an editor: the error puts a failure in
-            the log on every keystroke that opens the lightbulb.
+            larvae's own actions come first, then the worms'. The worms have
+            nothing to offer yet, and an empty list is still the right reply:
+            an empty list and an error read the same to a user and are not
+            the same to an editor, which logs a failure on every keystroke
+            that opens the lightbulb.
             */
             "textDocument/codeAction" => {
                 self.refresh_worms();
@@ -217,7 +219,9 @@ impl Server {
                 let text = self.documents.get(&uri).cloned().unwrap_or_default();
                 let range = message.params["range"].clone();
 
-                let actions = extend::code_actions(&self.worms, &uri, &text, &range);
+                let mut actions = actions::for_range(&uri, &text, &range, &self.lint);
+
+                actions.extend(extend::code_actions(&self.worms, &uri, &text, &range));
 
                 self.reply(message, out, Value::Array(actions))?;
             }

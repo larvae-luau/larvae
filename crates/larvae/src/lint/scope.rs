@@ -104,6 +104,14 @@ pub struct Names<'a> {
     variable, and a codebase of Roblox scripts is written that way.
     */
     pub global_functions: std::collections::HashSet<u32>,
+    /*
+    The names of file defined globals that the file also reads.
+
+    A global is not a binding, so it collects no reads while the walk runs.
+    `unused_function` needs them: a global `function f() end` that nothing
+    calls is dead code, and the Luau compiler reports it.
+    */
+    pub global_reads: std::collections::HashSet<&'a str>,
     /// The binding index for each declaration token, for a lint that holds a token.
     pub by_token: HashMap<u32, usize>,
     /// The binding index for each read token, so a call site can find its callee.
@@ -137,6 +145,18 @@ pub fn resolve<'a>(src: &'a str, toks: &'a [Tok], chunk: &'a Chunk) -> Names<'a>
         .global_writes
         .iter()
         .map(|&t| toks[t as usize].text(src))
+        .collect();
+
+    /*
+    A read of one of those names is in `undefined` right now, and the retain
+    below is about to drop it. So the names are taken first.
+    */
+    binder.out.global_reads = binder
+        .out
+        .undefined
+        .iter()
+        .map(|&t| toks[t as usize].text(src))
+        .filter(|name| defined.contains(name))
         .collect();
 
     if !defined.is_empty() {

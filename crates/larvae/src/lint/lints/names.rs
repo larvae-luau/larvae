@@ -80,6 +80,60 @@ drift apart, and they share `[lint.options.unused_variable]`, because
 impl UnusedFunction {
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         unused(ctx, out, Wanted::Functions);
+        unused_globals(ctx, out);
+    }
+}
+
+/*
+A global `function f() end` that nothing in the file calls.
+
+A global is not a binding, so the walk above never sees it. It is still dead
+code: a global in Luau belongs to the script that runs, so a declaration no
+line reads is a function nothing can reach. The Luau compiler reports it as
+FunctionUnused, and selene reports it too.
+
+The read test is by name, because that is what a global is. A file that
+declares `function f()` and later binds `local f` reads the local and not the
+global, and this counts that as a read. Silence is the safe answer there: the
+lint says nothing rather than telling an author to delete a function that a
+line does appear to call.
+*/
+fn unused_globals(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
+    let options: UnusedOptions = ctx.cfg.options_for("unused_variable");
+
+    let ignore = match options.ignore_pattern.as_str() {
+        "^_" => None,
+
+        pattern => regex::Regex::new(pattern).ok(),
+    };
+
+    for &token in &ctx.names.global_functions {
+        let name = ctx.tok(token);
+
+        if ctx.names.global_reads.contains(name) {
+            continue;
+        }
+
+        let ignored = match &ignore {
+            Some(pattern) => pattern.is_match(name),
+
+            None => name.starts_with('_'),
+        };
+
+        if ignored {
+            continue;
+        }
+
+        let span = TokSpan::new(token as usize, token as usize + 1);
+
+        out.push(
+            Finding::new(
+                "unused_function",
+                ctx.bytes(span),
+                format!("{name} is never called"),
+            )
+            .with_help("remove it, or prefix the name with _ to keep it"),
+        );
     }
 }
 
