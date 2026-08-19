@@ -64,6 +64,7 @@ pub static ALL: &[&dyn Lint] = &[
     &configured::RestrictedModulePaths,
     &configured::HighCyclomaticComplexity,
     &configured::ManualTableClone,
+    &configured::PreferConst,
     // Roblox data types.
     &roblox::RobloxIncorrectColor3NewBounds,
     &roblox::RobloxSuspiciousUdim2New,

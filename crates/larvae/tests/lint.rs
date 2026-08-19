@@ -1820,3 +1820,137 @@ fn a_fmt_marker_does_not_hold_the_linter() {
         1
     );
 }
+
+// --- prefer_const -----------------------------------------------------------
+
+fn prefer_const(mutated_tables_stay_local: bool) -> LintConfig {
+    let mut cfg = with("prefer_const", Level::Warn);
+
+    if mutated_tables_stay_local {
+        cfg.options.insert(
+            "prefer_const".to_string(),
+            toml::from_str("mutated_tables_stay_local = true").expect("the option parses"),
+        );
+    }
+
+    cfg
+}
+
+fn const_findings(src: &str, mutated_tables_stay_local: bool) -> usize {
+    fired(src, &prefer_const(mutated_tables_stay_local))
+        .iter()
+        .filter(|n| *n == "prefer_const")
+        .count()
+}
+
+/*
+The lint is off by default.
+
+`const` is larvae's own reading of Luau, and a codebase of ordinary `local`
+would report on nearly every line the first time it ran.
+*/
+#[test]
+fn prefer_const_says_nothing_until_a_project_asks() {
+    assert!(!fires("prefer_const", "local x = 1\nreturn x\n"));
+}
+
+#[test]
+fn a_local_that_nothing_reassigns_is_reported() {
+    assert_eq!(const_findings("local x = 1\nreturn x\n", false), 1);
+}
+
+#[test]
+fn a_local_that_something_reassigns_is_left_alone() {
+    assert_eq!(const_findings("local x = 1\nx = 2\nreturn x\n", false), 0);
+}
+
+/*
+Three forms cannot take `const`, and each would be a syntax error or has no
+`local` to change.
+*/
+#[test]
+fn the_forms_that_cannot_take_const_are_left_alone() {
+    // "Missing initializer in const declaration"
+    assert_eq!(const_findings("local x\nreturn x\n", false), 0);
+
+    assert_eq!(const_findings("const x = 1\nreturn x\n", false), 0);
+
+    assert_eq!(
+        const_findings("local function f() end\nreturn f\n", false),
+        0
+    );
+
+    assert_eq!(const_findings("for i = 1, 3 do print(i) end\n", false), 0);
+}
+
+/*
+`const` binds the declaration and not one name inside it.
+
+So `local a, b = 1, 2` where only `b` changes cannot become `const`, and the
+lint reports the statement only when every name in it qualifies.
+*/
+#[test]
+fn a_multi_name_local_reports_only_when_every_name_qualifies() {
+    assert_eq!(const_findings("local a, b = 1, 2\nreturn a, b\n", false), 1);
+    assert_eq!(
+        const_findings("local a, b = 1, 2\nb = 3\nreturn a, b\n", false),
+        0
+    );
+}
+
+/*
+A mutated table reports like any other binding by default.
+
+Luau enforces `const` against reassignment of the name and says nothing about
+the value, so `const t = {}` then `t.x = 1` compiles.
+*/
+#[test]
+fn a_mutated_table_reports_by_default() {
+    assert_eq!(
+        const_findings("local t = {}\nt.x = 1\nreturn t\n", false),
+        1
+    );
+    assert_eq!(
+        const_findings("local t = {}\ntable.insert(t, 1)\nreturn t\n", false),
+        1
+    );
+}
+
+/// The option is for a project that reads `local` as "this one changes".
+#[test]
+fn the_option_keeps_local_on_a_mutated_table() {
+    for src in [
+        "local t = {}\nt.x = 1\nreturn t\n",
+        "local t = {}\nt.a.b = 1\nreturn t\n",
+        "local t = {}\nt[key] = 1\nreturn t\n",
+        "local t = {}\nt.n += 1\nreturn t\n",
+        "local t = {}\ntable.insert(t, 1)\nreturn t\n",
+        "local t = {}\ntable.sort(t)\nreturn t\n",
+    ] {
+        assert_eq!(const_findings(src, true), 0, "{src:?}");
+    }
+}
+
+/*
+The option covers a mutation and nothing else.
+
+`table.freeze` returns a frozen copy and changes nothing, and a binding that
+holds no table was never in scope for the option.
+*/
+#[test]
+fn the_option_leaves_everything_else_reporting() {
+    assert_eq!(
+        const_findings("local t = {}\ntable.freeze(t)\nreturn t\n", true),
+        1
+    );
+    assert_eq!(const_findings("local n = 5\nreturn n\n", true), 1);
+}
+
+/// A read of a field is not a mutation of it.
+#[test]
+fn reading_a_field_is_not_mutating_it() {
+    assert_eq!(
+        const_findings("local t = {}\nprint(t.x)\nreturn t\n", true),
+        1
+    );
+}

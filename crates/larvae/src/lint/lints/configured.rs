@@ -28,6 +28,8 @@ lints! {
         "calling a function in this file with the wrong number of arguments";
     MustUse => "must_use", Warn,
         "calling a pure function and discarding what it returned";
+    PreferConst => "prefer_const", Allow,
+        "a local that nothing reassigns, which const states outright";
     RestrictedModulePaths => "restricted_module_paths", Warn,
         "requiring a module the project has ruled out";
 }
@@ -794,4 +796,186 @@ impl MismatchedArgCount {
             );
         });
     }
+}
+
+// --- prefer_const ----------------------------------------------------------
+
+#[derive(Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct PreferConstOptions {
+    /*
+    A local that the file mutates through a field keeps `local`.
+
+    Off by default, so a mutated table reports like every other binding. It
+    is off because `const` is correct there: Luau enforces `const` against
+    reassignment of the name and says nothing about the value, so
+    `const t = {}` followed by `t.x = 1` compiles. The option is for a project
+    that reads `local` as "this one changes" and wants the two spellings to
+    carry that difference.
+    */
+    pub mutated_tables_stay_local: bool,
+}
+
+impl PreferConst {
+    /*
+    `local x = 1` where nothing assigns `x` again.
+
+    This lint is off by default. `const` is larvae's own reading of Luau and
+    not every project writes it, so a codebase of ordinary `local` would
+    report on nearly every line the first time it ran.
+
+    Three rules keep a report honest, and each one is a place where the
+    suggestion would not compile or would not apply:
+
+    - A declaration with no value stays. `const x` is
+      "Missing initializer in const declaration".
+    - `const` binds the declaration and not one name in it, so every name has
+      to be unassigned before the whole statement can change.
+    - A `for` variable, a parameter, and a `local function` are left alone.
+      None of them takes `const`.
+    */
+    fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
+        let options: PreferConstOptions = ctx.cfg.options_for("prefer_const");
+
+        let mutated = match options.mutated_tables_stay_local {
+            true => mutated_bindings(ctx),
+
+            false => std::collections::HashSet::new(),
+        };
+
+        each_stmt(ctx, out, |ctx, s, out| {
+            let Stmt::Local(n) = s else {
+                return;
+            };
+
+            // Already said, and a declaration with nothing to bind cannot say it.
+            if n.is_const || n.values.is_empty() {
+                return;
+            }
+
+            let mut names = Vec::with_capacity(n.names.len());
+
+            for binding in &n.names {
+                let Some(&index) = ctx.names.by_token.get(&binding.name.start) else {
+                    return;
+                };
+
+                if !ctx.names.bindings[index].writes.is_empty() || mutated.contains(&index) {
+                    return;
+                }
+
+                names.push(ctx.text(binding.name));
+            }
+
+            let subject = match names.as_slice() {
+                [one] => format!("`{one}` is never reassigned"),
+
+                many => format!("{} are never reassigned", quoted(many)),
+            };
+
+            out.push(
+                Finding::new("prefer_const", ctx.bytes(n.keyword), subject)
+                    .with_help("declare it with `const`, which states that outright"),
+            );
+        });
+    }
+}
+
+/// `a`, `b` and `c`, so the message reads as a sentence.
+fn quoted(names: &[&str]) -> String {
+    let quoted: Vec<String> = names.iter().map(|n| format!("`{n}`")).collect();
+
+    match quoted.split_last() {
+        Some((last, [])) => last.clone(),
+
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+
+        None => String::new(),
+    }
+}
+
+/*
+The bindings that the file changes through a field or a table function.
+
+`t.x = 1` and `table.insert(t, 1)` leave the binding itself alone, so the
+resolver records no write for either. A project that wants a mutated table to
+keep `local` needs them found, and this is the walk that finds them.
+*/
+fn mutated_bindings(ctx: &LintCtx<'_>) -> std::collections::HashSet<usize> {
+    let mut out = std::collections::HashSet::new();
+
+    let mut mark = |root: Option<TokSpan>| {
+        if let Some(span) = root
+            && let Some(&index) = ctx.names.read_of.get(&span.start)
+        {
+            out.insert(index);
+        }
+    };
+
+    for stmt in &ctx.stmts {
+        let Stmt::Assign(n) = stmt else {
+            continue;
+        };
+
+        // `t.x = 1`, `t[k] = v`, `t.a.b = 2`, and the compound forms of each.
+        for target in &n.targets {
+            if matches!(target, Expr::Index { .. }) {
+                mark(root_name(target));
+            }
+        }
+    }
+
+    for expr in &ctx.exprs {
+        let Expr::Call { func, args, .. } = expr else {
+            continue;
+        };
+
+        if !is_table_mutator(ctx, func) {
+            continue;
+        }
+
+        let CallArgs::Paren(list) = args else {
+            continue;
+        };
+
+        // The table these functions change is always the first argument.
+        if let Some(Expr::Name(name)) = list.first() {
+            mark(Some(*name));
+        }
+    }
+
+    out
+}
+
+/// The name an index chain starts from: `t` in `t.a.b[c]`.
+fn root_name(e: &Expr) -> Option<TokSpan> {
+    match e {
+        Expr::Name(span) => Some(*span),
+
+        Expr::Index { object, .. } => root_name(object),
+
+        _ => None,
+    }
+}
+
+/// Reports if this callee is one of the `table` functions that changes its first argument.
+fn is_table_mutator(ctx: &LintCtx<'_>, func: &Expr) -> bool {
+    let Expr::Index {
+        object,
+        key: IndexKey::Field(name),
+        ..
+    } = func
+    else {
+        return false;
+    };
+
+    let Expr::Name(base) = object.as_ref() else {
+        return false;
+    };
+
+    ctx.text(*base) == "table"
+        && matches!(
+            ctx.text(*name),
+            "insert" | "remove" | "sort" | "clear" | "move"
+        )
 }

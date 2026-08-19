@@ -1267,6 +1267,14 @@
           ],
           "description": "Two branches of the same if with identical bodies. Default: warn."
         },
+        "prefer_const": {
+          "enum": [
+            "allow",
+            "warn",
+            "deny"
+          ],
+          "description": "A local that nothing reassigns, which `const` states outright. Off by default: `const` is larvae's own reading of Luau and not every project writes it, so a codebase of ordinary `local` would report on nearly every line the first time it ran. Tune it under [lint.options.prefer_const]. Default: allow."
+        },
         "suspicious_reverse_loop": {
           "enum": [
             "allow",
@@ -1676,6 +1684,21 @@
                 "type": "string"
               },
               "description": "Require paths the project forbids, as path = \"why\"."
+            }
+          }
+        },
+        "prefer_const": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mutated_tables_stay_local": {
+              "type": "boolean",
+              "enum": [
+                true,
+                false
+              ],
+              "default": false,
+              "description": "Keep `local` on a binding the file mutates through a field, such as `t.x = 1` or `table.insert(t, 1)`. Off by default, because `const` is correct there: Luau enforces it against reassignment of the name and says nothing about the value, so `const t = {}` then `t.x = 1` compiles. Turn it on where `local` is read as \"this one changes\"."
             }
           }
         }

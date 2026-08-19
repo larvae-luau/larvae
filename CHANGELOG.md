@@ -23,6 +23,16 @@ Notable changes land here. Format follows
 
 ### Added
 
+- `prefer_const`, a lint for a local that nothing reassigns. Off by default,
+  because `const` is larvae's own reading of Luau and a codebase of ordinary
+  `local` would report on nearly every line the first time it ran. It leaves
+  alone what cannot take `const`: a declaration with no initialiser, a
+  `local function`, a `for` variable, and a multi name declaration where one
+  of the names is reassigned
+- `[lint.options.prefer_const] mutated_tables_stay_local` keeps `local` on a
+  binding the file mutates through a field, `t.x = 1` or `table.insert(t, 1)`.
+  Off by default, because `const` is correct there: Luau enforces it against
+  reassignment of the name and says nothing about the value
 - `[fmt] function_call` and `[fmt] function_declaration` lay out the two lists
   between parentheses. `expand` takes `when-needed`, which is the layout larvae
   always had, `always`, and `never`. `indent` gives the levels an opened item
