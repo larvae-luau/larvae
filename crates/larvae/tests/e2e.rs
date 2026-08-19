@@ -402,3 +402,120 @@ fn path_target_for_lune() {
         "return require(\"../lib/json\")\n"
     );
 }
+
+/*
+The entry point of a package is an `init.luau`, and what it requires has to
+survive the move into the output.
+
+`./` from an init file resolves against the parent of its directory, which the
+RFC states and a runtime enforces: `./utils/helper` from `pkg/init.luau` does
+not resolve, and `./pkg/utils/helper` does. So the relative form has to name
+the directory the init file sits in.
+
+That name was the bug. Larvae resolved against the source tree and wrote
+`./src/utils/helper` into `dist/init.luau`, where the string still points at
+`src`. A `dist` shipped without `src` beside it failed to load, and a `dist`
+shipped with it ran the unprocessed source instead.
+*/
+#[test]
+fn an_init_file_requires_its_own_directory_by_self() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    write(
+        root,
+        ".luaurc",
+        r#"{ "aliases": { "utils": "./src/utils" } }"#,
+    );
+    write(
+        root,
+        "larvae.toml",
+        "input = \"src\"\noutput = \"dist\"\ntarget = \"path\"\n",
+    );
+    write(root, "src/init.luau", "return require(\"@utils/helper\")\n");
+    write(
+        root,
+        "src/utils/helper.luau",
+        "return require(\"@utils/test\")\n",
+    );
+    write(root, "src/utils/test.luau", "return {}\n");
+
+    let config = Config::load_or_default(root).unwrap();
+    let outcome = pipeline::run(root, &config, true).unwrap();
+
+    for d in &outcome.diags {
+        eprintln!("{d}");
+    }
+
+    assert!(!outcome.has_errors());
+
+    // the entry point names its own directory without spelling src or dist
+    assert_eq!(
+        read(root, "dist/init.luau"),
+        "return require(\"@self/utils/helper\")\n"
+    );
+
+    // a sibling was always right, and stays right
+    assert_eq!(
+        read(root, "dist/utils/helper.luau"),
+        "return require(\"./test\")\n"
+    );
+}
+
+/*
+A nested init file names its own directory the same way.
+
+`src/utils/init.luau` used to emit `./utils/helper`, which happens to survive
+the move because both ends travel together. `@self/helper` says the same thing
+and says it without depending on where the directory sits.
+*/
+#[test]
+fn a_nested_init_file_also_uses_self() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    write(
+        root,
+        "larvae.toml",
+        "input = \"src\"\noutput = \"dist\"\ntarget = \"path\"\n",
+    );
+    write(
+        root,
+        "src/utils/init.luau",
+        "return require(\"./utils/helper\")\n",
+    );
+    write(root, "src/utils/helper.luau", "return {}\n");
+
+    let config = Config::load_or_default(root).unwrap();
+    let outcome = pipeline::run(root, &config, true).unwrap();
+
+    assert!(!outcome.has_errors());
+    assert_eq!(
+        read(root, "dist/utils/init.luau"),
+        "return require(\"@self/helper\")\n"
+    );
+}
+
+/// A target outside the init file's own directory keeps the relative form.
+#[test]
+fn an_init_file_reaching_outside_itself_stays_relative() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    write(
+        root,
+        "larvae.toml",
+        "input = \"src\"\noutput = \"dist\"\ntarget = \"path\"\n",
+    );
+    write(root, "src/a/init.luau", "return require(\"../b/thing\")\n");
+    write(root, "src/b/thing.luau", "return {}\n");
+
+    let config = Config::load_or_default(root).unwrap();
+    let outcome = pipeline::run(root, &config, true).unwrap();
+
+    assert!(!outcome.has_errors());
+    assert!(
+        !read(root, "dist/a/init.luau").contains("@self"),
+        "the target is not inside a/, so @self would be wrong"
+    );
+}

@@ -110,6 +110,38 @@ impl<'a> Resolver<'a> {
             ModuleNode::File(f) => f.with_extension(""),
         };
 
+        /*
+        A module inside the directory of an init file is `@self`.
+
+        `./` from an init file resolves against the parent of its directory,
+        which the RFC states and a runtime enforces: `./utils/helper` from
+        `pkg/init.luau` fails to resolve, and `./pkg/utils/helper` works. So
+        the relative form has to name the directory the init file sits in.
+
+        That name is the bug. Larvae resolves against the source tree, so
+        `src/init.luau` emitted `./src/utils/helper`, and the file is written
+        to `dist/init.luau`, where the same string still points into `src`.
+        The output required the input.
+
+        `@self` names the directory of the init file without spelling it, so
+        the require reads the same at `src/init.luau`, at `dist/init.luau`,
+        and inside a package a consumer has vendored under a name neither
+        tree used. The roblox-string target already emits `@self` for a child
+        of the requirer, and this is that rule for a path.
+        */
+        if ctx.is_init
+            && let Ok(tail) = target.strip_prefix(&ctx.dir)
+            && tail.components().next().is_some()
+        {
+            let tail: Vec<&str> = tail
+                .components()
+                .filter_map(|c| c.as_os_str().to_str())
+                .collect();
+
+            // A require is written with forward slashes on every platform.
+            return format!("@self/{}", tail.join("/"));
+        }
+
         fs_relative(ctx.dot_base(), &target)
     }
 
