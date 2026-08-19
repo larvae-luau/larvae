@@ -52,7 +52,7 @@ impl<'a> Resolver<'a> {
         graph learned about @self.
         */
         if let Some(base) = normalize_join(&ctx.dir, rest)
-            && let Ok(Some(node)) = super::spec::resolve_module(&base)
+            && let Ok(Some(node)) = super::spec::resolve_module(&base, self.claimed)
         {
             ctx.required
                 .borrow_mut()

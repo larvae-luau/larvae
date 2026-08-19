@@ -41,6 +41,15 @@ Notable changes land here. Format follows
 
 ### Fixed
 
+- A file a worm claims can be required. `require("@app/widget")` where the
+  project holds `widget.luaux` found no module and warned about a require that
+  is correct, because the resolver looked only for `.luau` and `.lua`. A
+  claimed file is a module: the pipeline turns it into Luau in the output, so
+  the require resolves at runtime. A claimed file beside a `.luau` of the same
+  name is ambiguous, as two `.luau` files would be
+- No command downloads a worm any more. `larvae process` still did, and it
+  passed the version through unresolved, so a worm pinned at `^` asked GitHub
+  for a release tagged `v^`
 - `larvae worm remove` no longer fails with "Directory not empty". NTFS
   through FUSE reports a directory as not empty right after its last file was
   unlinked, so the tree comes apart from the bottom and the last step retries

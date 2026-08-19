@@ -127,7 +127,7 @@ impl<'a> Resolver<'a> {
                 fs.push(seg);
             }
 
-            match resolve_module(&fs) {
+            match resolve_module(&fs, self.claimed) {
                 Ok(Some(_)) => return,
 
                 _ => {

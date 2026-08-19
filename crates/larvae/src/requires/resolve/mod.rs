@@ -38,6 +38,16 @@ pub struct Resolver<'a> {
     /// The quote character for generated string literals
     pub quote: char,
     pub strict: bool,
+    /*
+    The extensions a worm front-end claims, without the dot.
+
+    A claimed file is a module. `require("@app/widget")` where the project
+    holds `widget.luaux` has to find it, because the pipeline turns that file
+    into `widget.luau` in the output and the require then resolves at runtime.
+    Without these the resolver sees no module and warns about a require that
+    is correct.
+    */
+    pub claimed: &'a [String],
 }
 
 /// The context for one file, computed once

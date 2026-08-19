@@ -32,7 +32,7 @@ impl<'a> Resolver<'a> {
             return Rewrite::Keep;
         }
 
-        let node = match resolve_module(target_base) {
+        let node = match resolve_module(target_base, self.claimed) {
             Ok(Some(node)) => node,
 
             Ok(None) => {

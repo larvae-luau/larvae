@@ -126,7 +126,13 @@ impl Registry {
     claimed files and format the wrong set.
     */
     pub fn for_project(root: &Path, config: &crate::config::Config) -> Result<Self> {
-        Self::project(root, config, Fetch::Allowed)
+        /*
+        No command downloads a worm. `larvae worm install` does that, and it
+        is the only place that resolves a range against the repository. A
+        command reads what install left and names what is missing, so a build
+        makes no request and a version does not change under it mid run.
+        */
+        Self::project(root, config, Fetch::Report)
     }
 
     /*

@@ -198,6 +198,10 @@ fn run_inner(
         config.process.cache && write,
     );
 
+    // A claimed file is a module: the pipeline turns it into Luau, so a
+    // require that names it has to resolve.
+    let claimed = pool.claimed();
+
     let resolver = Resolver {
         root: &root,
         toml_aliases: &config.alias_map(),
@@ -207,6 +211,7 @@ fn run_inner(
         style: config.requires.indexing_style.unwrap_or_default(),
         quote: config.process.quotes.char(),
         strict: config.requires.strict,
+        claimed: &claimed,
     };
 
     let opts = FileOpts::from_config(&root, config, write)?;
