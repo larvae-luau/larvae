@@ -103,11 +103,17 @@ impl Source {
     }
 }
 
-/// The shapes that `[worms]` accepts, before validation
+/*
+The shapes `[worms]` reads, before validation.
+
+A worm is a table. The string form is still parsed so that a config written
+for an older larvae gets a message that says what to write instead, rather
+than the message serde produces for a type it did not expect.
+*/
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum Raw {
-    /// `luaux = "luau-xml/worm@0.1.0"`
+    /// `luaux = "owner/repo@0.1.0"`, the form that larvae no longer takes
     Pin(String),
     Table(Box<Table>),
 }
@@ -210,6 +216,23 @@ impl Worms {
     }
 }
 
+/*
+A version without the `v` that a tag often carries.
+
+The version is a key of its own now, so the config holds plain semver and the
+install directory is named the same way whichever form the user wrote. The `v`
+comes off only in front of a digit, or `^` and a range would lose theirs.
+*/
+fn plain(version: &str) -> String {
+    let trimmed = version.trim();
+
+    match trimmed.strip_prefix('v') {
+        Some(rest) if rest.starts_with(|c: char| c.is_ascii_digit()) => rest.to_string(),
+
+        _ => trimmed.to_string(),
+    }
+}
+
 fn source_of(name: &str, raw: Raw) -> Result<Entry> {
     let (run_order, rules, config, inherit_lints, inherit) = match &raw {
         Raw::Table(t) => (
@@ -236,7 +259,27 @@ fn source_of(name: &str, raw: Raw) -> Result<Entry> {
     }
 
     let source = match raw {
-        Raw::Pin(pin) => parse_pin(name, &pin)?,
+        /*
+        The version lives on a key of its own now.
+
+        A pin packs the repo and the version into one string, so nothing can
+        read either half without splitting it, and `^` sits in the middle of
+        a name. A table keeps them apart, which is what install needs to
+        resolve a range and what a reader needs to see what is pinned.
+        */
+        Raw::Pin(pin) => {
+            let (repo, version) = match pin.rsplit_once('@') {
+                Some((repo, version)) => (repo, version),
+
+                None => (pin.as_str(), "^"),
+            };
+
+            bail!(
+                "worm `{name}`: a worm is a table now, not a string. Write:\n\
+                 \n    {name} = {{ repo = \"{repo}\", version = \"{version}\" }}\n\
+                 \nA version of \"^\" takes the newest release on every install."
+            )
+        }
 
         Raw::Table(t) => match (t.path.clone(), t.repo.clone(), t.version.clone()) {
             _ if t.cargo.is_some() => {
@@ -280,13 +323,16 @@ fn source_of(name: &str, raw: Raw) -> Result<Entry> {
 
             (None, Some(repo), Some(version)) => Source::Release {
                 repo,
-                version,
+                version: plain(&version),
                 asset: t.asset,
             },
 
             (Some(_), _, _) => bail!("worm `{name}`: use path or repo, not both"),
 
-            (None, Some(_), None) => bail!("worm `{name}`: repo needs a version to pin"),
+            (None, Some(_), None) => bail!(
+                "worm `{name}`: repo needs a version. Write \"^\" for the newest release, \
+                 a number such as \"0.1.0\" to hold one, or a range such as \"^0.1.0\""
+            ),
 
             (None, None, _) => bail!("worm `{name}`: needs either repo and version, or path"),
         },
@@ -306,27 +352,6 @@ fn empty_table() -> toml::Value {
     toml::Value::Table(toml::map::Map::new())
 }
 
-/// `owner/repo@version`, the form that almost every worm uses
-fn parse_pin(name: &str, pin: &str) -> Result<Source> {
-    let Some((repo, version)) = pin.rsplit_once('@') else {
-        bail!("worm `{name}`: {pin:?} has no @version, ex: \"owner/repo@0.1.0\"");
-    };
-
-    if repo.split('/').filter(|s| !s.is_empty()).count() != 2 {
-        bail!("worm `{name}`: {repo:?} is not owner/repo");
-    }
-
-    if version.is_empty() {
-        bail!("worm `{name}`: {pin:?} has an empty version");
-    }
-
-    Ok(Source::Release {
-        repo: repo.to_owned(),
-        version: version.trim_start_matches('v').to_owned(),
-        asset: None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -337,7 +362,7 @@ mod tests {
 
     #[test]
     fn a_pin_is_the_short_form() {
-        let w = worms(r#"luaux = "luau-xml/worm@0.1.0""#).unwrap();
+        let w = worms(r#"luaux = { repo = "luau-xml/worm", version = "0.1.0" }"#).unwrap();
 
         assert_eq!(
             w.0["luaux"].source,
@@ -351,7 +376,7 @@ mod tests {
 
     #[test]
     fn a_leading_v_on_the_tag_is_accepted() {
-        let w = worms(r#"luaux = "luau-xml/worm@v0.1.0""#).unwrap();
+        let w = worms(r#"luaux = { repo = "luau-xml/worm", version = "v0.1.0" }"#).unwrap();
 
         assert!(
             matches!(&w.0["luaux"].source, Source::Release { version, .. } if version == "0.1.0")
@@ -409,7 +434,7 @@ mod tests {
 
     #[test]
     fn the_asset_defaults_to_the_worms_own_name() {
-        let w = worms(r#"luaux = "luau-xml/worm@0.1.0""#).unwrap();
+        let w = worms(r#"luaux = { repo = "luau-xml/worm", version = "0.1.0" }"#).unwrap();
         let names = w.0["luaux"].source.asset_names("luaux");
 
         /*
@@ -462,17 +487,56 @@ path = "build/myworm"
         );
     }
 
+    /*
+    The string form is gone, and the message says what replaced it.
+
+    A config written for an older larvae has to say something better than the
+    error serde gives for a type it did not expect, because the fix is one
+    line and the user cannot guess it.
+    */
     #[test]
-    fn a_pin_without_a_version_says_what_to_write() {
+    fn the_old_string_form_says_what_to_write_instead() {
+        let err = worms(r#"luaux = "luau-xml/worm@0.1.0""#).err().unwrap();
+        let text = err.to_string();
+
+        assert!(text.contains("a table now"), "{text}");
+        assert!(
+            text.contains(r#"repo = "luau-xml/worm", version = "0.1.0""#),
+            "the message is copy-pasteable: {text}"
+        );
+    }
+
+    /// A string with no version suggests the form that follows the releases.
+    #[test]
+    fn a_string_with_no_version_suggests_the_caret() {
         let err = worms(r#"luaux = "luau-xml/worm""#).err().unwrap();
 
-        assert!(err.to_string().contains("owner/repo@0.1.0"), "{err}");
+        assert!(err.to_string().contains(r#"version = "^""#), "{err}");
     }
 
     #[test]
-    fn a_pin_that_is_not_owner_slash_repo_is_refused() {
-        assert!(worms(r#"luaux = "worm@0.1.0""#).is_err());
-        assert!(worms(r#"luaux = "a/b/c@0.1.0""#).is_err());
+    fn a_repo_with_no_version_says_what_a_version_can_be() {
+        let err = worms(r#"luaux = { repo = "luau-xml/worm" }"#)
+            .err()
+            .unwrap();
+        let text = err.to_string();
+
+        assert!(text.contains("^"), "{text}");
+        assert!(text.contains("0.1.0"), "{text}");
+    }
+
+    /// `^` and a range keep their caret; only a tag loses its `v`.
+    #[test]
+    fn a_caret_is_not_mistaken_for_a_tag() {
+        for (written, want) in [("^", "^"), ("^0.1.0", "^0.1.0"), ("v0.1.0", "0.1.0")] {
+            let src = format!(r#"luaux = {{ repo = "o/w", version = "{written}" }}"#);
+            let w = worms(&src).unwrap();
+
+            assert!(
+                matches!(&w.0["luaux"].source, Source::Release { version, .. } if version == want),
+                "{written} became something else"
+            );
+        }
     }
 
     #[test]
@@ -614,7 +678,7 @@ config = { repo = "something the worm means by it", version = 3 }
 
     #[test]
     fn a_worm_with_no_settings_gets_an_empty_table() {
-        let w = worms(r#"luaux = "luau-xml/worm@0.1.0""#).unwrap();
+        let w = worms(r#"luaux = { repo = "luau-xml/worm", version = "0.1.0" }"#).unwrap();
 
         assert_eq!(w.0["luaux"].config, toml::Value::Table(Default::default()));
     }

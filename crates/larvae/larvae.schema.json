@@ -1720,120 +1720,112 @@
       "description": "Worms, extensions loaded from a GitHub release. A worm is Luau source or a wasm32 module in a zip carrying a worm.toml. The key names the worm and has to match `name` in its worm.toml, since it is also what namespaces the worm's rules and its settings. (M3)",
       "type": "object",
       "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Where the worm comes from, plus anything the project wants to say about it. Name repo and version, or path, never both.",
         "oneOf": [
           {
-            "type": "string",
-            "description": "owner/repo@version, ex: \"luau-xml/worm@0.1.0\". The short form, and what almost every worm uses."
+            "required": [
+              "repo",
+              "version"
+            ]
           },
           {
+            "required": [
+              "path"
+            ]
+          },
+          {
+            "required": [
+              "cargo"
+            ]
+          }
+        ],
+        "properties": {
+          "repo": {
+            "type": "string",
+            "description": "owner/repo on GitHub."
+          },
+          "version": {
+            "type": "string",
+            "description": "Which release to install. \"^\" takes the newest on every install, which is what `larvae worm add` writes. A number such as \"0.1.0\" holds that one release and never moves. A range such as \"^0.1.0\" follows the newest release semver calls compatible. A leading v is accepted and dropped."
+          },
+          "asset": {
+            "type": "string",
+            "description": "Release asset to fetch. Defaults to <key>-worm.zip, then worm.zip. Means nothing with path, which is not a release."
+          },
+          "path": {
+            "type": "string",
+            "description": "A directory on disk instead of a release. Not how a worm ships, but how its author runs it before publishing."
+          },
+          "run_order": {
+            "description": "Where this worm's rules sit relative to larvae's own. \"before\" means larvae's rules see this worm's output. An explicit slot number wins over both this and what the worm declared.",
+            "anyOf": [
+              {
+                "enum": [
+                  "before",
+                  "after"
+                ]
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "rules": {
+            "type": "object",
+            "description": "Which of this worm's rules are on, by name. They live under the worm rather than in [rules] so a worm declaring const_requires cannot shadow the builtin.",
+            "additionalProperties": {
+              "type": [
+                "boolean",
+                "object"
+              ]
+            }
+          },
+          "config": {
+            "$ref": "#/$defs/worm_config"
+          },
+          "inherit_lints": {
+            "type": "boolean",
+            "enum": [
+              true,
+              false
+            ],
+            "description": "Run the lints of larvae on the files this worm claims. It overrides what the worm declared in its worm.toml."
+          },
+          "inherit": {
             "type": "object",
             "additionalProperties": false,
-            "description": "Where the worm comes from, plus anything the project wants to say about it. Name repo and version, or path, never both.",
-            "oneOf": [
-              {
-                "required": [
-                  "repo",
-                  "version"
-                ]
-              },
-              {
-                "required": [
-                  "path"
-                ]
-              },
-              {
-                "required": [
-                  "cargo"
-                ]
-              }
-            ],
+            "description": "Which inherited lints and format options apply inside the files of this worm. Inheritance takes everything unless this table states less.",
             "properties": {
-              "repo": {
-                "type": "string",
-                "description": "owner/repo on GitHub."
+              "lints_only": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The only lints of larvae that run in the files of this worm."
               },
-              "version": {
-                "type": "string",
-                "description": "Release tag to pin, without a leading v."
+              "lints_except": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The lints of larvae that do not run in the files of this worm."
               },
-              "asset": {
-                "type": "string",
-                "description": "Release asset to fetch. Defaults to <key>-worm.zip, then worm.zip. Means nothing with path, which is not a release."
-              },
-              "path": {
-                "type": "string",
-                "description": "A directory on disk instead of a release. Not how a worm ships, but how its author runs it before publishing."
-              },
-              "run_order": {
-                "description": "Where this worm's rules sit relative to larvae's own. \"before\" means larvae's rules see this worm's output. An explicit slot number wins over both this and what the worm declared.",
-                "anyOf": [
-                  {
-                    "enum": [
-                      "before",
-                      "after"
-                    ]
-                  },
-                  {
-                    "type": "integer"
-                  }
-                ]
-              },
-              "rules": {
-                "type": "object",
-                "description": "Which of this worm's rules are on, by name. They live under the worm rather than in [rules] so a worm declaring const_requires cannot shadow the builtin.",
-                "additionalProperties": {
-                  "type": [
-                    "boolean",
-                    "object"
-                  ]
-                }
-              },
-              "config": {
-                "$ref": "#/$defs/worm_config"
-              },
-              "inherit_lints": {
-                "type": "boolean",
-                "enum": [
-                  true,
-                  false
-                ],
-                "description": "Run the lints of larvae on the files this worm claims. It overrides what the worm declared in its worm.toml."
-              },
-              "inherit": {
-                "type": "object",
-                "additionalProperties": false,
-                "description": "Which inherited lints and format options apply inside the files of this worm. Inheritance takes everything unless this table states less.",
-                "properties": {
-                  "lints_only": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    },
-                    "description": "The only lints of larvae that run in the files of this worm."
-                  },
-                  "lints_except": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    },
-                    "description": "The lints of larvae that do not run in the files of this worm."
-                  },
-                  "fmt_except": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    },
-                    "description": "The format options that do not apply in the files of this worm. An option named here keeps its own default there."
-                  }
-                }
-              },
-              "cargo": {
-                "type": "string",
-                "description": "A crate on crates.io that ships the worm as its binary, ex: \"luaux-worm@0.1.0\". cargo install builds it from source on this machine, so one crate serves every platform. Excludes repo, path, and asset; the version can sit here after @ or in the version key."
+              "fmt_except": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The format options that do not apply in the files of this worm. An option named here keeps its own default there."
               }
             }
+          },
+          "cargo": {
+            "type": "string",
+            "description": "A crate on crates.io that ships the worm as its binary, ex: \"luaux-worm@0.1.0\". cargo install builds it from source on this machine, so one crate serves every platform. Excludes repo, path, and asset; the version can sit here after @ or in the version key."
           }
-        ]
+        }
       }
     },
     "bundle": {
