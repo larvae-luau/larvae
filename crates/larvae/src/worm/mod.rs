@@ -10,6 +10,7 @@ and the config layer do not know which form they speak to.
 pub mod ctx;
 pub mod fetch;
 pub mod host;
+pub mod known;
 pub mod luau;
 pub mod manifest;
 pub mod native;
@@ -17,6 +18,7 @@ pub mod nodes;
 pub mod pool;
 pub mod proto;
 pub mod registry;
+pub mod version;
 
 use std::path::Path;
 

@@ -1,4 +1,4 @@
-//! The crates.io API (the part that `worm update` needs)
+//! The crates.io API (the part that `worm install` needs)
 
 use anyhow::Result;
 

@@ -37,16 +37,51 @@ pub fn latest_release(repo: &str) -> Result<Release> {
     ))
 }
 
+/*
+Every release of owner/repo, newest first.
+
+A version range needs the list. `latest` answers only the newest, and a
+project pinned to `^0.2.0` while 0.3.0 exists has to see the 0.2.x releases to
+find the one it asked for.
+
+One page is enough. A worm with more than a hundred releases can pin an exact
+version, and paging every repository to serve that case costs a request per
+install for everyone else.
+*/
+pub fn releases(repo: &str) -> Result<Vec<Release>> {
+    get_list(&format!(
+        "https://api.github.com/repos/{repo}/releases?per_page=100"
+    ))
+}
+
+fn get_list(url: &str) -> Result<Vec<Release>> {
+    let auth = token();
+    let headers = headers(auth.as_deref());
+
+    crate::net::http::get_json(url, &headers)
+}
+
 fn get(url: &str) -> Result<Release> {
-    let url = url.to_owned();
-    let token = std::env::var("GITHUB_TOKEN").ok();
+    let auth = token();
+    let headers = headers(auth.as_deref());
 
-    let auth = token.map(|t| format!("Bearer {t}"));
-    let mut headers: Vec<(&str, &str)> = vec![("Accept", "application/vnd.github.v3+json")];
+    crate::net::http::get_json(url, &headers)
+}
 
-    if let Some(auth) = &auth {
-        headers.push(("Authorization", auth));
+/// The bearer value when the environment carries a token.
+fn token() -> Option<String> {
+    std::env::var("GITHUB_TOKEN")
+        .ok()
+        .map(|t| format!("Bearer {t}"))
+}
+
+/// The headers for a call. The token borrows, so the caller owns it.
+fn headers(auth: Option<&str>) -> Vec<(&str, &str)> {
+    let mut out = vec![("Accept", "application/vnd.github.v3+json")];
+
+    if let Some(auth) = auth {
+        out.push(("Authorization", auth));
     }
 
-    crate::net::http::get_json(&url, &headers)
+    out
 }
