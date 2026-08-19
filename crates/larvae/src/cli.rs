@@ -108,7 +108,7 @@ enum Command {
     /// Create a starter larvae.toml for this project
     Init,
 
-    /// Develop a worm before publication or installation
+    /// Add, install, and remove worms, and develop one before publication
     Worm {
         #[command(subcommand)]
         command: commands::worm::WormCommand,

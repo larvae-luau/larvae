@@ -111,7 +111,7 @@ A project with no config or no `[worms]` gets an empty pool at no cost. So
 cold cache does a fetch here, the same as `larvae process`.
 */
 pub fn worm_pool(root: &Path, config: Option<PathBuf>, fmt: &mut FmtConfig) -> Result<Pool> {
-    pool_with(root, config, fmt, crate::worm::registry::Fetch::Allowed)
+    pool_with(root, config, fmt, crate::worm::registry::Fetch::Report)
 }
 
 /*
@@ -143,7 +143,9 @@ pub fn pool_with(
     let registry = match fetch {
         crate::worm::registry::Fetch::Allowed => Registry::for_project(root, &cfg)?,
 
-        crate::worm::registry::Fetch::Never => Registry::for_project_cached(root, &cfg)?,
+        crate::worm::registry::Fetch::Quiet => Registry::for_project_cached(root, &cfg)?,
+
+        crate::worm::registry::Fetch::Report => Registry::for_project_reporting(root, &cfg)?,
     };
 
     // the worms of a project decide which `[fmt]` keys are real

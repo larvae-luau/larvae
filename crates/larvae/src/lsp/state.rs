@@ -110,7 +110,7 @@ impl Server {
         let mut fmt = self.fmt.clone();
 
         // the editor never downloads a worm, because a keystroke cannot wait
-        match pool_with(root, None, &mut fmt, crate::worm::registry::Fetch::Never) {
+        match pool_with(root, None, &mut fmt, crate::worm::registry::Fetch::Quiet) {
             Ok(pool) => {
                 self.fmt = fmt;
                 self.worm_stamp = stamp_of(&pool);

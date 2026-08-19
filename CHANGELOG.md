@@ -8,6 +8,40 @@ Notable changes land here. Format follows
 
 ### Added
 
+- `larvae worm add <spec>` writes a worm into `[worms]`. It takes a short name
+  larvae knows, `luaux`, or `owner/repo`, either with `@version`. `--cargo`
+  takes a crate instead. It writes the config and stops, because an edit is
+  instant and offline while a download is neither
+- `larvae worm install`, `i` for short, puts every worm the config names on
+  disk, with a progress bar. Under a pipe it prints a line per worm instead
+- `larvae worm remove <name>`, `rm` for short, takes a worm out of the config
+  and off the disk, and drops `[worms]` when its last worm goes
+
+### Changed
+
+- A worm is a table, never a string. `xml = "owner/repo@0.1.0"` is refused
+  with a message that prints the table to write instead. The version is a key
+  of its own now, so `install` can tell a pin from a range without splitting a
+  string and a reader can see what is pinned
+- A version says whether the project moves. `"^"` takes the newest release on
+  every install and is what `add` writes, `"^0.1.0"` follows what semver calls
+  compatible, and `"0.1.0"` holds that release
+- `larvae worm update` is gone. The version now says whether a project wants
+  to move, and a command that bumps a pin the user wrote undoes the pin
+- Installing is a step and not a side effect. A command no longer downloads a
+  missing worm; it names it once and carries on. The editor still skips in
+  silence, because it answers a keystroke
+
+### Fixed
+
+- `larvae worm remove` no longer fails with "Directory not empty". NTFS
+  through FUSE reports a directory as not empty right after its last file was
+  unlinked, so the tree comes apart from the bottom and the last step retries
+
+## Unreleased
+
+### Added
+
 - A code action for `unused_variable` and `unused_function`: prefix the name
   with an underscore, which is the fix those lints already print in their
   help. It renames the declaration and every write of the name, because

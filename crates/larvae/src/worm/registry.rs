@@ -17,24 +17,64 @@ use super::manifest::{RuleDecl, Stage};
 
 use super::{RequireOwner, Worm};
 
-/// Whether a caller accepts a download while it loads the worms
+/*
+What a caller does about a worm the disk does not have.
+
+`larvae worm install` is the one place that downloads. Every other caller
+reads what that put there, and they differ only in whether a missing worm is
+worth saying out loud.
+*/
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fetch {
     /// Fetch a worm that the cache does not hold yet
     Allowed,
-    /// Use the cache alone, and skip a worm that is not in it
-    Never,
+    /// Use the cache alone, and skip a missing worm without a word (the editor)
+    Quiet,
+    /// Use the cache alone, and name a missing worm (a command a person ran)
+    Report,
 }
 
 /// The directory of a release worm, when the cache already holds it
+/*
+The installed directory for this worm, without asking the network.
+
+A version resolves against what is on disk here, and not against what a
+repository has. `larvae worm install` did the online half and named the
+directory after the release it settled on, so a range finds the newest
+installed release that satisfies it and a build stays offline.
+
+The alternative would be resolving the range again on every command, which
+puts a request in front of every `larvae fmt` and makes the version of a build
+depend on the day it ran.
+*/
 fn cached(cache: &Path, name: &str, source: &Source) -> Option<std::path::PathBuf> {
     let (Source::Release { version, .. } | Source::Cargo { version, .. }) = source else {
         return None;
     };
 
-    let dir = super::fetch::install_dir(cache, name, version);
+    let has_manifest = |dir: &Path| dir.join(super::MANIFEST).exists();
 
-    dir.join(super::MANIFEST).exists().then_some(dir)
+    let wanted = super::version::Wanted::parse(version).ok()?;
+
+    if !wanted.needs_the_list() {
+        let dir = super::fetch::install_dir(cache, name, version);
+
+        return has_manifest(&dir).then_some(dir);
+    }
+
+    let installed: Vec<String> = std::fs::read_dir(cache.join("worms").join(name))
+        .ok()?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+
+            has_manifest(&entry.path()).then(|| entry.file_name().to_string_lossy().into_owned())
+        })
+        .collect();
+
+    let names: Vec<&str> = installed.iter().map(String::as_str).collect();
+    let picked = wanted.pick(&names)?;
+
+    Some(super::fetch::install_dir(cache, name, picked))
 }
 
 /// A worm plus the configuration the project gave it
@@ -97,7 +137,12 @@ impl Registry {
     download. The next command in the terminal fetches the worm.
     */
     pub fn for_project_cached(root: &Path, config: &crate::config::Config) -> Result<Self> {
-        Self::project(root, config, Fetch::Never)
+        Self::project(root, config, Fetch::Quiet)
+    }
+
+    /// The same, and a missing worm is named rather than passed over silently.
+    pub fn for_project_reporting(root: &Path, config: &crate::config::Config) -> Result<Self> {
+        Self::project(root, config, Fetch::Report)
     }
 
     fn project(root: &Path, config: &crate::config::Config, fetch: Fetch) -> Result<Self> {
@@ -141,10 +186,26 @@ impl Registry {
                 source @ (Source::Release { .. } | Source::Cargo { .. }) => match fetch {
                     Fetch::Allowed => super::fetch::ensure(cache, name, source)?,
 
-                    Fetch::Never => match cached(cache, name, source) {
+                    Fetch::Quiet | Fetch::Report => match cached(cache, name, source) {
                         Some(dir) => dir,
 
+                        /*
+                        A worm the project names and the disk does not have.
+
+                        The editor reaches here on every keystroke and must
+                        stay quiet, so the skip is silent for it. A command
+                        run by a person says so once: without the worm, a
+                        file that worm claims is read as plain Luau or not at
+                        all, and a silent skip makes that look like a bug in
+                        larvae.
+                        */
                         None => {
+                            if fetch == Fetch::Report {
+                                crate::ui::print_error(&format!(
+                                    "worm `{name}` is not installed, run `larvae worm install`"
+                                ));
+                            }
+
                             skipped = true;
 
                             continue;
@@ -668,7 +729,7 @@ mod tests {
         let r = Registry::load(
             root.path(),
             &cache,
-            &config("echo = \"someone/echo@0.1.0\""),
+            &config("echo = { repo = \"someone/echo\", version = \"0.1.0\" }"),
         )
         .unwrap();
 
