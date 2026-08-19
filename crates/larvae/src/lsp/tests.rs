@@ -16,7 +16,60 @@ fn the_advertised_capabilities_are_all_implemented() {
 
     assert_eq!(caps["documentFormattingProvider"], true);
     assert_eq!(caps["documentSymbolProvider"], true);
+    assert_eq!(caps["codeActionProvider"], true);
     assert_eq!(caps["textDocumentSync"]["change"], 1, "full sync");
+}
+
+/*
+The two worm paths answer, and they answer with the shape an editor expects.
+
+Neither carries anything yet. What these hold is that the path is wired: a
+request that errors and a request that returns nothing look the same to a
+user and are not the same to an editor, which logs a failure on every
+keystroke that opens the lightbulb.
+*/
+#[test]
+fn a_code_action_request_answers_with_a_list() {
+    let mut server = server_with("local x = 1\n");
+    let mut out = Vec::new();
+
+    let message = message(
+        "textDocument/codeAction",
+        Some(7),
+        json!({
+            "textDocument": { "uri": "file:///t.luau" },
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 0, "character": 5 }
+            },
+            "context": { "diagnostics": [] }
+        }),
+    );
+
+    server.handle(&message, &mut out).unwrap();
+
+    let text = String::from_utf8(out).unwrap();
+
+    assert!(text.contains("\"result\":[]"), "{text}");
+    assert!(
+        !text.contains("error"),
+        "an editor must not see a failure: {text}"
+    );
+}
+
+#[test]
+fn a_definitions_request_answers_with_a_list() {
+    let mut server = server_with("local x = 1\n");
+    let mut out = Vec::new();
+
+    let message = message("larvae/definitions", Some(8), json!({}));
+
+    server.handle(&message, &mut out).unwrap();
+
+    let text = String::from_utf8(out).unwrap();
+
+    assert!(text.contains("definitions"), "{text}");
+    assert!(!text.contains("is not supported"), "{text}");
 }
 
 #[test]

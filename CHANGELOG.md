@@ -33,6 +33,12 @@ Notable changes land here. Format follows
   binding the file mutates through a field, `t.x = 1` or `table.insert(t, 1)`.
   Off by default, because `const` is correct there: Luau enforces it against
   reassignment of the name and says nothing about the value
+- Two LSP paths for worms, wired and empty. `textDocument/codeAction` is
+  advertised and answers with a list, and `larvae/definitions` is a request of
+  larvae's own for the type definitions a worm supplies. Neither carries
+  anything yet: `crates/larvae/src/lsp/extend.rs` is the seam, so the work
+  that fills them touches one file. The capability is advertised now because
+  an editor decides at initialize whether to ever ask
 - `[fmt] function_call` and `[fmt] function_declaration` lay out the two lists
   between parentheses. `expand` takes `when-needed`, which is the layout larvae
   always had, `always`, and `never`. `indent` gives the levels an opened item
