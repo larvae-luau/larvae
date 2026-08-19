@@ -49,6 +49,10 @@ pub struct LuauWorm {
     format: Option<mlua::Function>,
     /// Optional. It returns the findings of a claimed file for `larvae lint`.
     lint: Option<mlua::Function>,
+    /// `frontend.actions`, absent where the worm offers none
+    actions: Option<mlua::Function>,
+    /// `frontend.definitions`, absent where the worm supplies no types
+    definitions: Option<mlua::Function>,
     /// The `visit` function for each rule the worm declared, keyed by rule name
     rules: BTreeMap<String, mlua::Function>,
     /// Optional. Larvae calls it once with the settings before the worm sees a file.
@@ -80,31 +84,44 @@ impl LuauWorm {
             .eval()
             .with_context(|| format!("worm `{chunk_name}` failed to load"))?;
 
-        let (compile, format, lint) = match exports.get::<Option<mlua::Table>>("frontend")? {
-            Some(frontend) => {
-                let compile = frontend.get::<mlua::Function>("compile").with_context(|| {
-                    format!("worm `{chunk_name}`: frontend.compile is not a function")
-                })?;
-
-                // both are optional, in the same way `fmt` and `[lints]` are
-                // optional in the manifest
-                let format = frontend
-                    .get::<Option<mlua::Function>>("format")
-                    .with_context(|| {
-                        format!("worm `{chunk_name}`: frontend.format is not a function")
+        let (compile, format, lint, actions, definitions) =
+            match exports.get::<Option<mlua::Table>>("frontend")? {
+                Some(frontend) => {
+                    let compile = frontend.get::<mlua::Function>("compile").with_context(|| {
+                        format!("worm `{chunk_name}`: frontend.compile is not a function")
                     })?;
 
-                let lint = frontend
-                    .get::<Option<mlua::Function>>("lint")
-                    .with_context(|| {
-                        format!("worm `{chunk_name}`: frontend.lint is not a function")
-                    })?;
+                    // both are optional, in the same way `fmt` and `[lints]` are
+                    // optional in the manifest
+                    let format = frontend
+                        .get::<Option<mlua::Function>>("format")
+                        .with_context(|| {
+                            format!("worm `{chunk_name}`: frontend.format is not a function")
+                        })?;
 
-                (Some(compile), format, lint)
-            }
+                    let lint = frontend
+                        .get::<Option<mlua::Function>>("lint")
+                        .with_context(|| {
+                            format!("worm `{chunk_name}`: frontend.lint is not a function")
+                        })?;
 
-            None => (None, None, None),
-        };
+                    let actions = frontend
+                        .get::<Option<mlua::Function>>("actions")
+                        .with_context(|| {
+                            format!("worm `{chunk_name}`: frontend.actions is not a function")
+                        })?;
+
+                    let definitions = frontend
+                        .get::<Option<mlua::Function>>("definitions")
+                        .with_context(|| {
+                            format!("worm `{chunk_name}`: frontend.definitions is not a function")
+                        })?;
+
+                    (Some(compile), format, lint, actions, definitions)
+                }
+
+                None => (None, None, None, None, None),
+            };
 
         let mut rules = BTreeMap::new();
 
@@ -149,6 +166,8 @@ impl LuauWorm {
             compile,
             format,
             lint,
+            actions,
+            definitions,
             rules,
             init,
             budget,
@@ -306,6 +325,45 @@ impl LuauWorm {
     }
 
     /// Get the problems of one claimed file. The host decides the severity.
+    /*
+    The actions this worm offers over a byte range.
+
+    A table without the function has none, which is not an error. The editor
+    asks on a keystroke, and a worm that only formats has nothing to say.
+    */
+    pub fn actions(&mut self, source: &str, span: (u32, u32)) -> Result<proto::ActionsReply> {
+        let Some(actions) = self.actions.clone() else {
+            return Ok(proto::ActionsReply::default());
+        };
+
+        self.budget.store(0, Ordering::Relaxed);
+
+        let value = actions
+            .call::<mlua::Value>((source, span.0, span.1))
+            .map_err(|e| anyhow!(worm_message(&e)))?;
+
+        self.lua
+            .from_value(value)
+            .context("the actions reply does not have the documented shape")
+    }
+
+    /// The Luau type definitions this worm supplies, or none.
+    pub fn definitions(&mut self) -> Result<proto::DefinitionsReply> {
+        let Some(definitions) = self.definitions.clone() else {
+            return Ok(proto::DefinitionsReply::default());
+        };
+
+        self.budget.store(0, Ordering::Relaxed);
+
+        let value = definitions
+            .call::<mlua::Value>(())
+            .map_err(|e| anyhow!(worm_message(&e)))?;
+
+        self.lua
+            .from_value(value)
+            .context("the definitions reply does not have the documented shape")
+    }
+
     pub fn lint(&mut self, source: &str) -> Result<proto::LintReply> {
         let Some(lint) = self.lint.clone() else {
             bail!(
@@ -1158,5 +1216,65 @@ return {
             format!("{err:#}").contains("does not have the documented shape"),
             "{err:#}"
         );
+    }
+}
+
+#[cfg(test)]
+mod editor_paths {
+    use super::*;
+
+    fn worm(body: &str) -> LuauWorm {
+        LuauWorm::load(body, "t").expect("the worm loads")
+    }
+
+    const FRONTEND: &str = r#"
+return {
+    frontend = {
+        compile = function(source) return { output = source } end,
+        actions = function(source, start, stop)
+            return { actions = { {
+                title = "Trim",
+                edits = { { span = { start, stop }, text = "x" } },
+                fixes = "bad",
+            } } }
+        end,
+        definitions = function()
+            return { definitions = "declare thing: number\n" }
+        end,
+    },
+}
+"#;
+
+    #[test]
+    fn a_luau_worm_offers_actions() {
+        let reply = worm(FRONTEND).actions("hello", (1, 4)).unwrap();
+
+        assert_eq!(reply.actions.len(), 1);
+        assert_eq!(reply.actions[0].title, "Trim");
+        assert_eq!(reply.actions[0].edits[0].span, (1, 4));
+        assert_eq!(reply.actions[0].fixes.as_deref(), Some("bad"));
+    }
+
+    #[test]
+    fn a_luau_worm_supplies_definitions() {
+        let reply = worm(FRONTEND).definitions().unwrap();
+
+        assert!(reply.definitions.contains("declare thing"), "{reply:?}");
+    }
+
+    /*
+    A worm without the functions answers with nothing.
+
+    The editor asks on a keystroke, so a worm that only compiles must cost a
+    reply and not an error.
+    */
+    #[test]
+    fn a_luau_worm_without_them_is_quiet() {
+        const BARE: &str = r#"
+return { frontend = { compile = function(s) return { output = s } end } }
+"#;
+
+        assert!(worm(BARE).actions("x", (0, 1)).unwrap().actions.is_empty());
+        assert!(worm(BARE).definitions().unwrap().definitions.is_empty());
     }
 }

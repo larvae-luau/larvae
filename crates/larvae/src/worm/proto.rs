@@ -130,6 +130,60 @@ pub struct WireFinding {
     pub help: Option<String>,
 }
 
+/*
+One edit a worm wants made, as byte offsets into the file it was given.
+
+Bytes and not a line and column, because a worm parses the file it claims and
+knows where things are in it. The host turns these into the positions the
+editor speaks, which is the same conversion it already makes for a finding.
+*/
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WireEdit {
+    /// The byte range to replace. An empty range inserts.
+    pub span: (u32, u32),
+    /// What goes there. Empty deletes.
+    #[serde(default)]
+    pub text: String,
+}
+
+/// One code action a worm offers over a range.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WireAction {
+    /// What the editor shows in the lightbulb.
+    pub title: String,
+    /// The edits, applied together as one change.
+    #[serde(default)]
+    pub edits: Vec<WireEdit>,
+    /*
+    The lint this repairs, when it repairs one.
+
+    An editor groups a fix under the diagnostic it belongs to, so a fix that
+    names its lint appears on the problem rather than in a general list.
+    */
+    #[serde(default)]
+    pub fixes: Option<String>,
+}
+
+/// An actions reply, assembled by the transport
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ActionsReply {
+    #[serde(default)]
+    pub actions: Vec<WireAction>,
+}
+
+/*
+A definitions reply, assembled by the transport.
+
+A worm that teaches larvae a new kind of module states what that module is,
+as Luau definition text, because that is what luau-lsp reads. A worm that
+makes a data file requirable is the case this exists for.
+*/
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DefinitionsReply {
+    #[serde(default)]
+    pub definitions: String,
+}
+
 /// A lint reply, assembled by the transport
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct LintReply {

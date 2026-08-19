@@ -340,6 +340,52 @@ impl Pool {
     A worker that does not meet a file that needs this worm pays nothing. A
     worker that does pays the module load once and not per file.
     */
+    /*
+    The code actions every worm offers over a byte range of one file.
+
+    A worm that fails is passed over rather than reported. This runs on a
+    keystroke, and one broken worm must not take the lightbulb away from the
+    others or put an error in the editor log on every press.
+    */
+    pub fn code_actions(
+        &self,
+        source: &str,
+        span: (u32, u32),
+    ) -> Vec<(String, super::proto::WireAction)> {
+        let mut out = Vec::new();
+
+        for (index, spec) in self.specs.iter().enumerate() {
+            let name = spec.manifest.name.clone();
+
+            let Ok(reply) = self.with_worm(index, |worm, _| worm.code_actions(source, span)) else {
+                continue;
+            };
+
+            out.extend(reply.actions.into_iter().map(|a| (name.clone(), a)));
+        }
+
+        out
+    }
+
+    /// The type definitions every worm supplies, by the worm that supplied each.
+    pub fn definitions(&self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+
+        for (index, spec) in self.specs.iter().enumerate() {
+            let name = spec.manifest.name.clone();
+
+            let Ok(reply) = self.with_worm(index, |worm, _| worm.definitions()) else {
+                continue;
+            };
+
+            if !reply.definitions.trim().is_empty() {
+                out.push((name, reply.definitions));
+            }
+        }
+
+        out
+    }
+
     fn with_worm<R>(
         &self,
         index: usize,

@@ -148,10 +148,63 @@ export type Lint = (source: string) -> LintReply
 		[frontend]
 		claims = [".luaux"]
 ]=]
+--[=[
+	One edit your action wants made, in bytes of the file you were given.
+
+	Bytes and not a line and column, because you parsed the file and know
+	where things are in it. larvae turns these into the positions the editor
+	speaks. An empty span inserts, and empty text deletes.
+]=]
+export type Edit = {
+	span: { number },
+	text: string,
+}
+
+--[=[
+	One code action, as the editor shows it in the lightbulb.
+
+	`fixes` names one of the lints your worm.toml declares. An editor groups a
+	fix under the diagnostic it repairs, so a fix that names its lint appears
+	on the problem instead of in a general list.
+]=]
+export type Action = {
+	title: string,
+	edits: { Edit },
+	fixes: string?,
+}
+
+--[=[
+	The actions half of a front-end.
+
+	larvae calls this when the editor asks what can be done over a range of a
+	file you claim, which is on a keystroke. Return `{ actions = {} }` quickly
+	when you have nothing; do not parse the world here.
+]=]
+export type Actions = (source: string, start: number, stop: number) -> {
+	actions: { Action },
+}
+
+--[=[
+	The types half of a front-end.
+
+	Return Luau definition text for the code of the project, which is what
+	luau-lsp reads. A worm that makes a new kind of module requirable states
+	what that module is here: `require("./items.json")` has a type, you know
+	it, and neither larvae nor luau-lsp can work it out alone.
+
+	This is a different file from the one `larvae worm types` writes. That one
+	describes this API, for the people who write worms.
+]=]
+export type Definitions = () -> {
+	definitions: string,
+}
+
 export type Frontend = {
 	compile: Compile,
 	format: Format?,
 	lint: Lint?,
+	actions: Actions?,
+	definitions: Definitions?,
 }
 
 --[=[

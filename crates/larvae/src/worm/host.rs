@@ -31,6 +31,10 @@ mod export {
     pub const FORMAT: &str = "larvae_format";
     pub const LINT: &str = "larvae_lint";
     pub const SETTINGS: &str = "larvae_settings";
+    /// Code actions over a byte range. Optional: a worm that has none omits it.
+    pub const ACTIONS: &str = "larvae_actions";
+    /// Luau type definitions the worm supplies. Optional in the same way.
+    pub const DEFINITIONS: &str = "larvae_definitions";
 
     /// The name the luaux prototype shipped before the ABI was stable.
     /// It is removed when api 1 freezes.
@@ -84,6 +88,10 @@ pub struct WasmWorm {
     format: Option<wasmi::TypedFunc<(u32, u32), u32>>,
     lint: Option<wasmi::TypedFunc<(u32, u32), u32>>,
     settings: Option<wasmi::TypedFunc<(u32, u32, u32, u32), ()>>,
+    /// `(src_ptr, src_len, start, end) -> header`, absent where the worm has no actions
+    actions: Option<wasmi::TypedFunc<(u32, u32, u32, u32), u32>>,
+    /// `() -> header`, absent where the worm supplies no types
+    definitions: Option<wasmi::TypedFunc<(), u32>>,
 }
 
 impl WasmWorm {
@@ -127,6 +135,8 @@ impl WasmWorm {
         let format = typed(&instance, &store, export::FORMAT).ok();
         let lint = typed(&instance, &store, export::LINT).ok();
         let settings = typed(&instance, &store, export::SETTINGS).ok();
+        let actions = typed(&instance, &store, export::ACTIONS).ok();
+        let definitions = typed(&instance, &store, export::DEFINITIONS).ok();
 
         // a module with only a format or lint export is legal, because a
         // worm can report on its claimed files without a transform
@@ -151,6 +161,8 @@ impl WasmWorm {
             format,
             lint,
             settings,
+            actions,
+            definitions,
         })
     }
 
@@ -212,6 +224,45 @@ impl WasmWorm {
             .context("worm trapped")?;
 
         self.free(src)?;
+
+        let text = self.pull(header)?.into_source()?;
+
+        serde_json::from_str(&text).context("worm sent a reply we cannot read")
+    }
+
+    /*
+    The actions this worm offers over a byte range.
+
+    A module without the export has none, which is not an error: the editor
+    asks on a keystroke, and a worm that only formats has nothing to say here.
+    */
+    pub fn actions(&mut self, source: &str, span: (u32, u32)) -> Result<proto::ActionsReply> {
+        let Some(actions) = self.actions else {
+            return Ok(proto::ActionsReply::default());
+        };
+
+        let src = self.push(source.as_bytes())?;
+
+        let header = actions
+            .call(&mut self.store, (src.0, src.1, span.0, span.1))
+            .context("worm trapped")?;
+
+        self.free(src)?;
+
+        let text = self.pull(header)?.into_source()?;
+
+        serde_json::from_str(&text).context("worm sent a reply we cannot read")
+    }
+
+    /// The Luau type definitions this worm supplies, or none.
+    pub fn definitions(&mut self) -> Result<proto::DefinitionsReply> {
+        let Some(definitions) = self.definitions else {
+            return Ok(proto::DefinitionsReply::default());
+        };
+
+        let header = definitions
+            .call(&mut self.store, ())
+            .context("worm trapped")?;
 
         let text = self.pull(header)?.into_source()?;
 
@@ -575,6 +626,24 @@ mod tests {
 
         assert!(text.contains("fmt = true"), "{text}");
         assert!(text.contains("larvae_format"), "{text}");
+    }
+
+    /*
+    The editor paths differ from format and lint: a module without the export
+    answers with nothing rather than failing.
+
+    The manifest promises `fmt` and `[lints]`, so a missing export there is a
+    broken promise worth a message. Nothing promises actions or definitions,
+    and the editor asks for them on a keystroke, so absence is the normal case.
+    */
+    #[test]
+    fn a_module_without_the_editor_exports_answers_with_nothing() {
+        let mut worm = WasmWorm::load(FIXTURE).unwrap();
+        worm.actions = None;
+        worm.definitions = None;
+
+        assert!(worm.actions("x", (0, 1)).unwrap().actions.is_empty());
+        assert!(worm.definitions().unwrap().definitions.is_empty());
     }
 
     #[test]

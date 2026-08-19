@@ -70,6 +70,19 @@ enum Request<'a> {
         source: &'a str,
     },
     /*
+    The actions this worm offers over a byte range of a claimed file.
+
+    The editor asks on a keystroke, so a worm that has none answers with an
+    empty list and not an error.
+    */
+    Actions {
+        source: &'a str,
+        start: u32,
+        end: u32,
+    },
+    /// The Luau type definitions this worm supplies for the project
+    Definitions {},
+    /*
     Run the enabled rules over the matched nodes of one file.
 
     This is the batched shape from the module docs: one crossing per file
@@ -110,6 +123,12 @@ struct Response {
     /// The findings of a `lint` reply
     #[serde(default)]
     findings: Option<Vec<proto::WireFinding>>,
+    /// The actions of an `actions` reply
+    #[serde(default)]
+    actions: Option<Vec<proto::WireAction>>,
+    /// The type definitions of a `definitions` reply
+    #[serde(default)]
+    definitions: Option<String>,
     /// The comment spans, from `format` (the survival backstop) and `lint`
     /// (suppression)
     #[serde(default)]
@@ -251,6 +270,26 @@ impl NativeWorm {
             findings: response.findings.unwrap_or_default(),
             comments: response.comments.unwrap_or_default(),
             luau: response.luau,
+        })
+    }
+
+    pub fn actions(&mut self, source: &str, span: (u32, u32)) -> Result<proto::ActionsReply> {
+        let response = self.call(&Request::Actions {
+            source,
+            start: span.0,
+            end: span.1,
+        })?;
+
+        Ok(proto::ActionsReply {
+            actions: response.actions.unwrap_or_default(),
+        })
+    }
+
+    pub fn definitions(&mut self) -> Result<proto::DefinitionsReply> {
+        let response = self.call(&Request::Definitions {})?;
+
+        Ok(proto::DefinitionsReply {
+            definitions: response.definitions.unwrap_or_default(),
         })
     }
 

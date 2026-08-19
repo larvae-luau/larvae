@@ -26,6 +26,7 @@ to the worms arrive.
 
 use serde_json::{Value, json};
 
+use super::rpc::Lines;
 use crate::worm::pool::Pool;
 
 /// One worm's contribution to the types of a project.
@@ -38,28 +39,97 @@ pub struct Definitions {
 }
 
 /*
-The actions a worm offers over this range.
+The actions the worms offer over this range.
 
-Empty until the worms answer. The shape is the LSP one, a list of `CodeAction`
-objects, and the caller sends it as the result of the request.
+Each worm is asked for the actions it has, and the name of the worm goes into
+the title, so a user reading the lightbulb sees which extension offered the
+fix rather than a bare sentence from nowhere.
 
-The filled version asks each worm that claims this file for the actions it has
-over the range, and stamps the name of the worm into the title, so a user sees
-which extension offered the fix.
+A worm speaks in byte offsets, because it parsed the file and knows where
+things are in it. The host turns those into the positions the protocol wants,
+the same conversion a finding already goes through.
 */
-pub fn code_actions(_worms: &Pool, _uri: &str, _text: &str, _range: &Value) -> Vec<Value> {
-    Vec::new()
+pub fn code_actions(worms: &Pool, uri: &str, text: &str, range: &Value) -> Vec<Value> {
+    if worms.is_empty() {
+        return Vec::new();
+    }
+
+    let lines = Lines::new(text);
+    let span = byte_range(&lines, text, range);
+
+    worms
+        .code_actions(text, span)
+        .into_iter()
+        .map(|(worm, action)| {
+            let edits: Vec<Value> = action
+                .edits
+                .iter()
+                .map(|edit| {
+                    json!({
+                        "range": lines.range(text, edit.span),
+                        "newText": edit.text,
+                    })
+                })
+                .collect();
+
+            let mut out = json!({
+                "title": format!("{} ({worm})", action.title),
+                "kind": "quickfix",
+                "edit": { "changes": { uri: edits } },
+            });
+
+            /*
+            A fix that names its lint is grouped under that diagnostic, so it
+            appears on the problem and not in a general list.
+            */
+            if let Some(lint) = &action.fixes {
+                out["diagnostics"] = json!([{
+                    "source": "larvae",
+                    "code": format!("{worm}.{lint}"),
+                }]);
+            }
+
+            out
+        })
+        .collect()
+}
+
+/*
+The byte range the editor asked about, or the whole file when it named none.
+
+The same reading as `lsp::actions`, kept here rather than shared, because the
+two modules answer different owners and a change to one is not a change to the
+other.
+*/
+fn byte_range(lines: &Lines, text: &str, range: &Value) -> (u32, u32) {
+    let at = |which: &str| -> Option<u32> {
+        let point = range.get(which)?;
+        let line = point.get("line")?.as_u64()? as u32;
+        let character = point.get("character")?.as_u64()? as u32;
+
+        Some(lines.offset(text, line, character))
+    };
+
+    match (at("start"), at("end")) {
+        (Some(start), Some(end)) => (start, end),
+
+        _ => (0, text.len() as u32),
+    }
 }
 
 /*
 The type definitions the worms of this project supply.
 
-Empty until the worms answer. The filled version asks each worm for the
-definition text it wants in scope, and the caller hands the list to the editor
-or writes it beside the project for luau-lsp to read.
+Each worm is asked once. A worm that returns nothing is left out, so the list
+holds only the worms that have something to say about the types of the
+project.
 */
-pub fn definitions(_worms: &Pool) -> Vec<Definitions> {
-    Vec::new()
+pub fn definitions(worms: &Pool) -> Vec<Definitions> {
+    worms
+        .definitions()
+        .into_iter()
+        .map(|(worm, text)| Definitions { worm, text })
+        .collect()
 }
 
 /// The definitions as the custom request reports them.

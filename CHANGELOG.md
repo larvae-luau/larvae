@@ -8,6 +8,13 @@ Notable changes land here. Format follows
 
 ### Added
 
+- A worm can offer code actions and supply Luau type definitions, through the
+  two LSP paths, in all three forms. A native worm answers the `actions` and
+  `definitions` ops, a wasm worm exports `larvae_actions` and
+  `larvae_definitions`, and a Luau worm puts `actions` and `definitions` on
+  its `frontend` table. All three are optional: a worm with nothing to offer
+  answers with nothing and not an error, because the editor asks on a
+  keystroke
 - `larvae worm add <spec>` writes a worm into `[worms]`. It takes a short name
   larvae knows, `luaux`, or `owner/repo`, either with `@version`. `--cargo`
   takes a crate instead. It writes the config and stops, because an edit is

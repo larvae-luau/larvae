@@ -295,6 +295,43 @@ impl Worm {
         }
         .with_context(|| format!("worm `{}`", self.manifest.name))
     }
+
+    /*
+    The code actions this worm offers over a byte range of one file.
+
+    Every form answers, and a form that has nothing to offer answers with an
+    empty list. The editor asks on a keystroke, so a worm without actions must
+    cost a reply and not an error.
+    */
+    pub fn code_actions(&mut self, source: &str, span: (u32, u32)) -> Result<proto::ActionsReply> {
+        match &mut self.backend {
+            Backend::Native(worm) => worm.actions(source, span),
+
+            Backend::Wasm(worm) => worm.actions(source, span),
+
+            Backend::Luau(worm) => worm.actions(source, span),
+        }
+        .with_context(|| format!("worm `{}`", self.manifest.name))
+    }
+
+    /*
+    The Luau type definitions this worm supplies for the code of the project.
+
+    A worm that teaches larvae a new kind of module states what that module
+    is. A worm that makes a data file requirable is the case this exists for:
+    `require("./items.json")` has a type, the worm knows it, and neither
+    larvae nor luau-lsp can work it out alone.
+    */
+    pub fn definitions(&mut self) -> Result<proto::DefinitionsReply> {
+        match &mut self.backend {
+            Backend::Native(worm) => worm.definitions(),
+
+            Backend::Wasm(worm) => worm.definitions(),
+
+            Backend::Luau(worm) => worm.definitions(),
+        }
+        .with_context(|| format!("worm `{}`", self.manifest.name))
+    }
 }
 
 /*

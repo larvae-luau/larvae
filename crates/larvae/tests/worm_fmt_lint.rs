@@ -98,6 +98,14 @@ while True:
         send({"ok": True, "doc": 1,
               "document": {"host": {"start": 0, "end": len(src.encode())}},
               "comments": comments(src)})
+    elif op == "actions":
+        # one action over any range, with a byte edit the host converts
+        send({"ok": True, "actions": [
+            {"title": "Say hello", "edits": [{"span": [0, 0], "text": "-- hi\n"}],
+             "fixes": "bad_word"}
+        ]})
+    elif op == "definitions":
+        send({"ok": True, "definitions": "declare markupThing: string\n"})
     elif op == "lint":
         src = req["source"]
         findings = []
