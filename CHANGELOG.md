@@ -6,6 +6,13 @@ Notable changes land here. Format follows
 
 ## Unreleased
 
+### Added
+
+- A code action for `prefer_const`: change the `local` to `const`. The lint
+  has already established that nothing reassigns the names, which is the
+  condition Luau enforces, so the swap cannot turn a file that ran into a
+  syntax error
+
 ### Fixed
 
 - The `path` target wrote a require into the output that pointed back at the

@@ -24,7 +24,7 @@ use crate::syntax::{lexer, parser};
 use super::rpc::Lines;
 
 /// The lints this module can fix.
-const FIXABLE: [&str; 2] = ["unused_variable", "unused_function"];
+const FIXABLE: [&str; 3] = ["unused_variable", "unused_function", "prefer_const"];
 
 /*
 The actions larvae offers over this range.
@@ -63,49 +63,25 @@ pub fn for_range(uri: &str, text: &str, range: &Value, cfg: &LintConfig) -> Vec<
             continue;
         }
 
-        let name = &text[finding.span.0 as usize..finding.span.1 as usize];
-
-        // The convention is a prefix, so a name that has one is already silent.
-        if name.starts_with('_') {
-            continue;
-        }
-
-        let mut spans = vec![finding.span];
+        let word = &text[finding.span.0 as usize..finding.span.1 as usize];
 
         /*
-        A binding carries its writes, and each one names the same variable.
-        A global function has no binding, and it has no writes either: the
-        declaration is the only place the name is written.
+        Each lint says what its own fix is, because the two are different
+        shapes. The unused pair renames a binding, which touches every place
+        the name is written. `prefer_const` swaps one keyword.
         */
-        for binding in &names.bindings {
-            let declared = &lexed.toks[binding.declared_at as usize];
+        let fix = match finding.lint.as_ref() {
+            "prefer_const" => to_const(&lines, text, finding.span),
 
-            if (declared.start, declared.end) != finding.span {
-                continue;
-            }
+            _ => underscore(&lines, text, &lexed, &names, finding.span, word),
+        };
 
-            for &write in &binding.writes {
-                let token = &lexed.toks[write as usize];
-
-                spans.push((token.start, token.end));
-            }
-        }
-
-        spans.sort_unstable();
-        spans.dedup();
-
-        let edits: Vec<Value> = spans
-            .iter()
-            .map(|&(start, _)| {
-                json!({
-                    "range": lines.range(text, (start, start)),
-                    "newText": "_",
-                })
-            })
-            .collect();
+        let Some((title, edits)) = fix else {
+            continue;
+        };
 
         out.push(json!({
-            "title": format!("Prefix `{name}` with an underscore"),
+            "title": title,
             "kind": "quickfix",
             "diagnostics": [{
                 "range": lines.range(text, finding.span),
@@ -117,6 +93,85 @@ pub fn for_range(uri: &str, text: &str, range: &Value, cfg: &LintConfig) -> Vec<
     }
 
     out
+}
+
+/*
+Rename a binding so it starts with an underscore.
+
+The declaration and every write of it move together. A binding that is
+assigned and never read reports as well, and prefixing the declaration alone
+would leave the assignments naming something nothing declares, which is a
+global and a worse bug than the warning it silenced.
+*/
+fn underscore(
+    lines: &Lines,
+    text: &str,
+    lexed: &lexer::Lexed,
+    names: &scope::Names<'_>,
+    span: (u32, u32),
+    name: &str,
+) -> Option<(String, Vec<Value>)> {
+    // The convention is a prefix, so a name that has one is already silent.
+    if name.starts_with('_') {
+        return None;
+    }
+
+    let mut spans = vec![span];
+
+    /*
+    A binding carries its writes, and each one names the same variable. A
+    global function has no binding, and no writes either: the declaration is
+    the only place the name is written.
+    */
+    for binding in &names.bindings {
+        let declared = &lexed.toks[binding.declared_at as usize];
+
+        if (declared.start, declared.end) != span {
+            continue;
+        }
+
+        for &write in &binding.writes {
+            let token = &lexed.toks[write as usize];
+
+            spans.push((token.start, token.end));
+        }
+    }
+
+    spans.sort_unstable();
+    spans.dedup();
+
+    let edits = spans
+        .iter()
+        .map(|&(start, _)| {
+            json!({
+                "range": lines.range(text, (start, start)),
+                "newText": "_",
+            })
+        })
+        .collect();
+
+    Some((format!("Prefix `{name}` with an underscore"), edits))
+}
+
+/*
+Turn the `local` of a declaration into `const`.
+
+`prefer_const` reports on the keyword itself, so the span to replace is the
+word, and one edit is the whole fix. The lint has already established that
+nothing reassigns the names, which is the condition Luau enforces, so the
+swap cannot turn a file that ran into a syntax error.
+*/
+fn to_const(lines: &Lines, text: &str, span: (u32, u32)) -> Option<(String, Vec<Value>)> {
+    if &text[span.0 as usize..span.1 as usize] != "local" {
+        return None;
+    }
+
+    let edits = vec![json!({
+        "range": lines.range(text, span),
+        "newText": "const",
+    })];
+
+    Some(("Change `local` to `const`".to_string(), edits))
 }
 
 /// The byte range the editor asked about, or the whole file when it named none.
@@ -159,6 +214,16 @@ mod tests {
 
     fn actions(text: &str, range: Value) -> Vec<Value> {
         for_range("file:///t.luau", text, &range, &LintConfig::default())
+    }
+
+    /// `prefer_const` is off by default, so a test of it has to turn it on.
+    fn with_prefer_const() -> LintConfig {
+        let mut cfg = LintConfig::default();
+
+        cfg.rules
+            .insert("prefer_const".to_string(), crate::lint::Level::Warn);
+
+        cfg
     }
 
     fn edits(action: &Value) -> Vec<(u32, u32)> {
@@ -217,6 +282,97 @@ mod tests {
 
         assert_eq!(found.len(), 1, "{found:#?}");
         assert_eq!(edits(&found[0]), vec![(0, 9)]);
+    }
+
+    /*
+    `prefer_const` swaps one keyword, and that is the whole fix.
+
+    The lint has already established that nothing reassigns the names, which
+    is the condition Luau enforces, so the swap cannot turn a file that ran
+    into "Variable is constant and may not be reassigned".
+    */
+    #[test]
+    fn a_local_that_never_moves_is_offered_const() {
+        let cfg = with_prefer_const();
+        let found = for_range(
+            "file:///t.luau",
+            "local held = 1\nprint(held)\n",
+            &at(0, 2),
+            &cfg,
+        );
+
+        assert_eq!(found.len(), 1, "{found:#?}");
+        assert_eq!(found[0]["title"], "Change `local` to `const`");
+        assert_eq!(found[0]["kind"], "quickfix");
+
+        let edit = &found[0]["edit"]["changes"]["file:///t.luau"][0];
+        assert_eq!(edit["newText"], "const");
+        assert_eq!(edit["range"]["start"]["character"], 0);
+        assert_eq!(
+            edit["range"]["end"]["character"], 5,
+            "the keyword, and only it"
+        );
+    }
+
+    /// Applying the fix has to leave Luau that parses, and that the lint accepts.
+    #[test]
+    fn applying_the_const_fix_leaves_parsing_luau() {
+        let text = "local held = 1\nprint(held)\n";
+        let cfg = with_prefer_const();
+        let found = for_range("file:///t.luau", text, &at(0, 2), &cfg);
+
+        let edit = &found[0]["edit"]["changes"]["file:///t.luau"][0];
+        let fixed = text.replacen("local", edit["newText"].as_str().unwrap(), 1);
+
+        assert_eq!(fixed, "const held = 1\nprint(held)\n");
+
+        let lexed = crate::syntax::lexer::lex(&fixed).expect("the fix lexes");
+        crate::syntax::parser::parse(&fixed, &lexed.toks).expect("the fix parses");
+
+        // and the lint it fixed no longer fires
+        let again = for_range("file:///t.luau", &fixed, &at(0, 2), &cfg);
+        assert!(again.is_empty(), "{again:#?}");
+    }
+
+    /// The action is off while the lint is, because there is no finding to fix.
+    #[test]
+    fn no_const_action_while_the_lint_is_allowed() {
+        assert!(actions("local held = 1\nprint(held)\n", at(0, 2)).is_empty());
+    }
+
+    /*
+    Applying the underscore fix has to leave Luau that parses too.
+
+    The assigned-but-never-read case is the one that could break: the
+    declaration and the assignment have to move together or the assignment
+    names a global.
+    */
+    #[test]
+    fn applying_the_underscore_fix_leaves_parsing_luau() {
+        let text = "local written = 1\nwritten = 2\n";
+        let found = actions(text, at(0, 6));
+
+        let mut fixed = text.to_string();
+
+        // apply back to front so the earlier offsets stay valid
+        let mut edits = edits(&found[0]);
+        edits.sort_unstable();
+
+        for (line, character) in edits.into_iter().rev() {
+            let at = fixed
+                .lines()
+                .take(line as usize)
+                .map(|l| l.len() + 1)
+                .sum::<usize>()
+                + character as usize;
+
+            fixed.insert(at, '_');
+        }
+
+        assert_eq!(fixed, "local _written = 1\n_written = 2\n");
+
+        let lexed = crate::syntax::lexer::lex(&fixed).expect("the fix lexes");
+        crate::syntax::parser::parse(&fixed, &lexed.toks).expect("the fix parses");
     }
 
     /// A caret somewhere else gets no lightbulb.
