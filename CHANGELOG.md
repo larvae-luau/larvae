@@ -8,28 +8,6 @@ Notable changes land here. Format follows
 
 ### Added
 
-- A code action for `prefer_const`: change the `local` to `const`. The lint
-  has already established that nothing reassigns the names, which is the
-  condition Luau enforces, so the swap cannot turn a file that ran into a
-  syntax error
-
-### Fixed
-
-- The `path` target wrote a require into the output that pointed back at the
-  input. A relative require from an `init.luau` resolves against the parent of
-  its directory, so the form has to name that directory, and larvae named it
-  from the source tree: `src/init.luau` emitted `./src/utils/helper`, and the
-  file was written to `dist/init.luau` where that string still means `src`. A
-  `dist` shipped alone failed to load, and a `dist` shipped beside `src` ran
-  the unprocessed source. Larvae now writes `@self/utils/helper`, which names
-  the directory of the init file without spelling it, so the require reads the
-  same in the input, in the output, and inside a package vendored under a name
-  neither tree used
-
-## Unreleased
-
-### Added
-
 - A worm can offer code actions and supply Luau type definitions, through the
   two LSP paths, in all three forms. A native worm answers the `actions` and
   `definitions` ops, a wasm worm exports `larvae_actions` and
