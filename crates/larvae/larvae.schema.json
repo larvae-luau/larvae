@@ -1451,6 +1451,14 @@
           ],
           "description": "An assignment with no local, which creates a global. Default: warn."
         },
+        "unused_function": {
+          "enum": [
+            "allow",
+            "warn",
+            "deny"
+          ],
+          "description": "A `local function` that nothing calls. The Luau compiler separates this from an unused variable and separates it by the declaring form, so `local f = function() end` is `unused_variable` and `local function f() end` is this. Both read [lint.options.unused_variable]. Default: warn."
+        },
         "unused_variable": {
           "enum": [
             "allow",

@@ -426,7 +426,9 @@ fn a_one_line_guard_is_not_two_statements() {
 #[test]
 fn unused_variable_catches_a_local_nothing_reads() {
     assert!(fires("unused_variable", "local x = 1\n"));
-    assert!(fires("unused_variable", "local function helper() end\n"));
+
+    // A `local function` is `unused_function` now, as the Luau compiler has it.
+    assert!(fires("unused_function", "local function helper() end\n"));
 }
 
 #[test]
@@ -1953,4 +1955,89 @@ fn reading_a_field_is_not_mutating_it() {
         const_findings("local t = {}\nprint(t.x)\nreturn t\n", true),
         1
     );
+}
+
+// --- functions are not variables --------------------------------------------
+
+/*
+`function f() end` creates a global, and it is not `unscoped_variables`.
+
+The statement makes the name the same way `f = 1` does, and the two do not
+read the same way. Neither selene nor the Luau compiler reports the
+declaration. A Roblox script defines its callbacks with it, so larvae
+reporting it made the lint unusable on the codebase it is for.
+*/
+#[test]
+fn a_global_function_declaration_is_not_an_unscoped_variable() {
+    assert!(!fires(
+        "unscoped_variables",
+        "function onTouch()\nend\nreturn onTouch\n"
+    ));
+}
+
+/// A bare assignment is still the thing the lint is for.
+#[test]
+fn a_bare_global_assignment_is_still_reported() {
+    assert!(fires("unscoped_variables", "x = 1\nreturn x\n"));
+}
+
+/// The name a global function declares is still defined for the file.
+#[test]
+fn a_global_function_is_not_undefined_where_it_is_called() {
+    assert!(!fires(
+        "undefined_variable",
+        "function helper()\nend\nhelper()\n"
+    ));
+}
+
+/*
+The Luau compiler splits the two by the declaring form and not by the value.
+
+`local function f() end` is FunctionUnused and `local f = function() end` is
+LocalUnused, so larvae reports `unused_function` for the first and
+`unused_variable` for the second.
+*/
+#[test]
+fn an_unused_local_function_is_a_function_and_not_a_variable() {
+    assert!(fires("unused_function", "local function f() end\n"));
+    assert!(!fires("unused_variable", "local function f() end\n"));
+
+    assert!(fires("unused_function", "const function f() end\n"));
+}
+
+#[test]
+fn a_local_holding_a_function_value_stays_a_variable() {
+    assert!(fires("unused_variable", "local f = function() end\n"));
+    assert!(!fires("unused_function", "local f = function() end\n"));
+}
+
+#[test]
+fn an_unused_local_is_still_a_variable() {
+    assert!(fires("unused_variable", "local x = 1\n"));
+    assert!(!fires("unused_function", "local x = 1\n"));
+}
+
+/*
+Each one carries its own level, which is the point of the split.
+
+A project that keeps unused helpers around while still wanting unused locals
+reported has no way to say so when the two share a name.
+*/
+#[test]
+fn the_two_levels_are_independent() {
+    let src = "local function f() end\nlocal x = 1\n";
+
+    let quiet_functions = fired(src, &with("unused_function", Level::Allow));
+    assert!(quiet_functions.iter().any(|n| n == "unused_variable"));
+    assert!(!quiet_functions.iter().any(|n| n == "unused_function"));
+
+    let quiet_variables = fired(src, &with("unused_variable", Level::Allow));
+    assert!(quiet_variables.iter().any(|n| n == "unused_function"));
+    assert!(!quiet_variables.iter().any(|n| n == "unused_variable"));
+}
+
+/// The ignore pattern is shared, because it means the same thing to both.
+#[test]
+fn the_underscore_prefix_silences_a_function_too() {
+    assert!(!fires("unused_function", "local function _helper() end\n"));
 }

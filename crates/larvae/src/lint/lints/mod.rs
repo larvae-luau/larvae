@@ -56,6 +56,7 @@ pub static ALL: &[&dyn Lint] = &[
     // Names.
     &names::UndefinedVariable,
     &names::UnscopedVariables,
+    &names::UnusedFunction,
     &names::UnusedVariable,
     &names::Shadowing,
     &names::GlobalUsage,

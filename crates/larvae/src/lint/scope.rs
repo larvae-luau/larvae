@@ -94,6 +94,16 @@ pub struct Names<'a> {
     undefined_set: std::collections::HashSet<u32>,
     /// The token indexes of writes that create a global and do not set a local.
     pub global_writes: Vec<u32>,
+    /*
+    The global writes that a `function f()` statement made.
+
+    They stay in `global_writes`, because the file still defines those names
+    and `undefined_variable` reads that list to know it. They are separate
+    here because `unscoped_variables` must not report them: neither selene nor
+    the Luau compiler calls a global function declaration an unscoped
+    variable, and a codebase of Roblox scripts is written that way.
+    */
+    pub global_functions: std::collections::HashSet<u32>,
     /// The binding index for each declaration token, for a lint that holds a token.
     pub by_token: HashMap<u32, usize>,
     /// The binding index for each read token, so a call site can find its callee.
@@ -235,6 +245,25 @@ impl<'a> Binder<'a> {
         }
     }
 
+    /*
+    Record the name of a `function f()` statement.
+
+    The name becomes a global exactly as a bare assignment does, so the write
+    goes through the same path. What differs is how it reads: an author who
+    writes `function f()` said what they meant, where `f = 1` is the form that
+    loses a `local` by accident. So the token is remembered, and
+    `unscoped_variables` passes over it.
+    */
+    fn write_function(&mut self, span: TokSpan) {
+        let before = self.out.global_writes.len();
+
+        self.write(span);
+
+        if self.out.global_writes.len() > before {
+            self.out.global_functions.insert(span.start);
+        }
+    }
+
     // --- the walk ----------------------------------------------------------
 
     fn block(&mut self, block: &'a Block) {
@@ -364,7 +393,7 @@ impl<'a> Binder<'a> {
             Stmt::Function(n) => {
                 if let Some(first) = n.path.first() {
                     if n.path.len() == 1 && !n.is_method {
-                        self.write(*first);
+                        self.write_function(*first);
                     } else {
                         self.read(*first);
                     }
