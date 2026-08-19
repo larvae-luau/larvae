@@ -186,6 +186,112 @@ pub fn confirm(question: &str, default: bool) -> bool {
     }
 }
 
+/*
+A progress bar for a job with a known number of steps.
+
+`larvae worm install` is the one caller. Installing a worm is a download, and
+a download with no sign of life reads as a hang, so the bar exists to say that
+something is happening and how much of it is left.
+
+The bar draws only where a terminal will redraw it. Under a pipe or in CI it
+prints one line per step instead, because a carriage return in a log file
+leaves the whole run on one unreadable line.
+*/
+pub struct Progress {
+    total: usize,
+    done: usize,
+    color: bool,
+    /// Redraw in place. False under a pipe, where a line per step is right.
+    live: bool,
+    width: usize,
+}
+
+impl Progress {
+    pub fn new(total: usize) -> Self {
+        Self {
+            total,
+            done: 0,
+            color: want_color_stderr(),
+            live: std::io::IsTerminal::is_terminal(&std::io::stderr()),
+            width: term_width().clamp(40, 100),
+        }
+    }
+
+    /// Redraw with the step that is starting now.
+    pub fn start(&self, label: &str) {
+        self.draw(label, self.done);
+    }
+
+    /// Record a finished step, and say how it went.
+    pub fn finish_step(&mut self, label: &str, note: &str) {
+        self.done += 1;
+
+        match self.live {
+            true => {
+                self.clear();
+                eprintln!("  {} {label} {note}", accent("✓", self.color));
+                self.draw("", self.done);
+            }
+
+            false => eprintln!("  {label} {note}"),
+        }
+    }
+
+    /// Take the bar down. Every line printed after this starts clean.
+    pub fn done(&self) {
+        if self.live {
+            self.clear();
+        }
+    }
+
+    fn clear(&self) {
+        use std::io::Write;
+
+        let _ = write!(std::io::stderr(), "\r{}\r", " ".repeat(self.width));
+        let _ = std::io::stderr().flush();
+    }
+
+    fn draw(&self, label: &str, done: usize) {
+        use std::io::Write;
+
+        if !self.live {
+            if !label.is_empty() {
+                eprintln!("  {label}...");
+            }
+
+            return;
+        }
+
+        // The bar takes what the counter and the label leave.
+        let counter = format!(" {done}/{}", self.total);
+        let room = self
+            .width
+            .saturating_sub(counter.len() + label.len() + 6)
+            .clamp(10, 40);
+
+        let filled = match self.total {
+            0 => room,
+
+            total => room * done / total,
+        };
+
+        let bar = format!(
+            "{}{}",
+            "█".repeat(filled),
+            "░".repeat(room.saturating_sub(filled))
+        );
+
+        self.clear();
+
+        let _ = write!(
+            std::io::stderr(),
+            "  {}{counter} {label}",
+            accent(&bar, self.color)
+        );
+        let _ = std::io::stderr().flush();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
