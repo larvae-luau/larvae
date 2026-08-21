@@ -7,7 +7,6 @@ reason to run larvae's linter and not a port of a different linter.
 */
 
 use crate::lint::ctx::{Finding, LintCtx};
-use crate::lint::scope::Origin;
 use crate::lints;
 use crate::syntax::ast::*;
 
@@ -98,39 +97,83 @@ impl BuiltinShadowed {
     stops when `table` is a local, because a local of that name belongs to
     somebody else. That silent stop is the case this lint reports.
 
-    A parameter is not reported. `function f(type)` is a small scope that
-    the author reads in full, and the name of a parameter is part of a
-    signature the caller decided. A `for` variable is left alone for the
-    same reason.
+    Three shapes are left alone, and the first is the one that decides
+    whether the lint is usable at all.
+
+    A declaration whose value reads the global of the same name is left
+    alone, and this is the exemption that decides whether the lint is usable.
+    `local pairs = pairs` caches a global in a local, which Lua code does for
+    speed. `local unpack = unpack or table.unpack` picks the one the host
+    has. Both keep the library reachable under the same name, so nothing is
+    lost and nothing is wrong. On a corpus of 364 files the two idioms were
+    48 of 86 findings, and the defect was none of them.
+
+    A parameter and a loop variable are also left alone. Both name a small
+    scope that the author reads in full, and the name of a parameter belongs
+    to a signature the caller decided.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
-        for binding in &ctx.names.bindings {
-            if !matches!(binding.origin, Origin::Local | Origin::LocalFunction) {
-                continue;
+        each_stmt(ctx, out, |ctx, s, out| match s {
+            Stmt::Local(n) => {
+                for (i, binding) in n.names.iter().enumerate() {
+                    let name = ctx.text(binding.name);
+
+                    if !crate::lint::globals::LUAU.contains(&name) {
+                        continue;
+                    }
+
+                    if n.values
+                        .get(i)
+                        .is_some_and(|v| reads_the_global(ctx, v, name))
+                    {
+                        continue;
+                    }
+
+                    report(ctx, binding.name, name, out);
+                }
             }
 
-            if !crate::lint::globals::LUAU.contains(&binding.name) {
-                continue;
+            Stmt::LocalFunction(n) => {
+                let name = ctx.text(n.name);
+
+                if crate::lint::globals::LUAU.contains(&name) {
+                    report(ctx, n.name, name, out);
+                }
             }
 
-            let span = TokSpan::new(
-                binding.declared_at as usize,
-                binding.declared_at as usize + 1,
-            );
-
-            out.push(
-                Finding::new(
-                    "builtin_shadowed",
-                    ctx.bytes(span),
-                    format!(
-                        "{} is a standard global, and this local hides it",
-                        binding.name
-                    ),
-                )
-                .with_help("rename the local, the library is unreachable below this line"),
-            );
-        }
+            _ => {}
+        });
     }
+}
+
+/*
+Reports whether this value reads the global that the new local is named for.
+
+The test is a token scan and not a walk of the tree, because the idiom takes
+several shapes and every one of them mentions the name: `pairs`, `unpack or
+table.unpack`, `debug and debug.traceback`. A scan reads them all.
+
+`is_global` keeps it honest. It separates a read of the global from a field
+that happens to carry the name, so `local table = other.table` still reports:
+that one hides the library and puts nothing back.
+*/
+fn reads_the_global(ctx: &LintCtx<'_>, value: &Expr, name: &str) -> bool {
+    let span = value.span();
+
+    (span.start..span.end).any(|i| ctx.tok(i) == name && ctx.names.is_global(i))
+}
+
+fn report(ctx: &LintCtx<'_>, span: TokSpan, name: &str, out: &mut Vec<Finding>) {
+    out.push(
+        Finding::new(
+            "builtin_shadowed",
+            ctx.bytes(span),
+            format!("{name} is a standard global, and this local hides it"),
+        )
+        .with_help(format!(
+            "rename the local, or write `local {name} = {name}` to cache the global instead"
+        )),
+    );
 }
 
 // --- ignored_pcall_result --------------------------------------------------

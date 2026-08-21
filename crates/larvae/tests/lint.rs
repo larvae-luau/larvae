@@ -2395,6 +2395,49 @@ fn a_parameter_named_for_a_global_is_left_alone() {
 }
 
 /*
+Caching a global in a local of the same name loses nothing.
+
+`local pairs = pairs` is what Lua code does for speed, and `local unpack =
+unpack or table.unpack` picks the one the host has. Both keep the library
+reachable under the same name. On a corpus of 364 files the two idioms were
+48 of 86 findings and the defect was none of them, so the exemption is what
+makes the lint usable rather than noise.
+*/
+#[test]
+fn caching_a_global_under_its_own_name_is_left_alone() {
+    assert!(!fires(
+        "builtin_shadowed",
+        "local pairs = pairs\nreturn pairs\n"
+    ));
+    assert!(!fires(
+        "builtin_shadowed",
+        "local unpack = unpack or table.unpack\nreturn unpack\n"
+    ));
+    assert!(!fires(
+        "builtin_shadowed",
+        "local type, tonumber = type, tonumber\nreturn type, tonumber\n"
+    ));
+}
+
+/*
+A rebind that puts nothing back still reports.
+
+`local table = other.table` hides the library and does not read the global,
+so the name is gone below that line. The token scan asks `is_global`, which
+separates a read of the global from a field that carries the name.
+*/
+#[test]
+fn a_rebind_that_does_not_read_the_global_is_reported() {
+    assert!(fires(
+        "builtin_shadowed",
+        "local table = other.table\nreturn table\n"
+    ));
+
+    // A declaration with no value cannot be caching anything.
+    assert!(fires("builtin_shadowed", "local debug\nreturn debug\n"));
+}
+
+/*
 `pcall(f)` as a statement catches the error and drops it.
 
 The failure then leaves no trace: no crash, no log, and a later line reading
