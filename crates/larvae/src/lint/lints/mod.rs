@@ -77,6 +77,9 @@ pub static ALL: &[&dyn Lint] = &[
     &original::SelfAssignment,
     &original::StringConcatInLoop,
     &original::ShadowedLoopWork,
+    &original::LengthAsCondition,
+    &original::BuiltinShadowed,
+    &original::IgnoredPcallResult,
     // Style.
     &style::EmptyIf,
     &style::EmptyLoop,

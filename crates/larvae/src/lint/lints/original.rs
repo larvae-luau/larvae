@@ -7,10 +7,11 @@ reason to run larvae's linter and not a port of a different linter.
 */
 
 use crate::lint::ctx::{Finding, LintCtx};
+use crate::lint::scope::Origin;
 use crate::lints;
 use crate::syntax::ast::*;
 
-use super::correctness::{each_block, each_stmt};
+use super::correctness::{each_block, each_stmt, unwrap_parens};
 
 lints! {
     NonConstRequire => "non_const_require", Style, Allow,
@@ -23,6 +24,168 @@ lints! {
         "building a string by concatenation in a loop, which is quadratic";
     UnreachableCode => "unreachable_code", Correctness, Warn,
         "statements after a return, break or continue, which never run";
+    LengthAsCondition => "length_as_condition", Correctness, Deny,
+        "#t used as a condition, which is a number and so is always true";
+    BuiltinShadowed => "builtin_shadowed", Suspicious, Warn,
+        "a local that takes the name of a standard global, which the rest of the scope loses";
+    IgnoredPcallResult => "ignored_pcall_result", Suspicious, Warn,
+        "a pcall used as a statement, which catches the error and discards it";
+}
+
+// --- length_as_condition ---------------------------------------------------
+
+/// Every condition slot of a statement, which is where a truthiness bug lives
+fn conditions(s: &Stmt) -> Vec<&Expr> {
+    match s {
+        Stmt::If(n) => n.branches.iter().map(|(cond, _)| cond).collect(),
+
+        Stmt::While(n) => vec![&n.cond],
+
+        Stmt::Repeat(n) => vec![&n.cond],
+
+        _ => Vec::new(),
+    }
+}
+
+impl LengthAsCondition {
+    /*
+    `if #players then`, which is true even with no players.
+
+    Only `nil` and `false` are false in Luau, so a number is true and zero
+    is a number. The guard therefore does nothing, and the branch it guards
+    runs every time. The shape arrives from C and from JavaScript, where the
+    same line means what it says.
+
+    The lint denies. No runtime value makes the finding wrong, because `#t`
+    yields a number for every input and never yields `nil` or `false`. Luau's
+    own linter says nothing about it, checked against luau-lsp.
+    */
+    fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
+        each_stmt(ctx, out, |ctx, s, out| {
+            for cond in conditions(s) {
+                let Expr::Unary { op, span, .. } = unwrap_parens(cond) else {
+                    continue;
+                };
+
+                if ctx.text(*op) != "#" {
+                    continue;
+                }
+
+                out.push(
+                    Finding::new(
+                        "length_as_condition",
+                        ctx.bytes(*span),
+                        "a length is a number, and every number is true here",
+                    )
+                    .with_help("compare it, as in #t > 0, or test the value itself"),
+                );
+            }
+        });
+    }
+}
+
+// --- builtin_shadowed ------------------------------------------------------
+
+impl BuiltinShadowed {
+    /*
+    `local table = {}`, and `table.insert` is gone for the rest of the scope.
+
+    The name still resolves, so nothing fails where the local is declared.
+    The failure lands later, at the first line that wanted the library, and
+    it reads as a missing function rather than as a name that moved.
+
+    Larvae already reasons about this and says nothing: `table_operations`
+    stops when `table` is a local, because a local of that name belongs to
+    somebody else. That silent stop is the case this lint reports.
+
+    A parameter is not reported. `function f(type)` is a small scope that
+    the author reads in full, and the name of a parameter is part of a
+    signature the caller decided. A `for` variable is left alone for the
+    same reason.
+    */
+    fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
+        for binding in &ctx.names.bindings {
+            if !matches!(binding.origin, Origin::Local | Origin::LocalFunction) {
+                continue;
+            }
+
+            if !crate::lint::globals::LUAU.contains(&binding.name) {
+                continue;
+            }
+
+            let span = TokSpan::new(
+                binding.declared_at as usize,
+                binding.declared_at as usize + 1,
+            );
+
+            out.push(
+                Finding::new(
+                    "builtin_shadowed",
+                    ctx.bytes(span),
+                    format!(
+                        "{} is a standard global, and this local hides it",
+                        binding.name
+                    ),
+                )
+                .with_help("rename the local, the library is unreachable below this line"),
+            );
+        }
+    }
+}
+
+// --- ignored_pcall_result --------------------------------------------------
+
+impl IgnoredPcallResult {
+    /*
+    `pcall(risky)` on a line of its own, which turns error handling off.
+
+    `pcall` returns the success flag first. A call that keeps no result
+    catches the error and drops it, so the failure leaves no trace at all:
+    no crash, no log, and a later line that reads a value nobody wrote.
+    That is worse than the unguarded call, which at least says what broke.
+
+    Only a call as a statement counts. `local ok = pcall(f)` reads the flag,
+    which is the whole point of the function, and every other use keeps the
+    value somewhere.
+
+    The callee must be the global. A project that binds its own `pcall`
+    decided what that name does, and the rule `table_operations` follows is
+    the rule here.
+    */
+    fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
+        each_stmt(ctx, out, |ctx, s, out| {
+            let Stmt::Call(call, span) = s else {
+                return;
+            };
+
+            let Expr::Call { func, method, .. } = call else {
+                return;
+            };
+
+            if method.is_some() {
+                return;
+            }
+
+            let Expr::Name(name) = func.as_ref() else {
+                return;
+            };
+
+            let text = ctx.text(*name);
+
+            if !matches!(text, "pcall" | "xpcall") || !ctx.names.is_global(name.start) {
+                return;
+            }
+
+            out.push(
+                Finding::new(
+                    "ignored_pcall_result",
+                    ctx.bytes(*span),
+                    format!("this {text} throws its result away, error and all"),
+                )
+                .with_help("keep the flag, as in local ok, err = ..., and act on it"),
+            );
+        });
+    }
 }
 
 // --- non_const_require -----------------------------------------------------

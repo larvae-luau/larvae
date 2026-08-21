@@ -663,15 +663,43 @@ fn is_append_index(ctx: &LintCtx<'_>, index: &Expr, table: &Expr) -> bool {
 
 // --- misleading_and_or -----------------------------------------------------
 
+/*
+Reports whether this expression can only be `true` or `false`.
+
+Syntax answers this on its own, which is the whole reason the lint can widen
+without types. A comparison yields a boolean whatever its operands are, and
+`not` yields one as well. `and` and `or` do not: they give back an operand,
+so `a and b` is whatever `b` holds.
+*/
+fn always_boolean(ctx: &LintCtx<'_>, e: &Expr) -> bool {
+    match unwrap_parens(e) {
+        Expr::Binary { op, .. } => matches!(ctx.text(*op), "==" | "~=" | "<" | "<=" | ">" | ">="),
+
+        Expr::Unary { op, .. } => ctx.text(*op) == "not",
+
+        _ => false,
+    }
+}
+
 impl MisleadingAndOr {
     /*
-    `cond and false or other`.
+    `cond and false or other`, and the wider case that hides behind it.
 
     `a and b or c` stands in for a conditional, and it works only while `b`
     is truthy. With `false` or `nil` in the middle, the `and` gives that
     value, the `or` sees it as false, and the whole expression is `c` for
     every input. The author wanted `if cond then false else other`, which
     Luau writes as an expression.
+
+    A middle that is provably a boolean is the same defect with a smaller
+    blast radius, and it is the one that reaches production. `ready and
+    (count == 0) or "pending"` gives "pending" when the count is not zero,
+    which is exactly when the author wanted `false`. Nothing about that
+    needs a type: a comparison yields a boolean because it is a comparison.
+
+    The two cases carry different messages, because the first is wrong for
+    every input and the second is wrong for half of them. A reader who sees
+    "always" for a case that is sometimes right stops trusting the linter.
     */
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         each_expr(ctx, out, |ctx, e, out| {
@@ -696,23 +724,29 @@ impl MisleadingAndOr {
                 return;
             }
 
-            let what = match middle.as_ref() {
-                Expr::False(_) => "false",
+            let message = match unwrap_parens(middle.as_ref()) {
+                Expr::False(_) => {
+                    "the middle of this and-or is false, so the result is always the last part"
+                        .to_string()
+                }
 
-                Expr::Nil(_) => "nil",
+                Expr::Nil(_) => {
+                    "the middle of this and-or is nil, so the result is always the last part"
+                        .to_string()
+                }
+
+                other if always_boolean(ctx, other) => format!(
+                    "the middle of this and-or is the boolean `{}`, so the result is the last part \
+                     whenever that is false",
+                    ctx.text(other.span())
+                ),
 
                 _ => return,
             };
 
             out.push(
-                Finding::new(
-                    "misleading_and_or",
-                    ctx.bytes(*span),
-                    format!(
-                        "the middle of this and-or is {what}, so the result is always the last part"
-                    ),
-                )
-                .with_help("write if cond then a else b, which is an expression in Luau"),
+                Finding::new("misleading_and_or", ctx.bytes(*span), message)
+                    .with_help("write if cond then a else b, which is an expression in Luau"),
             );
         });
     }

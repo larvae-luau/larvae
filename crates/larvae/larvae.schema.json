@@ -1277,382 +1277,124 @@
         "almost_swapped": {
           "enum": [
             "allow",
+            "info",
             "warn",
             "deny"
           ],
           "description": "Two assignments that look like a swap but overwrite one of the values. Default: warn."
         },
-        "compare_nan": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "Comparing against nan, which is never equal to anything including itself. Default: warn."
-        },
-        "constant_table_comparison": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "Comparing against a table literal, which compares identity and is always false. Default: warn."
-        },
-        "divide_by_zero": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "Dividing by a literal zero. Default: warn."
-        },
-        "duplicate_keys": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "A table key written twice, where only the last one survives. Default: warn."
-        },
-        "ifs_same_cond": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "An elseif repeating a condition already tested, which can never run. Default: warn."
-        },
-        "if_same_then_else": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "Two branches of the same if with identical bodies. Default: warn."
-        },
-        "implicit_any_local": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "A local declared with no value and no type, so what it holds is decided by whatever assigns it first. In a file with no `--!strict` directive Luau accepts any later assignment of any type, which is the implicit `any` this names. A local that nothing ever assigns is left to `uninitialized_local`, which says the more urgent thing about the same line. The only lint larvae denies by default, because the fix is an annotation and an annotation changes no behaviour. Default: deny."
-        },
-        "prefer_const": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "A local that nothing reassigns, which `const` states outright. Off by default: `const` is larvae's own reading of Luau and not every project writes it, so a codebase of ordinary `local` would report on nearly every line the first time it ran. Tune it under [lint.options.prefer_const]. Default: allow."
-        },
-        "suspicious_reverse_loop": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "A numeric for counting down without a negative step, which never runs. Default: warn."
-        },
-        "type_check_inside_call": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "A comparison inside type(), where it belongs outside. Default: warn."
-        },
-        "unbalanced_assignments": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "More names than values, or more values than names. Default: warn."
-        },
-        "zero_step_loop": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "A numeric for whose step is zero, so the counter never moves. Default: warn."
-        },
-        "bad_string_escape": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "An escape sequence the language does not define. Default: warn."
-        },
-        "mismatched_arg_count": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "Calling a function in this file with the wrong number of arguments. Default: warn."
-        },
-        "must_use": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "Calling a pure function and discarding what it returned. Default: warn."
-        },
         "bad_comment_directive": {
           "enum": [
             "allow",
+            "info",
             "warn",
             "deny"
           ],
           "description": "A --! directive that Luau does not know, or one that comes after the code it should govern. Default: warn."
         },
+        "bad_string_escape": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "An escape sequence the language does not define. Default: warn."
+        },
         "builtin_global_write": {
           "enum": [
             "allow",
+            "info",
             "warn",
             "deny"
           ],
           "description": "An assignment over a standard global, which every later script sees. Default: warn."
         },
+        "builtin_shadowed": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A local that takes the name of a standard global, such as `local table = {}`. The library is unreachable for the rest of the scope, and the failure lands at the first line that wanted it. Default: warn."
+        },
+        "compare_nan": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "Comparing against nan, which is never equal to anything including itself. Default: warn."
+        },
         "comparison_precedence": {
           "enum": [
             "allow",
+            "info",
             "warn",
             "deny"
           ],
           "description": "not a == b, or a chain like a < b < c, which does not group the way it reads. Default: warn."
         },
-        "duplicate_function": {
+        "constant_table_comparison": {
           "enum": [
             "allow",
+            "info",
             "warn",
             "deny"
           ],
-          "description": "Two functions of the same name in one scope, where the first is discarded. Default: warn."
-        },
-        "duplicate_local": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "One local statement or parameter list that declares the same name twice. Default: warn."
-        },
-        "format_string": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "A format string that string.format or os.date rejects at runtime. Default: warn."
-        },
-        "implicit_return": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "A function that returns a value on one path and falls off the end on another. The lint is off by default, because a lookup that returns nil when it finds nothing is idiomatic Luau. Default: warn."
-        },
-        "misleading_and_or": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "cond and false or b, which always gives b because the middle is never truthy. Default: warn."
-        },
-        "number_literal_overflow": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "A hexadecimal or binary literal wider than 64 bits, which is truncated. Default: warn."
-        },
-        "placeholder_read": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "Reading _, the name that says a value is discarded. Default: warn."
-        },
-        "table_operations": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "A table.insert or table.remove whose index or argument count is wrong. Default: warn."
-        },
-        "uninitialized_local": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "A local declared with no value and never assigned, so every read is nil. Default: warn."
-        },
-        "unknown_type": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "Comparing type(x) against a string that type() never returns. Default: warn."
-        },
-        "undefined_variable": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "A name nothing declares, which is nil at runtime. Default: deny."
-        },
-        "unscoped_variables": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "An assignment with no local, which creates a global. Default: warn."
-        },
-        "unused_function": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "A `local function` that nothing calls. The Luau compiler separates this from an unused variable and separates it by the declaring form, so `local f = function() end` is `unused_variable` and `local function f() end` is this. Both read [lint.options.unused_variable]. Default: warn."
-        },
-        "unused_variable": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "A name declared and never read. Default: warn. Tunable under [lint.options.unused_variable]."
-        },
-        "shadowing": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "A name that hides another still in scope. Default: warn."
-        },
-        "global_usage": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "Reaching into _G, which is shared with every other script. Default: warn."
+          "description": "Comparing against a table literal, which compares identity and is always false. Default: warn."
         },
         "deprecated": {
           "enum": [
             "allow",
+            "info",
             "warn",
             "deny"
           ],
           "description": "A function that still works but has been replaced. Default: warn. Extend it under [lint.options.deprecated]."
         },
-        "restricted_module_paths": {
+        "divide_by_zero": {
           "enum": [
             "allow",
+            "info",
             "warn",
             "deny"
           ],
-          "description": "Requiring a module the project has ruled out. Default: warn, and quiet until [lint.options.restricted_module_paths] names something."
+          "description": "Dividing by a literal zero. Default: warn."
         },
-        "high_cyclomatic_complexity": {
+        "duplicate_function": {
           "enum": [
             "allow",
+            "info",
             "warn",
             "deny"
           ],
-          "description": "A function with more branches than anyone can hold at once. Default: allow. Threshold under [lint.options.high_cyclomatic_complexity]."
+          "description": "Two functions of the same name in one scope, where the first is discarded. Default: warn."
         },
-        "manual_table_clone": {
+        "duplicate_keys": {
           "enum": [
             "allow",
+            "info",
             "warn",
             "deny"
           ],
-          "description": "A loop that copies a table, which table.clone does in one call. Default: warn."
+          "description": "A table key written twice, where only the last one survives. Default: warn."
         },
-        "roblox_incorrect_color3_new_bounds": {
+        "duplicate_local": {
           "enum": [
             "allow",
+            "info",
             "warn",
             "deny"
           ],
-          "description": "Color3.new given a channel over 1, where the scale is 0 to 1. Default: warn."
-        },
-        "roblox_suspicious_udim2_new": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "UDim2.new given two arguments, where it takes four. Default: warn."
-        },
-        "roblox_manual_fromscale_or_fromoffset": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "A UDim2.new that fromScale or fromOffset says more clearly. Default: warn."
-        },
-        "non_const_require": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "A required module bound with local, where const says it never changes. The lint skips a name that the file reassigns, because const would then be a syntax error. Default: allow."
-        },
-        "unreachable_code": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "Statements after a return, break or continue, which never run. Default: warn."
-        },
-        "self_assignment": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "Assigning a value to itself, which does nothing. Default: warn."
-        },
-        "string_concat_in_loop": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "Building a string by concatenation in a loop, which is quadratic. Default: warn."
-        },
-        "loop_invariant_call": {
-          "enum": [
-            "allow",
-            "warn",
-            "deny"
-          ],
-          "description": "A call inside a loop whose result cannot change between iterations. Default: warn."
+          "description": "One local statement or parameter list that declares the same name twice. Default: warn."
         },
         "empty_if": {
           "enum": [
             "allow",
+            "info",
             "warn",
             "deny"
           ],
@@ -1661,14 +1403,133 @@
         "empty_loop": {
           "enum": [
             "allow",
+            "info",
             "warn",
             "deny"
           ],
           "description": "A loop body with nothing in it. Default: warn."
         },
+        "format_string": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A format string that string.format or os.date rejects at runtime. Default: warn."
+        },
+        "global_usage": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "Reaching into _G, which is shared with every other script. Default: warn."
+        },
+        "high_cyclomatic_complexity": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A function with more branches than anyone can hold at once. Default: allow. Threshold under [lint.options.high_cyclomatic_complexity]."
+        },
+        "if_same_then_else": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "Two branches of the same if with identical bodies. Default: warn."
+        },
+        "ifs_same_cond": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "An elseif repeating a condition already tested, which can never run. Default: warn."
+        },
+        "ignored_pcall_result": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A pcall or xpcall used as a statement. It catches the error and discards it, so the failure leaves no trace at all. Default: warn."
+        },
+        "implicit_any_local": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A local declared with no value and no type, so what it holds is decided by whatever assigns it first. In a file with no `--!strict` directive Luau accepts any later assignment of any type, which is the implicit `any` this names. A local that nothing ever assigns is left to `uninitialized_local`, which says the more urgent thing about the same line. The only lint larvae denies by default, because the fix is an annotation and an annotation changes no behaviour. Default: deny."
+        },
+        "implicit_return": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A function that returns a value on one path and falls off the end on another. The lint is off by default, because a lookup that returns nil when it finds nothing is idiomatic Luau. Default: warn."
+        },
+        "length_as_condition": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "#t used as a condition. A length is a number and every number is true in Luau, so the guard does nothing and the branch runs every time. Default: deny."
+        },
+        "loop_invariant_call": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A call inside a loop whose result cannot change between iterations. Default: warn."
+        },
+        "manual_table_clone": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A loop that copies a table, which table.clone does in one call. Default: warn."
+        },
+        "misleading_and_or": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "cond and false or b, which always gives b because the middle is never truthy. Default: warn."
+        },
+        "mismatched_arg_count": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "Calling a function in this file with the wrong number of arguments. Default: warn."
+        },
         "mixed_table": {
           "enum": [
             "allow",
+            "info",
             "warn",
             "deny"
           ],
@@ -1677,18 +1538,236 @@
         "multiple_statements": {
           "enum": [
             "allow",
+            "info",
             "warn",
             "deny"
           ],
           "description": "More than one statement on a line. Default: warn."
         },
+        "must_use": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "Calling a pure function and discarding what it returned. Default: warn."
+        },
+        "non_const_require": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A required module bound with local, where const says it never changes. The lint skips a name that the file reassigns, because const would then be a syntax error. Default: allow."
+        },
+        "number_literal_overflow": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A hexadecimal or binary literal wider than 64 bits, which is truncated. Default: warn."
+        },
         "parenthese_conditions": {
           "enum": [
             "allow",
+            "info",
             "warn",
             "deny"
           ],
           "description": "Parentheses around a condition, which Luau does not need. Default: warn."
+        },
+        "placeholder_read": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "Reading _, the name that says a value is discarded. Default: warn."
+        },
+        "prefer_const": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A local that nothing reassigns, which `const` states outright. Off by default: `const` is larvae's own reading of Luau and not every project writes it, so a codebase of ordinary `local` would report on nearly every line the first time it ran. Tune it under [lint.options.prefer_const]. Default: allow."
+        },
+        "restricted_module_paths": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "Requiring a module the project has ruled out. Default: warn, and quiet until [lint.options.restricted_module_paths] names something."
+        },
+        "roblox_incorrect_color3_new_bounds": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "Color3.new given a channel over 1, where the scale is 0 to 1. Default: warn."
+        },
+        "roblox_manual_fromscale_or_fromoffset": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A UDim2.new that fromScale or fromOffset says more clearly. Default: warn."
+        },
+        "roblox_suspicious_udim2_new": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "UDim2.new given two arguments, where it takes four. Default: warn."
+        },
+        "self_assignment": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "Assigning a value to itself, which does nothing. Default: warn."
+        },
+        "shadowing": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A name that hides another still in scope. Default: warn."
+        },
+        "string_concat_in_loop": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "Building a string by concatenation in a loop, which is quadratic. Default: warn."
+        },
+        "suspicious_reverse_loop": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A numeric for counting down without a negative step, which never runs. Default: warn."
+        },
+        "table_operations": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A table.insert or table.remove whose index or argument count is wrong. Default: warn."
+        },
+        "type_check_inside_call": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A comparison inside type(), where it belongs outside. Default: warn."
+        },
+        "unbalanced_assignments": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "More names than values, or more values than names. Default: warn."
+        },
+        "undefined_variable": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A name nothing declares, which is nil at runtime. Default: deny."
+        },
+        "uninitialized_local": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A local declared with no value and never assigned, so every read is nil. Default: warn."
+        },
+        "unknown_type": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "Comparing type(x) against a string that type() never returns. Default: warn."
+        },
+        "unreachable_code": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "Statements after a return, break or continue, which never run. Default: warn."
+        },
+        "unscoped_variables": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "An assignment with no local, which creates a global. Default: warn."
+        },
+        "unused_function": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A `local function` that nothing calls. The Luau compiler separates this from an unused variable and separates it by the declaring form, so `local f = function() end` is `unused_variable` and `local function f() end` is this. Both read [lint.options.unused_variable]. Default: warn."
+        },
+        "unused_variable": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A name declared and never read. Default: warn. Tunable under [lint.options.unused_variable]."
+        },
+        "zero_step_loop": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A numeric for whose step is zero, so the counter never moves. Default: warn."
         }
       }
     },

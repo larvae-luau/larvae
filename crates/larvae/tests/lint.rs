@@ -2241,6 +2241,7 @@ fn the_lints_that_deny_are_the_ones_that_earn_it() {
             "duplicate_keys",
             "duplicate_local",
             "format_string",
+            "length_as_condition",
             "undefined_variable",
             "zero_step_loop",
         ]
@@ -2256,6 +2257,7 @@ fn each_deny_reaches_the_report_as_an_error() {
         ("format_string", "return string.format(\"%y\", 1)\n"),
         ("undefined_variable", "return nowhere\n"),
         ("zero_step_loop", "for i = 1, 3, 0 do print(i) end\n"),
+        ("length_as_condition", "if #t then print(1) end\n"),
     ];
 
     for (name, src) in cases {
@@ -2284,6 +2286,7 @@ fn no_deny_reports_a_value_it_cannot_see() {
                print(string.format(f, 1))\n\
                for i = 1, 3, step() do print(i) end\n\
                local _, _ = 1, 2\n\
+               if #t > 0 then print(1) end\n\
                return t\n";
 
     let reported = names(src);
@@ -2293,7 +2296,203 @@ fn no_deny_reports_a_value_it_cannot_see() {
         "format_string",
         "zero_step_loop",
         "duplicate_local",
+        "length_as_condition",
     ] {
         assert!(!reported.contains(&name.to_string()), "{name} guessed");
     }
+}
+
+// --- the Biome shaped gaps -------------------------------------------------
+
+/*
+`#t` as a condition is always true, because a number is true in Luau.
+
+Only `nil` and `false` are false, and zero is a number. So the guard does
+nothing and the branch runs every time. Luau's own linter says nothing about
+the shape, checked against luau-lsp.
+*/
+#[test]
+fn a_length_used_as_a_condition_is_reported() {
+    assert!(fires("length_as_condition", "if #t then print(1) end\n"));
+    assert!(fires("length_as_condition", "while #t do break end\n"));
+    assert!(fires("length_as_condition", "repeat break until #t\n"));
+}
+
+/// A comparison is what the author meant, and it must stay quiet.
+#[test]
+fn a_length_that_is_compared_is_left_alone() {
+    assert!(!fires(
+        "length_as_condition",
+        "if #t > 0 then print(1) end\n"
+    ));
+    assert!(!fires(
+        "length_as_condition",
+        "if #t == 0 then print(1) end\n"
+    ));
+
+    // A length outside a condition is an ordinary value.
+    assert!(!fires("length_as_condition", "local n = #t\nreturn n\n"));
+}
+
+/// It denies, because no runtime value makes the finding wrong.
+#[test]
+fn length_as_condition_denies() {
+    let found = lint(
+        Path::new("test.luau"),
+        "if #t then print(1) end\n",
+        &LintConfig::default(),
+    )
+    .expect("parses");
+
+    let one = found
+        .iter()
+        .find(|d| d.message.contains("length_as_condition"))
+        .expect("it fires");
+
+    assert_eq!(one.severity, Severity::Error);
+}
+
+/*
+A local that takes the name of a standard global hides the library.
+
+`table_operations` already stops when `table` is a local, and says so in its
+own comment. This lint is the diagnostic behind that silent stop.
+*/
+#[test]
+fn a_local_that_hides_a_standard_global_is_reported() {
+    assert!(fires(
+        "builtin_shadowed",
+        "local table = {}\nreturn table\n"
+    ));
+    assert!(fires(
+        "builtin_shadowed",
+        "local function type() end\nreturn type\n"
+    ));
+}
+
+/*
+A parameter and a loop variable are left alone.
+
+Both name a small scope that the author reads in full, and the name of a
+parameter belongs to the signature the caller decided.
+*/
+#[test]
+fn a_parameter_named_for_a_global_is_left_alone() {
+    assert!(!fires(
+        "builtin_shadowed",
+        "local function f(type)\n\treturn type\nend\nreturn f\n"
+    ));
+    assert!(!fires(
+        "builtin_shadowed",
+        "for _, next in t do\n\tprint(next)\nend\n"
+    ));
+
+    // An ordinary name is not a global.
+    assert!(!fires(
+        "builtin_shadowed",
+        "local widget = {}\nreturn widget\n"
+    ));
+}
+
+/*
+`pcall(f)` as a statement catches the error and drops it.
+
+The failure then leaves no trace: no crash, no log, and a later line reading
+a value nobody wrote. That is worse than the unguarded call.
+*/
+#[test]
+fn a_pcall_that_keeps_nothing_is_reported() {
+    assert!(fires("ignored_pcall_result", "pcall(risky)\n"));
+    assert!(fires("ignored_pcall_result", "xpcall(risky, handler)\n"));
+}
+
+/// Reading the flag is the whole point of the function, so that stays quiet.
+#[test]
+fn a_pcall_whose_flag_is_read_is_left_alone() {
+    assert!(!fires(
+        "ignored_pcall_result",
+        "local ok = pcall(risky)\nreturn ok\n"
+    ));
+    assert!(!fires(
+        "ignored_pcall_result",
+        "local ok, err = pcall(risky)\nreturn ok, err\n"
+    ));
+
+    // A local of that name belongs to the project, not to the language.
+    assert!(!fires(
+        "ignored_pcall_result",
+        "local function pcall(f)\n\treturn f\nend\npcall(risky)\n"
+    ));
+}
+
+/*
+`misleading_and_or` reaches a middle that syntax proves is a boolean.
+
+`ready and (count == 0) or "pending"` gives "pending" when the count is not
+zero, which is exactly when the author wanted `false`. A comparison yields a
+boolean because it is a comparison, so no type is needed to know it.
+*/
+#[test]
+fn an_and_or_with_a_boolean_middle_is_reported() {
+    assert!(fires(
+        "misleading_and_or",
+        "local x = ready and (count == 0) or \"pending\"\nreturn x\n"
+    ));
+    assert!(fires(
+        "misleading_and_or",
+        "local x = ready and not locked or fallback\nreturn x\n"
+    ));
+
+    // The literal cases still report, and they say "always".
+    let found = lint(
+        Path::new("test.luau"),
+        "local x = ready and false or other\nreturn x\n",
+        &LintConfig::default(),
+    )
+    .expect("parses");
+
+    assert!(
+        found
+            .iter()
+            .any(|d| d.message.contains("misleading_and_or") && d.message.contains("always")),
+        "the literal case lost its message"
+    );
+}
+
+/*
+A middle that is not provably a boolean stays quiet.
+
+`ok and count or 0` is correct whenever `count` is truthy, and larvae cannot
+see the value. To report it would need the type, which the parser does not
+build, so the lint stops where the proof stops.
+*/
+#[test]
+fn an_and_or_with_an_ordinary_middle_is_left_alone() {
+    assert!(!fires(
+        "misleading_and_or",
+        "local x = ok and count or 0\nreturn x\n"
+    ));
+    assert!(!fires(
+        "misleading_and_or",
+        "local x = ok and record.enabled or default\nreturn x\n"
+    ));
+}
+
+/// The wider message names the middle, so a reader sees what larvae proved.
+#[test]
+fn the_boolean_case_says_whenever_and_not_always() {
+    let found = lint(
+        Path::new("test.luau"),
+        "local x = ready and (count == 0) or \"pending\"\nreturn x\n",
+        &LintConfig::default(),
+    )
+    .expect("parses");
+
+    let one = found
+        .iter()
+        .find(|d| d.message.contains("misleading_and_or"))
+        .expect("it fires");
+
+    assert!(one.message.contains("whenever"), "{}", one.message);
+    assert!(!one.message.contains("always"), "{}", one.message);
 }
