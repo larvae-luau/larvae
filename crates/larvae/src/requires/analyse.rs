@@ -96,6 +96,8 @@ fn severity(level: Level) -> Option<Severity> {
     match level {
         Level::Allow => None,
 
+        Level::Info => Some(Severity::Info),
+
         Level::Warn => Some(Severity::Warning),
 
         Level::Deny => Some(Severity::Error),

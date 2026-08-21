@@ -3,6 +3,15 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {
+    /*
+    Worth knowing, and not worth acting on today.
+
+    It reports and it changes no exit code, exactly as a warning does. The
+    two differ in what they ask of the reader, and an editor draws them
+    apart: a warning is a squiggle, an info is a hint. A project that wants
+    a lint on the record without adding to the pile of warnings sets it here.
+    */
+    Info,
     Warning,
     Error,
 }
@@ -88,6 +97,8 @@ impl Diag {
             Severity::Error => ("✗", DEEP_FG, "error"),
 
             Severity::Warning => ("!", BRAND_FG, "warning"),
+
+            Severity::Info => ("i", DARK_FG, "info"),
         };
 
         let mut out = format!("{head_color}{BOLD}{glyph} {sev}:{RESET} {}", self.message);
@@ -107,6 +118,8 @@ impl fmt::Display for Diag {
             Severity::Error => "error",
 
             Severity::Warning => "warning",
+
+            Severity::Info => "info",
         };
 
         write!(f, "{sev}: {}", self.message)?;

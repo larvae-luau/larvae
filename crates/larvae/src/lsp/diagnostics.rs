@@ -143,8 +143,10 @@ fn diagnostic(src: &str, lines: &rpc::Lines, finding: Finding) -> Value {
 
 fn severity_of(level: Level) -> u8 {
     match level {
-        // 1 is Error, 2 is Warning, and Allow never reaches here
+        // 1 is Error, 2 is Warning, 3 is Information, and Allow never reaches here
         Level::Deny => 1,
+
+        Level::Info => 3,
 
         _ => 2,
     }

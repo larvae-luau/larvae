@@ -25,11 +25,74 @@ use crate::config::Excludes;
 pub enum Level {
     /// The lint is off.
     Allow,
+    /*
+    larvae reports the finding as an info. The exit code does not change.
+
+    It is the level below `warn` for a lint a project wants on the record
+    without adding to the pile it reads every day. An editor draws it as a
+    hint rather than a squiggle.
+    */
+    Info,
     /// larvae reports the finding. The exit code does not change.
     #[default]
     Warn,
     /// larvae reports the finding, and the run fails.
     Deny,
+}
+
+/*
+The kind of mistake a lint catches, so a project can set many at once.
+
+Biome has these, and the reason to copy them is the one Biome has: a project
+that wants every style opinion off should not have to name nine lints. The
+groups live in `[lint.groups]` and not inside `[lint.rules]`, which is not a
+matter of taste. A table under `[lint.rules]` already means the lints of a
+worm of that name, and nothing reserves a worm name, so a worm published as
+`style` would make `[lint.rules.style]` mean two things at once. A separate
+table has no such collision, and every config written before this reads
+exactly as it did.
+*/
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Group {
+    /// The code cannot do what it says.
+    Correctness,
+    /// Probably wrong, and a human decides.
+    Suspicious,
+    /// A matter of how the code reads.
+    Style,
+    /// More shape than the job needs.
+    Complexity,
+    /// Correct, and it costs more than it has to.
+    Performance,
+    /// A Roblox data type used in a way that does not hold.
+    Roblox,
+}
+
+impl Group {
+    /// The name a project writes under `[lint.groups]`
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Correctness => "correctness",
+            Self::Suspicious => "suspicious",
+            Self::Style => "style",
+            Self::Complexity => "complexity",
+            Self::Performance => "performance",
+            Self::Roblox => "roblox",
+        }
+    }
+
+    /// Every group, for the schema and for `--explain`
+    pub fn all() -> [Self; 6] {
+        [
+            Self::Correctness,
+            Self::Suspicious,
+            Self::Style,
+            Self::Complexity,
+            Self::Performance,
+            Self::Roblox,
+        ]
+    }
 }
 
 /// The set of globals that larvae checks a bare name against.
@@ -107,6 +170,17 @@ pub struct LintConfig {
     #[serde(default)]
     pub recommended: Option<bool>,
 
+    /*
+    A level for a whole group of lints.
+
+    It sits between `recommended` and `[lint.rules]`: a name in `[lint.rules]`
+    always wins, and a group covers every lint the project did not name. So
+    `style = "allow"` with `mixed_table = "warn"` is one style lint back on
+    and the rest off.
+    */
+    #[serde(default)]
+    pub groups: BTreeMap<Group, Level>,
+
     /// The level for each lint, keyed by the lint's name.
     #[serde(default, deserialize_with = "levels")]
     pub rules: BTreeMap<String, Level>,
@@ -142,13 +216,38 @@ impl LintConfig {
         self.enabled != Some(false)
     }
 
-    pub fn level_for(&self, name: &str, default: Level) -> Level {
+    /*
+    The level of one lint, most specific answer first.
+
+    A name the project wrote wins over its group, a group wins over
+    `recommended`, and `recommended` wins over the default of the lint. A
+    worm lint passes `None` for the group, because a worm declares a name and
+    not a kind.
+    */
+    pub fn level_for(&self, name: &str, group: Option<Group>, default: Level) -> Level {
         if let Some(level) = self.rules.get(name) {
             return *level;
         }
 
         /*
-        A name the project did not mention falls back to what larvae
+        A group covers the lints of its kind that report, and it does not
+        wake one that is off.
+
+        `prefer_const` is `allow` on purpose: it rewrites a keyword, and a
+        codebase of ordinary `local` would report on nearly every line. A
+        project that writes `style = "info"` is asking the style lints it
+        already sees to say less, not asking for a lint it never had. Biome
+        draws the line in the same place. To turn one on, name it in
+        `[lint.rules]`, which beats the group anyway.
+        */
+        if default != Level::Allow
+            && let Some(level) = group.and_then(|g| self.groups.get(&g))
+        {
+            return *level;
+        }
+
+        /*
+        A lint the project did not mention falls back to what larvae
         recommends, unless the project turned that off. Absent reads as
         `true`, so a config written before this option behaves as it did.
         */
@@ -210,6 +309,7 @@ impl LintConfig {
             config.recommended = over.recommended.or(config.recommended);
             config.enabled = over.enabled.or(config.enabled);
 
+            config.groups.extend(over.groups);
             config.rules.extend(over.rules);
             config.options.extend(over.options);
             config.globals.extend(over.globals);
@@ -274,6 +374,8 @@ fn selene_file(root: &Path) -> Result<Option<LintConfig>> {
         // selene has no such key, so a selene.toml states nothing about them
         recommended: None,
         enabled: None,
+        // selene has no groups either, so a selene.toml sets none
+        groups: BTreeMap::new(),
         rules: file.rules,
         options: file.config,
         std,
@@ -337,11 +439,17 @@ mod tests {
     fn a_lint_uses_its_own_default_until_the_project_says_otherwise() {
         let mut cfg = LintConfig::default();
 
-        assert_eq!(cfg.level_for("unused_variable", Level::Warn), Level::Warn);
+        assert_eq!(
+            cfg.level_for("unused_variable", None, Level::Warn),
+            Level::Warn
+        );
 
         cfg.rules.insert("unused_variable".into(), Level::Allow);
 
-        assert_eq!(cfg.level_for("unused_variable", Level::Warn), Level::Allow);
+        assert_eq!(
+            cfg.level_for("unused_variable", None, Level::Warn),
+            Level::Allow
+        );
     }
 
     #[test]
@@ -496,6 +604,109 @@ mod tests {
             LintConfig::discover(dir.path(), Some(&over))
                 .unwrap()
                 .is_enabled()
+        );
+    }
+
+    #[test]
+    fn a_group_covers_every_lint_of_its_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let over = toml::from_str::<toml::Value>("[groups]\nstyle = \"allow\"").unwrap();
+        let cfg = LintConfig::discover(dir.path(), Some(&over)).unwrap();
+
+        assert_eq!(
+            cfg.level_for("parenthese_conditions", Some(Group::Style), Level::Warn),
+            Level::Allow
+        );
+
+        // A lint of another kind is untouched.
+        assert_eq!(
+            cfg.level_for("compare_nan", Some(Group::Correctness), Level::Warn),
+            Level::Warn
+        );
+    }
+
+    #[test]
+    fn a_name_the_project_wrote_beats_its_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "[groups]\nstyle = \"allow\"\n\n[rules]\nmixed_table = \"deny\"";
+        let over = toml::from_str::<toml::Value>(text).unwrap();
+        let cfg = LintConfig::discover(dir.path(), Some(&over)).unwrap();
+
+        assert_eq!(
+            cfg.level_for("mixed_table", Some(Group::Style), Level::Warn),
+            Level::Deny
+        );
+    }
+
+    /*
+    A group does not wake a lint that is off on purpose.
+
+    `prefer_const` is `allow` because it rewrites a keyword. A project that
+    writes `style = "info"` asks the style lints it already sees to say less;
+    it is not asking for a lint it never had.
+    */
+    #[test]
+    fn a_group_does_not_turn_on_a_lint_that_is_allow() {
+        let dir = tempfile::tempdir().unwrap();
+        let over = toml::from_str::<toml::Value>("[groups]\nstyle = \"info\"").unwrap();
+        let cfg = LintConfig::discover(dir.path(), Some(&over)).unwrap();
+
+        assert_eq!(
+            cfg.level_for("prefer_const", Some(Group::Style), Level::Allow),
+            Level::Allow
+        );
+
+        // Naming it is how a project turns it on, and that still works.
+        let text = "[groups]\nstyle = \"info\"\n\n[rules]\nprefer_const = \"warn\"";
+        let over = toml::from_str::<toml::Value>(text).unwrap();
+        let cfg = LintConfig::discover(dir.path(), Some(&over)).unwrap();
+
+        assert_eq!(
+            cfg.level_for("prefer_const", Some(Group::Style), Level::Allow),
+            Level::Warn
+        );
+    }
+
+    /*
+    A worm lint has a name and no kind, so no group reaches it.
+
+    A worm declares its lints under `[lint.rules.<worm>]`, and nothing says
+    which kind of mistake each one catches. A group that guessed would set a
+    level the worm author never asked for.
+    */
+    #[test]
+    fn a_group_does_not_reach_a_worm_lint() {
+        let dir = tempfile::tempdir().unwrap();
+        let over = toml::from_str::<toml::Value>("[groups]\nstyle = \"allow\"").unwrap();
+        let cfg = LintConfig::discover(dir.path(), Some(&over)).unwrap();
+
+        assert_eq!(
+            cfg.level_for("luaux.useless_fragment", None, Level::Warn),
+            Level::Warn
+        );
+    }
+
+    /// Every lint has a group, so `[lint.groups]` reaches all of them.
+    #[test]
+    fn every_lint_belongs_to_a_group() {
+        for group in Group::all() {
+            assert!(
+                crate::lint::registry().iter().any(|l| l.group() == group),
+                "no lint is in the {} group, so the schema offers a dead key",
+                group.name()
+            );
+        }
+    }
+
+    #[test]
+    fn info_is_a_level_the_config_takes() {
+        let dir = tempfile::tempdir().unwrap();
+        let over = toml::from_str::<toml::Value>("[rules]\nshadowing = \"info\"").unwrap();
+        let cfg = LintConfig::discover(dir.path(), Some(&over)).unwrap();
+
+        assert_eq!(
+            cfg.level_for("shadowing", Some(Group::Suspicious), Level::Warn),
+            Level::Info
         );
     }
 }

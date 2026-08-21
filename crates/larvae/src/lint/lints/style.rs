@@ -14,15 +14,15 @@ use crate::syntax::ast::*;
 use super::correctness::{each_block, each_expr, each_stmt};
 
 lints! {
-    EmptyIf => "empty_if", Warn,
+    EmptyIf => "empty_if", Suspicious, Warn,
         "an if branch with nothing in it";
-    EmptyLoop => "empty_loop", Warn,
+    EmptyLoop => "empty_loop", Suspicious, Warn,
         "a loop body with nothing in it";
-    MixedTable => "mixed_table", Warn,
+    MixedTable => "mixed_table", Suspicious, Warn,
         "a table with both array entries and named keys";
-    MultipleStatements => "multiple_statements", Allow,
+    MultipleStatements => "multiple_statements", Style, Allow,
         "more than one statement on a line";
-    ParentheseConditions => "parenthese_conditions", Warn,
+    ParentheseConditions => "parenthese_conditions", Style, Warn,
         "parentheses around a condition, which Luau does not need";
 }
 

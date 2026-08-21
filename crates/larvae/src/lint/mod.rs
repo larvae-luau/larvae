@@ -24,7 +24,7 @@ use anyhow::Result;
 use crate::diag::{Diag, Severity};
 use crate::syntax::{lexer, parser};
 
-pub use config::{Level, LintConfig};
+pub use config::{Group, Level, LintConfig};
 pub use ctx::{Finding, LintCtx};
 
 /// One thing that can be wrong with a file.
@@ -34,6 +34,9 @@ pub trait Lint: Sync {
 
     /// Tells if the lint is on by default, and at which level.
     fn default_level(&self) -> Level;
+
+    /// The kind of mistake it catches. `[lint.groups]` sets a level for all of one kind.
+    fn group(&self) -> Group;
 
     /// One line of description. `larvae lint --explain` shows it.
     fn about(&self) -> &'static str;
@@ -79,7 +82,7 @@ pub fn analyze(src: &str, cfg: &LintConfig) -> Result<Vec<Finding>, ParseFailure
     let mut findings = Vec::new();
 
     for lint in registry() {
-        let level = cfg.level_for(lint.name(), lint.default_level());
+        let level = cfg.level_for(lint.name(), Some(lint.group()), lint.default_level());
 
         if level == Level::Allow {
             continue;
@@ -190,7 +193,8 @@ fn worm_findings(
         let name = qualified(worm, &finding.lint);
 
         // The worm states what it found. The config states the level.
-        let level = cfg.level_for(&name, decl.default);
+        // A worm declares a name and not a kind, so no group covers it.
+        let level = cfg.level_for(&name, None, decl.default);
 
         if level == Level::Allow {
             continue;
@@ -466,6 +470,8 @@ impl Finding {
     fn into_diag(self, path: &Path, src: &str, index: &crate::diag::LineIndex) -> Diag {
         let severity = match self.level {
             Level::Deny => Severity::Error,
+
+            Level::Info => Severity::Info,
 
             _ => Severity::Warning,
         };

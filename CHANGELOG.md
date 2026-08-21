@@ -20,6 +20,24 @@ Notable changes land here. Format follows
   the opinion changes a file. Every other default is either stylua's or a
   setting that does nothing until a project asks for it, so `recommended` does
   not move it
+- `[lint.groups]`, a level for a whole kind of lint at once: `correctness`,
+  `suspicious`, `style`, `complexity`, `performance` and `roblox`. It sits
+  between `recommended` and `[lint.rules]`, so a name the project wrote always
+  wins and a group covers every lint it did not name. Two rules are worth
+  knowing. The table is separate from `[lint.rules]` and not nested inside it,
+  because a table there already means the lints of a worm of that name and
+  nothing reserves a worm name. And a group does not wake a lint that is
+  `allow` on purpose: `style = "info"` asks the style lints a project already
+  sees to say less, and `prefer_const` stays off until the project names it
+- `info`, a level below `warn`. It reports and it leaves the exit code alone,
+  exactly as `warn` does. The two differ in what they ask of the reader, and an
+  editor draws an info as a hint and a warning as a squiggle. The summary line
+  counts them separately, and only when a project uses the level
+- `larvae lint --explain <name>` prints the group of a lint, and the list it
+  prints when a name misses is grouped rather than one alphabetical run of 52
+- `larvae init` writes `recommended = true` into `[fmt]` and `[lint]`. The
+  value is the default already; the key is the point. A key that is there can
+  be turned off, and a key that is absent has to be found in the docs first
 - `[lint] recommended`, as Biome has it. Absent and `true` both mean the
   default levels apply, which is what larvae always did. `false` starts every
   lint at `allow`, so a project gets the lints it names and no others. A level

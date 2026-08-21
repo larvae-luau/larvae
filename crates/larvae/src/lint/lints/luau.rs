@@ -26,35 +26,35 @@ use super::configured::global_path;
 use super::correctness::{each_block, each_expr, each_stmt, number, unwrap_parens};
 
 lints! {
-    BadCommentDirective => "bad_comment_directive", Warn,
+    BadCommentDirective => "bad_comment_directive", Correctness, Warn,
         "a --! directive that Luau does not know, or one that comes after the code it should govern";
-    BuiltinGlobalWrite => "builtin_global_write", Warn,
+    BuiltinGlobalWrite => "builtin_global_write", Suspicious, Warn,
         "an assignment over a standard global, which every later script sees";
-    ComparisonPrecedence => "comparison_precedence", Warn,
+    ComparisonPrecedence => "comparison_precedence", Correctness, Warn,
         "not a == b, or a chain like a < b < c, which does not group the way it reads";
-    DuplicateFunction => "duplicate_function", Warn,
+    DuplicateFunction => "duplicate_function", Correctness, Warn,
         "two functions of the same name in one scope, where the first is discarded";
-    DuplicateLocal => "duplicate_local", Deny,
+    DuplicateLocal => "duplicate_local", Correctness, Deny,
         "one local statement or parameter list that declares the same name twice";
-    FormatString => "format_string", Deny,
+    FormatString => "format_string", Correctness, Deny,
         "a format string that string.format or os.date rejects at runtime";
-    ImplicitReturn => "implicit_return", Allow,
+    ImplicitReturn => "implicit_return", Suspicious, Allow,
         "a function that returns a value on one path and falls off the end on another";
-    MisleadingAndOr => "misleading_and_or", Warn,
+    MisleadingAndOr => "misleading_and_or", Correctness, Warn,
         "cond and false or b, which always gives b because the middle is never truthy";
-    NumberLiteralOverflow => "number_literal_overflow", Warn,
+    NumberLiteralOverflow => "number_literal_overflow", Correctness, Warn,
         "a hexadecimal or binary literal wider than 64 bits, which is truncated";
-    PlaceholderRead => "placeholder_read", Warn,
+    PlaceholderRead => "placeholder_read", Suspicious, Warn,
         "reading _, the name that says a value is discarded";
-    TableOperations => "table_operations", Warn,
+    TableOperations => "table_operations", Correctness, Warn,
         "a table.insert or table.remove whose index or argument count is wrong";
-    ImplicitAnyLocal => "implicit_any_local", Warn,
+    ImplicitAnyLocal => "implicit_any_local", Suspicious, Warn,
         "a local declared with no value and no type, so what it holds is decided elsewhere";
-    UninitializedLocal => "uninitialized_local", Warn,
+    UninitializedLocal => "uninitialized_local", Correctness, Warn,
         "a local declared with no value and never assigned, so every read is nil";
-    UnknownType => "unknown_type", Warn,
+    UnknownType => "unknown_type", Correctness, Warn,
         "comparing type(x) against a string that type() never returns";
-    ZeroStepLoop => "zero_step_loop", Deny,
+    ZeroStepLoop => "zero_step_loop", Correctness, Deny,
         "a numeric for whose step is zero, so the counter never moves";
 }
 

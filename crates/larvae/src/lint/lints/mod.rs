@@ -88,14 +88,20 @@ pub static ALL: &[&dyn Lint] = &[
 /*
 The boilerplate that every lint shares.
 
-Each entry declares the unit type, the name that a user writes, the default
-level, and the one-line explanation. The lint itself is the `check` function,
-which the author writes as normal code. Thus the author writes only the part
-that differs per lint.
+Each entry declares the unit type, the name that a user writes, the group it
+belongs to, the default level, and the one-line explanation. The lint itself
+is the `check` function, which the author writes as normal code. Thus the
+author writes only the part that differs per lint.
+
+The group is what a project sets under `[lint.groups]`, and it is also how
+`--explain` and the docs order the list. The file a lint lives in is a
+separate thing and stays that way: these files split by where a lint came
+from, so `configured.rs` holds a compile error beside an opinion about branch
+counts. That is a useful editing category and a useless configuration one.
 */
 #[macro_export]
 macro_rules! lints {
-    ($($ty:ident => $name:literal, $level:ident, $about:literal;)*) => {
+    ($($ty:ident => $name:literal, $group:ident, $level:ident, $about:literal;)*) => {
         $(
             pub struct $ty;
 
@@ -106,6 +112,10 @@ macro_rules! lints {
 
                 fn default_level(&self) -> $crate::lint::Level {
                     $crate::lint::Level::$level
+                }
+
+                fn group(&self) -> $crate::lint::Group {
+                    $crate::lint::Group::$group
                 }
 
                 fn about(&self) -> &'static str {

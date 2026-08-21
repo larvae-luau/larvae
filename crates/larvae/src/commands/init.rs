@@ -149,7 +149,14 @@ fn fmt_section(root: &Path) -> String {
              # A [fmt] table here would layer over it.\n"
         ),
 
-        None => format!("\n[fmt]\n{}", fmt_defaults()),
+        /*
+        `recommended = true` is written out, though it is also the default.
+
+        The value is not the point; the key is. A new project reads the file
+        it was given, and a key that is there can be turned off. A key that
+        is absent has to be found in the docs first.
+        */
+        None => format!("\n[fmt]\nrecommended = true\n{}", fmt_defaults()),
     }
 }
 
@@ -201,8 +208,9 @@ fn lint_section(root: &Path) -> String {
              # A [lint] table here would layer over it.\n"
         ),
 
-        None => "\n[lint]\nstd = \"roblox\"\n\
-             # Set levels under [lint.rules]; `larvae lint --explain <name>` describes one.\n"
+        None => "\n[lint]\nrecommended = true\nstd = \"roblox\"\n\
+             # Set a level for one lint under [lint.rules], or for a whole kind\n\
+             # under [lint.groups]. `larvae lint --explain <name>` describes one.\n"
             .to_string(),
     }
 }
@@ -407,8 +415,38 @@ mod tests {
             toml::Value::try_from(v).unwrap()
         }
 
-        assert_eq!(value(&fmt), value(&crate::fmt::FmtConfig::default()));
-        assert_eq!(value(&lint), value(&crate::lint::LintConfig::default()));
+        /*
+        `recommended = true` is written out, and it is also the default, so
+        the two configs differ by that key alone. The comparison sets it on
+        both sides rather than skipping it: a default that ever stopped
+        meaning `true` has to fail here.
+        */
+        let fmt_default = crate::fmt::FmtConfig {
+            recommended: Some(true),
+            ..Default::default()
+        };
+
+        let lint_default = crate::lint::LintConfig {
+            recommended: Some(true),
+            ..Default::default()
+        };
+
+        assert_eq!(value(&fmt), value(&fmt_default));
+        assert_eq!(value(&lint), value(&lint_default));
+
+        // And what init wrote is what larvae does with no config at all.
+        assert_eq!(
+            fmt.magic_trailing_comma,
+            crate::fmt::FmtConfig::default().magic_trailing_comma
+        );
+        assert_eq!(
+            lint.level_for(
+                "shadowing",
+                Some(crate::lint::Group::Suspicious),
+                crate::lint::Level::Warn
+            ),
+            crate::lint::Level::Warn
+        );
     }
 
     /// A project that formats with stylua keeps its settings. The file that

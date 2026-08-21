@@ -179,7 +179,12 @@ fn from_stdin(
 fn explain_lint(root: &Path, config: Option<&Path>, name: &str) -> Result<ExitCode> {
     if let Some(found) = crate::lint::find(name) {
         println!("{}\n  {}", found.name(), found.about());
-        println!("  default: {:?}", found.default_level());
+        println!("  default: {}", level_name(found.default_level()));
+        println!(
+            "  group:   {}, so [lint.groups] {} covers it",
+            found.group().name(),
+            found.group().name()
+        );
 
         return Ok(ExitCode::SUCCESS);
     }
@@ -198,23 +203,37 @@ fn explain_lint(root: &Path, config: Option<&Path>, name: &str) -> Result<ExitCo
             None => println!("  worm `{worm}` declares this lint and describes it nowhere"),
         }
 
-        println!("  default: {:?}", decl.default);
+        println!("  default: {}", level_name(decl.default));
         println!("  from:    worm `{worm}`");
 
         return Ok(ExitCode::SUCCESS);
     }
 
     ui::print_error(&format!("no lint called {name}"));
-    println!("\navailable lints:");
 
-    // The list is sorted for lookup, and the width keeps the second column aligned.
-    let mut all: Vec<_> = registry().iter().collect();
-    all.sort_by_key(|l| l.name());
+    /*
+    The list is printed by group, and each name is sorted inside its group.
 
-    let width = all.iter().map(|l| l.name().len()).max().unwrap_or(0);
+    Fifty two names in one alphabetical run is a wall. The group is also what
+    a project sets under `[lint.groups]`, so the heading is a config key and
+    not decoration.
+    */
+    let width = registry().iter().map(|l| l.name().len()).max().unwrap_or(0);
 
-    for lint in all {
-        println!("  {:<width$}  {}", lint.name(), lint.about());
+    for group in crate::lint::Group::all() {
+        let mut of_group: Vec<_> = registry().iter().filter(|l| l.group() == group).collect();
+
+        if of_group.is_empty() {
+            continue;
+        }
+
+        of_group.sort_by_key(|l| l.name());
+
+        println!("\n{}:", group.name());
+
+        for lint in of_group {
+            println!("  {:<width$}  {}", lint.name(), lint.about());
+        }
     }
 
     Ok(ExitCode::FAILURE)
@@ -295,12 +314,11 @@ fn report(diags: &[Diag], scanned: usize) -> Result<ExitCode> {
         }
     }
 
-    let errors = diags
-        .iter()
-        .filter(|d| d.severity == Severity::Error)
-        .count();
+    let count = |want: Severity| diags.iter().filter(|d| d.severity == want).count();
 
-    let warnings = diags.len() - errors;
+    let errors = count(Severity::Error);
+    let warnings = count(Severity::Warning);
+    let infos = count(Severity::Info);
 
     if diags.is_empty() {
         ui::print_success(&format!("{}, nothing to report", files(scanned)));
@@ -308,7 +326,20 @@ fn report(diags: &[Diag], scanned: usize) -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    println!("\n{}, {errors} errors, {warnings} warnings", files(scanned));
+    /*
+    The info count joins the line only when a project uses the level. A
+    project that never writes `info` reads the summary it always read.
+    */
+    let tail = match infos {
+        0 => String::new(),
+
+        n => format!(", {n} infos"),
+    };
+
+    println!(
+        "\n{}, {errors} errors, {warnings} warnings{tail}",
+        files(scanned)
+    );
 
     /*
     Only an error fails the run. A project that wants a warning to fail CI
@@ -319,5 +350,17 @@ fn report(diags: &[Diag], scanned: usize) -> Result<ExitCode> {
         0 => Ok(ExitCode::SUCCESS),
 
         _ => Ok(ExitCode::FAILURE),
+    }
+}
+
+/// The level as a project writes it, which is not how Rust prints the enum
+fn level_name(level: crate::lint::Level) -> &'static str {
+    use crate::lint::Level;
+
+    match level {
+        Level::Allow => "allow",
+        Level::Info => "info",
+        Level::Warn => "warn",
+        Level::Deny => "deny",
     }
 }

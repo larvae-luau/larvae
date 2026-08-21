@@ -11,25 +11,25 @@ use crate::lints;
 use crate::syntax::ast::*;
 
 lints! {
-    AlmostSwapped => "almost_swapped", Warn,
+    AlmostSwapped => "almost_swapped", Correctness, Warn,
         "two assignments that look like a swap but overwrite one of the values";
-    CompareNan => "compare_nan", Warn,
+    CompareNan => "compare_nan", Correctness, Warn,
         "comparing against nan, which is never equal to anything including itself";
-    ConstantTableComparison => "constant_table_comparison", Warn,
+    ConstantTableComparison => "constant_table_comparison", Correctness, Warn,
         "comparing against a table literal, which compares identity and is always false";
-    DivideByZero => "divide_by_zero", Warn,
+    DivideByZero => "divide_by_zero", Suspicious, Warn,
         "dividing by a literal zero";
-    DuplicateKeys => "duplicate_keys", Deny,
+    DuplicateKeys => "duplicate_keys", Correctness, Deny,
         "a table key written twice, where only the last one survives";
-    IfsSameCond => "ifs_same_cond", Warn,
+    IfsSameCond => "ifs_same_cond", Correctness, Warn,
         "an elseif repeating a condition already tested, which can never run";
-    IfSameThenElse => "if_same_then_else", Warn,
+    IfSameThenElse => "if_same_then_else", Suspicious, Warn,
         "two branches of the same if with identical bodies";
-    SuspiciousReverseLoop => "suspicious_reverse_loop", Warn,
+    SuspiciousReverseLoop => "suspicious_reverse_loop", Correctness, Warn,
         "a numeric for counting down without a negative step, which never runs";
-    TypeCheckInsideCall => "type_check_inside_call", Warn,
+    TypeCheckInsideCall => "type_check_inside_call", Correctness, Warn,
         "a comparison inside type(), where it belongs outside";
-    UnbalancedAssignments => "unbalanced_assignments", Warn,
+    UnbalancedAssignments => "unbalanced_assignments", Correctness, Warn,
         "more names than values, or more values than names";
 }
 

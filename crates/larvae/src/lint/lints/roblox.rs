@@ -20,11 +20,11 @@ use crate::syntax::ast::*;
 use super::correctness::each_expr;
 
 lints! {
-    RobloxIncorrectColor3NewBounds => "roblox_incorrect_color3_new_bounds", Warn,
+    RobloxIncorrectColor3NewBounds => "roblox_incorrect_color3_new_bounds", Roblox, Warn,
         "Color3.new given a channel over 1, where the scale is 0 to 1";
-    RobloxManualFromScaleOrOffset => "roblox_manual_fromscale_or_fromoffset", Warn,
+    RobloxManualFromScaleOrOffset => "roblox_manual_fromscale_or_fromoffset", Roblox, Warn,
         "a UDim2.new that fromScale or fromOffset says more clearly";
-    RobloxSuspiciousUdim2New => "roblox_suspicious_udim2_new", Warn,
+    RobloxSuspiciousUdim2New => "roblox_suspicious_udim2_new", Roblox, Warn,
         "UDim2.new given two arguments, where it takes four";
 }
 

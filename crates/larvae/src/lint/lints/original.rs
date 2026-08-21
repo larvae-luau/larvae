@@ -13,15 +13,15 @@ use crate::syntax::ast::*;
 use super::correctness::{each_block, each_stmt};
 
 lints! {
-    NonConstRequire => "non_const_require", Allow,
+    NonConstRequire => "non_const_require", Style, Allow,
         "a required module bound with local, where const says it never changes";
-    SelfAssignment => "self_assignment", Warn,
+    SelfAssignment => "self_assignment", Suspicious, Warn,
         "assigning a value to itself, which does nothing";
-    ShadowedLoopWork => "loop_invariant_call", Warn,
+    ShadowedLoopWork => "loop_invariant_call", Performance, Warn,
         "a call inside a loop whose result cannot change between iterations";
-    StringConcatInLoop => "string_concat_in_loop", Warn,
+    StringConcatInLoop => "string_concat_in_loop", Performance, Warn,
         "building a string by concatenation in a loop, which is quadratic";
-    UnreachableCode => "unreachable_code", Warn,
+    UnreachableCode => "unreachable_code", Correctness, Warn,
         "statements after a return, break or continue, which never run";
 }
 

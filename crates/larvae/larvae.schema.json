@@ -1200,6 +1200,9 @@
           ],
           "description": "Whether a lint larvae recommends is on without this project saying so. Absent and `true` both mean the default levels apply. `false` starts every lint at `allow`, so the project gets the lints it names under `[lint.rules]` and no others. A level the project wrote always wins in either state."
         },
+        "groups": {
+          "$ref": "#/$defs/lint_groups"
+        },
         "std": {
           "default": "roblox",
           "description": "Which globals exist before a file runs. Anything else is undefined_variable.",
@@ -1254,10 +1257,11 @@
     "lint_level": {
       "enum": [
         "allow",
+        "info",
         "warn",
         "deny"
       ],
-      "description": "\"allow\" is off, \"warn\" is reported and leaves the exit code alone, \"deny\" is reported and fails the run."
+      "description": "\"allow\" is off. \"info\" and \"warn\" are both reported and both leave the exit code alone; they differ in what they ask of the reader, and an editor draws an info as a hint and a warning as a squiggle. \"deny\" is reported and fails the run."
     },
     "lint_rules": {
       "description": "How loudly each lint speaks. A lint keeps its own default until it is named here. A name not listed below is a worm's lint, declared in that worm's [lints] and levelled here the same way.",
@@ -1980,6 +1984,37 @@
           },
           "description": "Extra entry points, as paths relative to the project root. A module in this list is never reported as unused.",
           "default": []
+        }
+      }
+    },
+    "lint_groups": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A level for a whole kind of lint. It sits between `recommended` and [lint.rules]: a name in [lint.rules] always wins, and a group covers every lint the project did not name. Groups live here and not inside [lint.rules], because a table there already means the lints of a worm of that name.",
+      "properties": {
+        "correctness": {
+          "$ref": "#/$defs/lint_level",
+          "description": "The code cannot do what it says: it throws, it hangs, or a line of it is dead. Every lint of this kind that [lint.rules] does not name takes this level."
+        },
+        "suspicious": {
+          "$ref": "#/$defs/lint_level",
+          "description": "Probably wrong, and a human decides. Every lint of this kind that [lint.rules] does not name takes this level."
+        },
+        "style": {
+          "$ref": "#/$defs/lint_level",
+          "description": "A matter of how the code reads. Every lint of this kind that [lint.rules] does not name takes this level."
+        },
+        "complexity": {
+          "$ref": "#/$defs/lint_level",
+          "description": "More shape than the job needs. Every lint of this kind that [lint.rules] does not name takes this level."
+        },
+        "performance": {
+          "$ref": "#/$defs/lint_level",
+          "description": "Correct, and it costs more than it has to. Every lint of this kind that [lint.rules] does not name takes this level."
+        },
+        "roblox": {
+          "$ref": "#/$defs/lint_level",
+          "description": "A Roblox data type used in a way that does not hold. Every lint of this kind that [lint.rules] does not name takes this level."
         }
       }
     }

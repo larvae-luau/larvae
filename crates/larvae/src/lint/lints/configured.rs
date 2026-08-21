@@ -16,21 +16,21 @@ use crate::syntax::ast::*;
 use super::correctness::{each_block, each_expr, each_stmt};
 
 lints! {
-    BadStringEscape => "bad_string_escape", Warn,
+    BadStringEscape => "bad_string_escape", Correctness, Warn,
         "an escape sequence the language does not define";
-    Deprecated => "deprecated", Warn,
+    Deprecated => "deprecated", Style, Warn,
         "a function that still works but has been replaced";
-    HighCyclomaticComplexity => "high_cyclomatic_complexity", Allow,
+    HighCyclomaticComplexity => "high_cyclomatic_complexity", Complexity, Allow,
         "a function with more branches than anyone can hold at once";
-    ManualTableClone => "manual_table_clone", Warn,
+    ManualTableClone => "manual_table_clone", Performance, Warn,
         "a loop that copies a table, which table.clone does in one call";
-    MismatchedArgCount => "mismatched_arg_count", Warn,
+    MismatchedArgCount => "mismatched_arg_count", Correctness, Warn,
         "calling a function in this file with the wrong number of arguments";
-    MustUse => "must_use", Warn,
+    MustUse => "must_use", Correctness, Warn,
         "calling a pure function and discarding what it returned";
-    PreferConst => "prefer_const", Allow,
+    PreferConst => "prefer_const", Style, Allow,
         "a local that nothing reassigns, which const states outright";
-    RestrictedModulePaths => "restricted_module_paths", Warn,
+    RestrictedModulePaths => "restricted_module_paths", Style, Warn,
         "requiring a module the project has ruled out";
 }
 

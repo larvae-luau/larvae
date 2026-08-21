@@ -17,17 +17,17 @@ use crate::syntax::ast::*;
 use super::correctness::each_expr;
 
 lints! {
-    GlobalUsage => "global_usage", Warn,
+    GlobalUsage => "global_usage", Suspicious, Warn,
         "reaching into _G, which is shared with every other script";
-    Shadowing => "shadowing", Warn,
+    Shadowing => "shadowing", Suspicious, Warn,
         "a name that hides another still in scope";
-    UndefinedVariable => "undefined_variable", Deny,
+    UndefinedVariable => "undefined_variable", Correctness, Deny,
         "a name nothing declares, which is nil at runtime";
-    UnscopedVariables => "unscoped_variables", Warn,
+    UnscopedVariables => "unscoped_variables", Suspicious, Warn,
         "an assignment with no local, which creates a global";
-    UnusedFunction => "unused_function", Warn,
+    UnusedFunction => "unused_function", Correctness, Warn,
         "a local function that nothing calls";
-    UnusedVariable => "unused_variable", Warn,
+    UnusedVariable => "unused_variable", Correctness, Warn,
         "a name declared and never read";
 }
 

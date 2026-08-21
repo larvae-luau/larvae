@@ -198,6 +198,20 @@ std = "roblox"                           # or "luau", "none", or a selene name l
 globals = ["shared", "_TESTING"]         # names the project defines itself
 exclude = ["Packages", "**/*.spec.luau"] # relative to the project root
 
+# A level for a whole kind of lint. It sits between `recommended` and
+# [lint.rules]: a name below always wins, and a group covers every lint the
+# project did not name. A group does not wake a lint that is `allow` on
+# purpose, so `style = "info"` leaves `prefer_const` off.
+#
+# The table is separate from [lint.rules] on purpose. A table in there is the
+# lints of a worm of that name, and nothing reserves a worm name.
+# A level is allow, info, warn or deny. `info` reports and leaves the exit
+# code alone, exactly as `warn` does; an editor draws it as a hint rather than
+# a squiggle. Only `deny` fails a run.
+[lint.groups]
+performance = "info"                     # the six kinds: correctness, suspicious,
+complexity = "allow"                     # style, complexity, performance, roblox
+
 # A lint keeps its own default until it is named here. Fifty two of them;
 # `larvae lint --explain <name>` describes one. These are the defaults: five
 # deny, five allow, and the other forty two warn.
