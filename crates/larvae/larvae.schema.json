@@ -1283,6 +1283,15 @@
           ],
           "description": "Two assignments that look like a swap but overwrite one of the values. Default: warn."
         },
+        "and_or_conditional": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "`cond and a or b` used as a value. The decision hides inside an expression, where an if statement states one case per branch. Off by default: the form is ordinary Lua and it is correct for every truthy middle. Default: allow."
+        },
         "bad_comment_directive": {
           "enum": [
             "allow",
@@ -1319,6 +1328,15 @@
           ],
           "description": "A local that takes the name of a standard global, such as `local table = {}`. The library is unreachable for the rest of the scope, and the failure lands at the first line that wanted it. Default: warn."
         },
+        "collapsible_if": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "An if that holds one if and nothing else. The two conditions are one `and` apart, and the nesting says they are not. Default: allow."
+        },
         "compare_nan": {
           "enum": [
             "allow",
@@ -1336,6 +1354,15 @@
             "deny"
           ],
           "description": "not a == b, or a chain like a < b < c, which does not group the way it reads. Default: warn."
+        },
+        "constant_condition": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A condition that is a literal, so the branch is decided before the program runs. Only nil and false are false in Luau, so `if 0 then` and `if \"\" then` both pass. `while true do` and `repeat ... until false` are exempt, because both are standard loops. Default: warn."
         },
         "constant_table_comparison": {
           "enum": [
@@ -1391,6 +1418,15 @@
           ],
           "description": "One local statement or parameter list that declares the same name twice. Default: warn."
         },
+        "else_after_return": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "An else after a branch that returns, breaks or continues. The else costs a level of indent and buys nothing. Every branch must end in the jump, because an elseif that falls through still needs the else. Default: allow."
+        },
         "empty_if": {
           "enum": [
             "allow",
@@ -1436,6 +1472,15 @@
           ],
           "description": "A function with more branches than anyone can hold at once. Default: allow. Threshold under [lint.options.high_cyclomatic_complexity]."
         },
+        "if_expression_assignment": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "`if cond then a else b` used as a value. Off by default, and it has to stay off: misleading_and_or names this exact form as the repair, so a default that reported would report the fix larvae asked for. Default: allow."
+        },
         "if_same_then_else": {
           "enum": [
             "allow",
@@ -1471,6 +1516,15 @@
             "deny"
           ],
           "description": "A local declared with no value and no type, so what it holds is decided by whatever assigns it first. In a file with no `--!strict` directive Luau accepts any later assignment of any type, which is the implicit `any` this names. A local that nothing ever assigns is left to `uninitialized_local`, which says the more urgent thing about the same line. The only lint larvae denies by default, because the fix is an annotation and an annotation changes no behaviour. Default: deny."
+        },
+        "implicit_any_parameter": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A parameter with no type, so what the function takes is decided by each caller. The sibling of implicit_any_local, on the other side of the call. Off by default: most Luau carries no annotations, so a warn default would report hundreds of times on the first run. Default: allow."
         },
         "implicit_return": {
           "enum": [
@@ -1553,6 +1607,15 @@
           ],
           "description": "Calling a pure function and discarding what it returned. Default: warn."
         },
+        "negated_condition": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "An if with a negated condition and an else. Dropping the not and swapping the bodies states the same thing in the order a reader expects. Default: allow."
+        },
         "non_const_require": {
           "enum": [
             "allow",
@@ -1597,6 +1660,15 @@
             "deny"
           ],
           "description": "A local that nothing reassigns, which `const` states outright. Off by default: `const` is larvae's own reading of Luau and not every project writes it, so a codebase of ordinary `local` would report on nearly every line the first time it ran. Tune it under [lint.options.prefer_const]. Default: allow."
+        },
+        "restricted_globals": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "Reading a global the project has ruled out. Silent until the project fills in [lint.options.restricted_globals], so the default level costs nothing. Each entry is a name and the reason a reader is shown. Default: warn."
         },
         "restricted_module_paths": {
           "enum": [
@@ -1778,6 +1850,66 @@
         "type": "object"
       },
       "properties": {
+        "deprecated": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "additional": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Names the project has deprecated of its own, as old = \"what to use instead\"."
+            }
+          }
+        },
+        "high_cyclomatic_complexity": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maximum_complexity": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 40,
+              "description": "Branches a function may have before it is reported. selene's default, kept so a project moving over gets the same answers."
+            }
+          }
+        },
+        "prefer_const": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mutated_tables_stay_local": {
+              "type": "boolean",
+              "enum": [
+                true,
+                false
+              ],
+              "default": false,
+              "description": "Keep `local` on a binding the file mutates through a field, such as `t.x = 1` or `table.insert(t, 1)`. Off by default, because `const` is correct there: Luau enforces it against reassignment of the name and says nothing about the value, so `const t = {}` then `t.x = 1` compiles. Turn it on where `local` is read as \"this one changes\"."
+            }
+          }
+        },
+        "restricted_globals": {
+          "type": "object",
+          "description": "Globals this project rules out, as `name = \"why\"`. The reason is the message a reader gets, so a bare list of names would report \"this is restricted\" and leave them guessing.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "restricted_module_paths": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "paths": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Require paths the project forbids, as path = \"why\"."
+            }
+          }
+        },
         "unused_variable": {
           "type": "object",
           "additionalProperties": false,
@@ -1804,59 +1936,6 @@
               "type": "string",
               "default": "^_",
               "description": "Names exempted, as a regular expression."
-            }
-          }
-        },
-        "high_cyclomatic_complexity": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "maximum_complexity": {
-              "type": "integer",
-              "minimum": 1,
-              "default": 40,
-              "description": "Branches a function may have before it is reported. selene's default, kept so a project moving over gets the same answers."
-            }
-          }
-        },
-        "deprecated": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "additional": {
-              "type": "object",
-              "additionalProperties": {
-                "type": "string"
-              },
-              "description": "Names the project has deprecated of its own, as old = \"what to use instead\"."
-            }
-          }
-        },
-        "restricted_module_paths": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "paths": {
-              "type": "object",
-              "additionalProperties": {
-                "type": "string"
-              },
-              "description": "Require paths the project forbids, as path = \"why\"."
-            }
-          }
-        },
-        "prefer_const": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "mutated_tables_stay_local": {
-              "type": "boolean",
-              "enum": [
-                true,
-                false
-              ],
-              "default": false,
-              "description": "Keep `local` on a binding the file mutates through a field, such as `t.x = 1` or `table.insert(t, 1)`. Off by default, because `const` is correct there: Luau enforces it against reassignment of the name and says nothing about the value, so `const t = {}` then `t.x = 1` compiles. Turn it on where `local` is read as \"this one changes\"."
             }
           }
         }

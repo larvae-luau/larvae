@@ -50,6 +50,8 @@ lints! {
         "a table.insert or table.remove whose index or argument count is wrong";
     ImplicitAnyLocal => "implicit_any_local", Suspicious, Warn,
         "a local declared with no value and no type, so what it holds is decided elsewhere";
+    ImplicitAnyParameter => "implicit_any_parameter", Suspicious, Allow,
+        "a parameter with no type, so what it takes is decided by the caller";
     UninitializedLocal => "uninitialized_local", Correctness, Warn,
         "a local declared with no value and never assigned, so every read is nil";
     UnknownType => "unknown_type", Correctness, Warn,
@@ -1298,6 +1300,55 @@ impl ImplicitAnyLocal {
                     .with_help(format!(
                         "write the type, `local {name}: T`, or give it a value"
                     )),
+                );
+            }
+        });
+    }
+}
+
+// --- implicit_any_parameter ------------------------------------------------
+
+impl ImplicitAnyParameter {
+    /*
+    `local function apply(list, transform)`.
+
+    A parameter with no annotation is `any`. What the function takes is then
+    decided by each caller, and a reader of the signature cannot tell what
+    the body expects. This is the defect that `implicit_any_local` names, on
+    the other side of the call: that lint asks what a name holds, and this
+    one asks what a function accepts.
+
+    The lint is off by default. Most Luau carries no annotations, so a warn
+    default would report hundreds of times on the first run, and a report
+    that large teaches users to stop reading the linter. A project that
+    wants annotated signatures asks for them in one line.
+
+    Two names are left out. A name that starts with `_` says that nobody
+    wants the value, which is what `unused_variable` exempts through its
+    `ignore_pattern`. `self` is the receiver of a method, and Luau gives it
+    the type of the table that the method hangs on.
+    */
+    fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
+        each_function(ctx, |body| {
+            for param in &body.params {
+                // `...` is not a name, and its annotation is a separate question.
+                if param.is_vararg || param.ty.is_some() {
+                    continue;
+                }
+
+                let name = ctx.tok(param.name.start);
+
+                if name == "self" || name.starts_with('_') {
+                    continue;
+                }
+
+                out.push(
+                    Finding::new(
+                        "implicit_any_parameter",
+                        ctx.bytes(param.name),
+                        format!("{name} has no type, so what it takes is decided by the caller"),
+                    )
+                    .with_help(format!("write the type, `{name}: T`")),
                 );
             }
         });

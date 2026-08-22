@@ -20,6 +20,16 @@ Notable changes land here. Format follows
   the opinion changes a file. Every other default is either stylua's or a
   setting that does nothing until a project asks for it, so `recommended` does
   not move it
+- Eleven lints, mostly Luau equivalents of Biome rules. Four fill real gaps
+  that Luau's own linter reports on none of, checked against luau-lsp:
+  `length_as_condition` (deny), `builtin_shadowed`, `ignored_pcall_result` and
+  `constant_condition`. Two report a conditional used as a value, both allow:
+  `and_or_conditional` and `if_expression_assignment`. Three report the shape
+  of a branch, all allow: `else_after_return`, `collapsible_if` and
+  `negated_condition`. And two more: `implicit_any_parameter` (allow, the
+  sibling of `implicit_any_local` on the other side of the call) and
+  `restricted_globals` (silent until `[lint.options.restricted_globals]` names
+  one, so it costs nothing until a project asks)
 - `[lint.groups]`, a level for a whole kind of lint at once: `correctness`,
   `suspicious`, `style`, `complexity`, `performance` and `roblox`. It sits
   between `recommended` and `[lint.rules]`, so a name the project wrote always
@@ -55,8 +65,16 @@ Notable changes land here. Format follows
 
 ### Changed
 
-- Four lints deny by default now: `duplicate_keys`, `duplicate_local`,
-  `format_string` and `zero_step_loop`. They join `undefined_variable`. The bar
+- `misleading_and_or` reaches a middle that syntax proves is a boolean. It
+  fired only on a literal `false` or `nil`, but `ready and (count == 0) or
+  "pending"` gives "pending" when the count is not zero, which is exactly when
+  the author wanted `false`. A comparison yields a boolean because it is a
+  comparison, so the wider net needs no types. The two cases carry different
+  messages: the literal is wrong for every input and the boolean is wrong for
+  half of them
+- Five lints deny by default now: `duplicate_keys`, `duplicate_local`,
+  `format_string`, `zero_step_loop` and `length_as_condition`. They join
+  `undefined_variable`. The bar
   is two things at once: no reading of the code makes the finding wrong,
   because each check reads a literal and never a runtime value, and the code as
   written cannot be what the author meant. `{ a = 1, a = 2 }` discards the

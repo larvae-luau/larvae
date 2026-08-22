@@ -2539,3 +2539,372 @@ fn the_boolean_case_says_whenever_and_not_always() {
     assert!(one.message.contains("whenever"), "{}", one.message);
     assert!(!one.message.contains("always"), "{}", one.message);
 }
+
+// --- and_or_conditional ----------------------------------------------------
+
+#[test]
+fn an_and_or_that_gives_a_value_is_reported() {
+    let cfg = with("and_or_conditional", Level::Warn);
+
+    let cases = [
+        "local ok = true\nlocal a = ok and 1 or 2\nreturn a\n",
+        "local ok, a = true, 0\na = ok and 1 or 2\nreturn a\n",
+        "local ok = true\nreturn ok and 1 or 2\n",
+        "local ok = true\nprint(ok and 1 or 2)\n",
+    ];
+
+    for src in cases {
+        assert!(
+            fired(src, &cfg).contains(&"and_or_conditional".to_string()),
+            "no report for {src}"
+        );
+    }
+}
+
+/// A condition is where the language asks for the operators, and the `if`
+/// statement that reads it is already there.
+#[test]
+fn an_and_or_in_a_condition_is_not_a_value() {
+    let cfg = with("and_or_conditional", Level::Warn);
+
+    let cases = [
+        "local ok, ready = true, false\nif ok and ready or true then print(1) end\n",
+        "local ok, ready = true, false\nwhile ok and ready or true do break end\n",
+        "local ok, ready = true, false\nrepeat print(1) until ok and ready or true\n",
+        // arithmetic over one, where an if statement repeats the addition
+        "local ok = true\nlocal n = 1 + (ok and 2 or 3)\nreturn n\n",
+    ];
+
+    for src in cases {
+        assert!(
+            !fired(src, &cfg).contains(&"and_or_conditional".to_string()),
+            "reported {src}"
+        );
+    }
+}
+
+// --- if_expression_assignment ----------------------------------------------
+
+#[test]
+fn an_if_expression_that_gives_a_value_is_reported() {
+    let cfg = with("if_expression_assignment", Level::Warn);
+
+    let cases = [
+        "local ok = true\nlocal a = if ok then 1 else 2\nreturn a\n",
+        "local ok, a = true, 0\na = if ok then 1 else 2\nreturn a\n",
+        "local ok = true\nreturn if ok then 1 else 2\n",
+        "local ok = true\nprint(if ok then 1 else 2)\n",
+    ];
+
+    for src in cases {
+        assert!(
+            fired(src, &cfg).contains(&"if_expression_assignment".to_string()),
+            "no report for {src}"
+        );
+    }
+}
+
+#[test]
+fn an_if_expression_in_a_condition_is_not_a_value() {
+    let cfg = with("if_expression_assignment", Level::Warn);
+
+    let cases = [
+        "local ok = true\nif (if ok then true else false) then print(1) end\n",
+        "local ok = true\nwhile (if ok then true else false) do break end\n",
+    ];
+
+    for src in cases {
+        assert!(
+            !fired(src, &cfg).contains(&"if_expression_assignment".to_string()),
+            "reported {src}"
+        );
+    }
+}
+
+/*
+Both lints are style opinions, and one reports the form that
+`misleading_and_or` advises. A default that spoke would report the repair
+that another lint asked for.
+*/
+#[test]
+fn a_conditional_value_says_nothing_by_default() {
+    let src = "local ok = true\n\
+               local a = ok and 1 or 2\n\
+               local b = if ok then 1 else 2\n\
+               return a, b\n";
+
+    let reported = names(src);
+
+    for name in ["and_or_conditional", "if_expression_assignment"] {
+        assert!(!reported.contains(&name.to_string()), "{name} speaks first");
+    }
+
+    // the exact repair that misleading_and_or names
+    assert!(!fires(
+        "if_expression_assignment",
+        "local ok = true\nreturn if ok then false else 1\n"
+    ));
+}
+
+// --- shape -----------------------------------------------------------------
+
+#[test]
+fn constant_condition_catches_a_literal_test() {
+    assert!(fires("constant_condition", "if true then work() end\n"));
+    assert!(fires("constant_condition", "if nil then work() end\n"));
+    assert!(fires(
+        "constant_condition",
+        "if \"cache\" then work() end\n"
+    ));
+}
+
+/// Only nil and false are false in Luau, so `if 0 then` runs the branch.
+#[test]
+fn zero_is_a_condition_that_always_passes() {
+    assert!(fires("constant_condition", "if 0 then work() end\n"));
+}
+
+/// Both loops are the standard Luau form, so neither one is a finding.
+#[test]
+fn the_two_endless_loops_are_exempt() {
+    assert!(!fires("constant_condition", "while true do work() end\n"));
+    assert!(!fires("constant_condition", "repeat work() until false\n"));
+}
+
+/// The exemption covers the endless form alone, and not every literal.
+#[test]
+fn a_loop_that_the_literal_stops_is_still_reported() {
+    assert!(fires("constant_condition", "while false do work() end\n"));
+    assert!(fires("constant_condition", "repeat work() until true\n"));
+}
+
+#[test]
+fn a_condition_that_reads_a_value_is_left_alone() {
+    assert!(!fires("constant_condition", "if ready then work() end\n"));
+    assert!(!fires(
+        "constant_condition",
+        "while count > 0 do work() end\n"
+    ));
+}
+
+#[test]
+fn else_after_return_needs_the_switch() {
+    let src = "if x then\n\treturn 1\nelse\n\treturn 2\nend\n";
+
+    assert!(!fires("else_after_return", src));
+
+    assert!(
+        fired(src, &with("else_after_return", Level::Warn))
+            .iter()
+            .any(|n| n == "else_after_return")
+    );
+}
+
+/// Every branch has to jump. An elseif that falls through still needs the else.
+#[test]
+fn a_branch_that_falls_through_keeps_its_else() {
+    let cfg = with("else_after_return", Level::Warn);
+    let has = |src: &str| fired(src, &cfg).iter().any(|n| n == "else_after_return");
+
+    assert!(!has(
+        "if x then\n\treturn 1\nelseif y then\n\tlog()\nelse\n\tstop()\nend\n"
+    ));
+    assert!(!has("if x then\n\ta()\nelse\n\tb()\nend\n"));
+}
+
+#[test]
+fn collapsible_if_needs_the_switch() {
+    let src = "if a then\n\tif b then\n\t\twork()\n\tend\nend\n";
+
+    assert!(!fires("collapsible_if", src));
+
+    assert!(
+        fired(src, &with("collapsible_if", Level::Warn))
+            .iter()
+            .any(|n| n == "collapsible_if")
+    );
+}
+
+/// Anything beside the inner if, or an else on either, blocks the merge.
+#[test]
+fn an_if_that_holds_more_than_one_if_stays() {
+    let cfg = with("collapsible_if", Level::Warn);
+    let has = |src: &str| fired(src, &cfg).iter().any(|n| n == "collapsible_if");
+
+    assert!(!has("if a then\n\tif b then work() end\n\tmore()\nend\n"));
+    assert!(!has(
+        "if a then\n\tif b then work() else other() end\nend\n"
+    ));
+    assert!(!has(
+        "if a then\n\tif b then work() end\nelse\n\tother()\nend\n"
+    ));
+}
+
+#[test]
+fn negated_condition_needs_the_switch() {
+    let src = "if not ready then\n\ta()\nelse\n\tb()\nend\n";
+
+    assert!(!fires("negated_condition", src));
+
+    assert!(
+        fired(src, &with("negated_condition", Level::Warn))
+            .iter()
+            .any(|n| n == "negated_condition")
+    );
+}
+
+#[test]
+fn a_negation_that_costs_the_reader_nothing_stays() {
+    let cfg = with("negated_condition", Level::Warn);
+    let has = |src: &str| fired(src, &cfg).iter().any(|n| n == "negated_condition");
+
+    assert!(!has("if not ready then\n\ta()\nend\n"), "no else to swap");
+    assert!(
+        !has("if not ready then\n\ta()\nelseif other then\n\tb()\nelse\n\tc()\nend\n"),
+        "a swap would rewrite the chain"
+    );
+    assert!(!has("if ready then\n\ta()\nelse\n\tb()\nend\n"));
+}
+
+// --- implicit_any_parameter -------------------------------------------------
+
+const UNTYPED_PARAMS: &str = "local function apply(list, transform)\n\
+                              \treturn transform(list)\n\
+                              end\n\
+                              return apply\n";
+
+/*
+The lint is off until a project asks for it.
+
+Most Luau carries no annotations. A warn default would report hundreds of
+times on the first run, and a report that large teaches users to stop reading
+the linter.
+*/
+#[test]
+fn implicit_any_parameter_says_nothing_until_a_project_asks() {
+    assert!(!fires("implicit_any_parameter", UNTYPED_PARAMS));
+}
+
+/// Each parameter answers for itself, so the two untyped ones give two findings.
+#[test]
+fn a_parameter_with_no_type_is_reported_when_the_project_asks() {
+    let found = fired(UNTYPED_PARAMS, &with("implicit_any_parameter", Level::Warn));
+
+    assert_eq!(
+        found
+            .iter()
+            .filter(|n| *n == "implicit_any_parameter")
+            .count(),
+        2,
+        "{found:?}"
+    );
+}
+
+/// The annotation is the whole ask, so an annotated signature is silent.
+#[test]
+fn a_typed_parameter_is_left_alone() {
+    let src = "local function apply(list: { number }, transform: (number) -> number)\n\
+               \treturn transform(list[1])\n\
+               end\n\
+               return apply\n";
+
+    let found = fired(src, &with("implicit_any_parameter", Level::Warn));
+
+    assert!(
+        !found.iter().any(|n| n == "implicit_any_parameter"),
+        "{found:?}"
+    );
+}
+
+/// A name that starts with `_` says that the body never reads the value.
+#[test]
+fn an_underscore_parameter_is_left_alone() {
+    let src = "local function handler(_, _index)\n\treturn 1\nend\nreturn handler\n";
+    let found = fired(src, &with("implicit_any_parameter", Level::Warn));
+
+    assert!(
+        !found.iter().any(|n| n == "implicit_any_parameter"),
+        "{found:?}"
+    );
+}
+
+/// Luau gives `self` the type of the table the method hangs on.
+#[test]
+fn the_self_of_a_method_is_left_alone() {
+    for src in [
+        "local t = {}\nfunction t:method(a: number)\n\treturn a\nend\nreturn t\n",
+        "local t = {}\nfunction t.method(self, a: number)\n\treturn a\nend\nreturn t\n",
+    ] {
+        let found = fired(src, &with("implicit_any_parameter", Level::Warn));
+
+        assert!(
+            !found.iter().any(|n| n == "implicit_any_parameter"),
+            "{found:?}"
+        );
+    }
+}
+
+/// The vararg takes a list and not one value, so its annotation is another question.
+#[test]
+fn a_vararg_is_left_alone() {
+    let src = "local function log(...)\n\treturn select(\"#\", ...)\nend\nreturn log\n";
+    let found = fired(src, &with("implicit_any_parameter", Level::Warn));
+
+    assert!(
+        !found.iter().any(|n| n == "implicit_any_parameter"),
+        "{found:?}"
+    );
+}
+
+// --- restricted_globals -----------------------------------------------------
+
+/// The lint is fully config driven, so the default level costs a project nothing.
+#[test]
+fn restricted_globals_is_quiet_until_a_project_fills_it_in() {
+    assert!(!fires(
+        "restricted_globals",
+        "return loadstring(\"return 1\")\n"
+    ));
+
+    let cfg = opts(
+        "restricted_globals",
+        "loadstring = \"compiles a string at runtime, ship the code instead\"",
+    );
+
+    let found = fired("return loadstring(\"return 1\")\n", &cfg);
+
+    assert!(found.iter().any(|n| n == "restricted_globals"), "{found:?}");
+}
+
+/// A local of the same name belongs to the author, and the project ruled out the global.
+#[test]
+fn a_local_of_the_restricted_name_is_left_alone() {
+    let cfg = opts(
+        "restricted_globals",
+        "loadstring = \"compiles a string at runtime, ship the code instead\"",
+    );
+
+    let src = "local function loadstring(s)\n\treturn s\nend\nreturn loadstring(\"x\")\n";
+    let found = fired(src, &cfg);
+
+    assert!(
+        !found.iter().any(|n| n == "restricted_globals"),
+        "{found:?}"
+    );
+}
+
+/// A name the config does not list is not restricted.
+#[test]
+fn only_the_named_globals_are_restricted() {
+    let cfg = opts(
+        "restricted_globals",
+        "getfenv = \"deoptimises the whole function\"",
+    );
+
+    let found = fired("return loadstring(\"return 1\")\n", &cfg);
+
+    assert!(
+        !found.iter().any(|n| n == "restricted_globals"),
+        "{found:?}"
+    );
+}

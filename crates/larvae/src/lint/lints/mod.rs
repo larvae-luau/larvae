@@ -6,12 +6,14 @@ a lint by its name, and the name stays the same in every file. Thus to move a
 lint between these files changes nothing that a project can see.
 */
 
+pub mod conditionals;
 pub mod configured;
 pub mod correctness;
 pub mod luau;
 pub mod names;
 pub mod original;
 pub mod roblox;
+pub mod shape;
 pub mod style;
 
 use super::Lint;
@@ -52,6 +54,7 @@ pub static ALL: &[&dyn Lint] = &[
     &luau::PlaceholderRead,
     &luau::TableOperations,
     &luau::ImplicitAnyLocal,
+    &luau::ImplicitAnyParameter,
     &luau::UninitializedLocal,
     &luau::UnknownType,
     // Names.
@@ -67,6 +70,7 @@ pub static ALL: &[&dyn Lint] = &[
     &configured::HighCyclomaticComplexity,
     &configured::ManualTableClone,
     &configured::PreferConst,
+    &configured::RestrictedGlobals,
     // Roblox data types.
     &roblox::RobloxIncorrectColor3NewBounds,
     &roblox::RobloxSuspiciousUdim2New,
@@ -86,6 +90,12 @@ pub static ALL: &[&dyn Lint] = &[
     &style::MixedTable,
     &style::MultipleStatements,
     &style::ParentheseConditions,
+    &shape::ConstantCondition,
+    &shape::ElseAfterReturn,
+    &shape::CollapsibleIf,
+    &shape::NegatedCondition,
+    &conditionals::AndOrConditional,
+    &conditionals::IfExpressionAssignment,
 ];
 
 /*

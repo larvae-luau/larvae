@@ -212,9 +212,9 @@ exclude = ["Packages", "**/*.spec.luau"] # relative to the project root
 performance = "info"                     # the six kinds: correctness, suspicious,
 complexity = "allow"                     # style, complexity, performance, roblox
 
-# A lint keeps its own default until it is named here. Fifty two of them;
-# `larvae lint --explain <name>` describes one. These are the defaults: five
-# deny, five allow, and the other forty two warn.
+# A lint keeps its own default until it is named here. Sixty three of them;
+# `larvae lint --explain <name>` describes one. These are the defaults: six
+# deny, eleven allow, and the other forty six warn.
 #
 # A lint denies when the code cannot be what the author meant and no reading
 # of it makes the finding wrong. Then the build stops. Everything softer
@@ -229,11 +229,18 @@ duplicate_keys = "deny"                  # the first entry is discarded
 duplicate_local = "deny"                 # the first binding is dead on arrival
 format_string = "deny"                   # string.format raises on this one
 zero_step_loop = "deny"                  # the counter never moves, so it hangs
+length_as_condition = "deny"             # `if #t then` is true with an empty table
 high_cyclomatic_complexity = "allow"     # a branch count is not a defect on its own
 non_const_require = "allow"              # const is newer than most codebases
 prefer_const = "allow"                   # a keyword is a bigger edit than a space
 multiple_statements = "allow"            # `larvae fmt` splits the line already
 implicit_return = "allow"                # a lookup that finds nothing reads well
+implicit_any_parameter = "allow"         # most Luau carries no annotations
+and_or_conditional = "allow"             # `x = c and a or b`, a matter of taste
+if_expression_assignment = "allow"       # the repair misleading_and_or asks for
+else_after_return = "allow"              # one level of indent, no more
+collapsible_if = "allow"                 # two conditions one `and` apart
+negated_condition = "allow"              # `if not x then a else b`
 unused_variable = "warn"
 shadowing = "warn"
 mixed_table = "warn"
@@ -249,6 +256,14 @@ ignore_pattern = "^_"
 
 [lint.options.high_cyclomatic_complexity]
 maximum_complexity = 40                  # selene's number
+
+# Silent until this table names a global. Each line is a name and the reason a
+# reader is shown, so a bare list would report "restricted" and leave them
+# guessing. getfenv and setfenv turn Luau's optimiser off for the function
+# that holds them, which is a cost and not a matter of taste.
+[lint.options.restricted_globals]
+loadstring = "compiles a string at runtime, ship the code instead"
+getfenv = "turns the optimiser off for this function"
 
 [lint.options.deprecated]
 additional = { "myOldHelper" = "myNewHelper" }
