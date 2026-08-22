@@ -4,7 +4,7 @@ Notable changes land here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow
 [semver](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.6.0 - 2026-08-21
 
 ### Added
 
