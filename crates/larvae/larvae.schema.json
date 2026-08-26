@@ -2197,6 +2197,12 @@
         },
         "studio": {
           "$ref": "#/$defs/lsp_studio"
+        },
+        "fflags": {
+          "$ref": "#/$defs/lsp_fflags"
+        },
+        "bytecode": {
+          "$ref": "#/$defs/lsp_bytecode"
         }
       }
     },
@@ -2383,6 +2389,72 @@
           "maximum": 65535,
           "default": 3773,
           "description": "The port the plugin posts to. The plugin ships with the same number."
+        }
+      }
+    },
+    "lsp_fflags": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "`[lsp.fflags]`, Luau's own feature flags. Luau ships a change behind a flag long before the flag flips, so a server that reads only the defaults reads an older Luau than the one it links. They apply in order: every flag on, then this table's overrides, then the two values larvae cannot work without, so a later step wins.",
+      "properties": {
+        "enable_by_default": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": false,
+          "description": "Turn on every Luau analysis flag that Luau does not mark experimental. luau-lsp defaults this on; larvae defaults it off, because larvae ships one pinned Luau and the same binary to everyone, so a flag that misbehaves misbehaves for every user at once."
+        },
+        "enable_new_solver": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": false,
+          "description": "Turn on Luau's new type solver."
+        },
+        "over": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "One value per flag name, which wins over the two switches above. The value is text because Luau keeps a boolean list and an integer list, and the name decides which one is asked: \"true\" and \"120\" are both written the same way. The editor spells this `override`, which is a Rust keyword."
+        }
+      }
+    },
+    "lsp_bytecode": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "`[lsp.bytecode]`, how the analyzer would compile. Nothing reads these yet. They are here because the editor extension sends them, and a setting the server drops is worse than one it stores: the user changes it, nothing happens, and nothing says why.",
+      "properties": {
+        "debug_level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2,
+          "default": 1,
+          "description": "0 none, 1 lines, 2 lines and locals."
+        },
+        "type_info_level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 1,
+          "description": "0 none, 1 the types the compiler knows."
+        },
+        "vector_lib": {
+          "type": "string",
+          "default": "Vector3",
+          "description": "The library a vector literal comes from, for a project with its own."
+        },
+        "vector_ctor": {
+          "type": "string",
+          "default": "new"
+        },
+        "vector_type": {
+          "type": "string",
+          "default": "Vector3"
         }
       }
     }

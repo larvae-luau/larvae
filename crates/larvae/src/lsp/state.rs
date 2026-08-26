@@ -83,6 +83,55 @@ impl Server {
             self.lsp.index.enabled = on;
         }
 
+        let fflags = &settings["fflags"];
+
+        if let Some(on) = fflags["enableByDefault"].as_bool() {
+            self.lsp.fflags.enable_by_default = on;
+        }
+
+        if let Some(on) = fflags["enableNewSolver"].as_bool() {
+            self.lsp.fflags.enable_new_solver = on;
+        }
+
+        /*
+        The editor sends `override`, which is a Rust keyword, so the table is
+        `over` here. Every value arrives as text, because Luau keeps a
+        boolean list and an integer list and the name decides which is asked.
+        */
+        if let Some(table) = fflags["override"].as_object() {
+            for (name, value) in table {
+                let text = match value {
+                    Value::String(s) => s.clone(),
+
+                    other => other.to_string(),
+                };
+
+                self.lsp.fflags.over.insert(name.clone(), text);
+            }
+        }
+
+        let bytecode = &settings["bytecode"];
+
+        if let Some(n) = bytecode["debugLevel"].as_u64() {
+            self.lsp.bytecode.debug_level = n as u8;
+        }
+
+        if let Some(n) = bytecode["typeInfoLevel"].as_u64() {
+            self.lsp.bytecode.type_info_level = n as u8;
+        }
+
+        for (id, field) in [("vectorLib", 0usize), ("vectorCtor", 1), ("vectorType", 2)] {
+            let Some(text) = bytecode[id].as_str() else {
+                continue;
+            };
+
+            match field {
+                0 => self.lsp.bytecode.vector_lib = text.to_string(),
+                1 => self.lsp.bytecode.vector_ctor = text.to_string(),
+                _ => self.lsp.bytecode.vector_type = text.to_string(),
+            }
+        }
+
         let studio = &settings["studio"];
 
         if let Some(on) = studio["enabled"].as_bool() {
@@ -171,6 +220,22 @@ impl Server {
         mount belongs to `larvae check` and not to a keystroke, so the
         diagnostics of the build go nowhere here.
         */
+        /*
+        The flags go in before anything reads a type. They are process wide
+        in Luau, so a change of them is a change of what every later answer
+        means.
+        */
+        let unknown = self
+            .analysis
+            .borrow_mut()
+            .as_mut()
+            .map(|a| a.set_flags(&self.lsp.fflags))
+            .unwrap_or_default();
+
+        for complaint in unknown {
+            warn(out, &format!("[lsp.fflags] {complaint}"))?;
+        }
+
         self.link_studio(out)?;
 
         if let Some(analysis) = self.analysis.borrow_mut().as_mut() {

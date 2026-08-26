@@ -79,6 +79,9 @@ type larvae_resolve_fn = extern "C" fn(*mut c_void, *const c_char, *const c_char
 type larvae_load_fn = extern "C" fn(*mut c_void, *const c_char) -> *const c_char;
 
 unsafe extern "C" {
+    fn larvae_enable_all_flags();
+    fn larvae_set_flag(name: *const c_char, value: *const c_char) -> i32;
+    fn larvae_apply_required_flags();
     fn larvae_signature_help(
         s: *mut c_void,
         path: *const c_char,
@@ -440,6 +443,41 @@ impl Analysis for LuauAnalysis {
             .collect()
     }
 
+    fn set_flags(&mut self, flags: &larvae::config::lsp::FFlagsConfig) -> Vec<String> {
+        if flags.enable_by_default {
+            unsafe { larvae_enable_all_flags() };
+        }
+
+        if flags.enable_new_solver
+            && let Ok(name) = CString::new("LuauSolverV2")
+            && let Ok(on) = CString::new("true")
+        {
+            unsafe { larvae_set_flag(name.as_ptr(), on.as_ptr()) };
+        }
+
+        let mut unknown = Vec::new();
+
+        for (name, value) in &flags.over {
+            let (Ok(key), Ok(text)) = (CString::new(name.as_str()), CString::new(value.as_str()))
+            else {
+                continue;
+            };
+
+            match unsafe { larvae_set_flag(key.as_ptr(), text.as_ptr()) } {
+                0 => {}
+
+                1 => unknown.push(format!("{name} is not a Luau flag")),
+
+                _ => unknown.push(format!("{name} does not take the value {value:?}")),
+            }
+        }
+
+        // Last, so an override cannot take away what larvae needs to work.
+        unsafe { larvae_apply_required_flags() };
+
+        unknown
+    }
+
     fn set_mounts(&mut self, mounts: larvae::requires::datamodel::MountTable) {
         self.resolver.mounts = Some(mounts);
     }
@@ -654,5 +692,85 @@ mod studio_definitions {
             complaints.is_empty(),
             "the mirrored path did not type check: {complaints:?}\n{text}"
         );
+    }
+}
+
+#[cfg(test)]
+mod flags {
+    use super::*;
+    use larvae::config::lsp::FFlagsConfig;
+    use larvae::lsp::analysis::Analysis;
+
+    /// An override reaches Luau, and a bad name comes back rather than vanishing.
+    #[test]
+    fn an_override_reaches_luau_and_a_typo_is_reported() {
+        let mut analysis = LuauAnalysis::new();
+
+        let mut flags = FFlagsConfig::default();
+        flags.over.insert("LuauSolverV2".into(), "true".into());
+        flags
+            .over
+            .insert("LuauNotARealFlagAtAll".into(), "true".into());
+        flags
+            .over
+            .insert("LuauTarjanChildLimit".into(), "not a number".into());
+
+        let complaints = analysis.set_flags(&flags);
+
+        assert_eq!(complaints.len(), 2, "{complaints:?}");
+        assert!(
+            complaints
+                .iter()
+                .any(|c| c.contains("LuauNotARealFlagAtAll")),
+            "{complaints:?}"
+        );
+        assert!(
+            complaints
+                .iter()
+                .any(|c| c.contains("LuauTarjanChildLimit")),
+            "{complaints:?}"
+        );
+    }
+
+    /*
+    The values larvae requires survive an override that would remove them.
+
+    They are applied last for that reason. A project that set the Tarjan
+    limit back to its default would otherwise lose the Roblox types, and the
+    only symptom is that `game` stops having a type.
+    */
+    #[test]
+    fn a_required_value_wins_over_an_override() {
+        let mut analysis = LuauAnalysis::new();
+
+        let mut flags = FFlagsConfig::default();
+        flags
+            .over
+            .insert("LuauTarjanChildLimit".into(), "10000".into());
+
+        assert!(
+            analysis.set_flags(&flags).is_empty(),
+            "the override is valid"
+        );
+
+        // The types still load, so the required value went back afterwards.
+        assert!(
+            analysis.definitions("@roblox", GLOBAL_TYPES),
+            "an override took away what larvae needs"
+        );
+    }
+
+    /// Turning every flag on must not stop the types loading.
+    #[test]
+    fn every_flag_on_still_loads_the_types() {
+        let mut analysis = LuauAnalysis::new();
+
+        let flags = FFlagsConfig {
+            enable_by_default: true,
+            ..Default::default()
+        };
+
+        assert!(analysis.set_flags(&flags).is_empty());
+        assert!(analysis.definitions("@roblox", GLOBAL_TYPES));
     }
 }

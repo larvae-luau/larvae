@@ -22,7 +22,9 @@ session is used from one thread, which the Rust side guarantees.
 #include "Luau/TypeAttach.h"
 
 #include "Luau/Common.h"
+#include "Luau/ExperimentalFlags.h"
 
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <utility>
@@ -159,6 +161,26 @@ static void applyRequiredFlags()
     setLuauInt("LuauTableTypeMaximumStringifierLength", 0);
 }
 
+/*
+Every Luau analysis flag on, minus the ones Luau marks experimental.
+
+This is what luau-lsp does when its `fflags.enableByDefault` is on, and it
+is on by default there. Luau ships a change behind a flag long before the
+flag flips, so a language server that reads only the defaults reads an
+older Luau than the one it links.
+
+An experimental flag stays off. Luau names them for exactly this reason:
+they are not ready to be read as behaviour.
+*/
+static void enableAllFlags()
+{
+    for (Luau::FValue<bool>* it = Luau::FValue<bool>::list; it; it = it->next)
+    {
+        if (strncmp(it->name, "Luau", 4) == 0 && !Luau::isAnalysisFlagExperimental(it->name))
+            it->value = true;
+    }
+}
+
 struct LarvaeSession
 {
     RustFileResolver files;
@@ -189,6 +211,60 @@ struct LarvaeSession
 };
 
 extern "C" {
+
+void larvae_enable_all_flags(void)
+{
+    enableAllFlags();
+}
+
+void larvae_apply_required_flags(void)
+{
+    applyRequiredFlags();
+}
+
+/*
+One flag by name, from the text a project wrote.
+
+Luau keeps a boolean list and an integer list, so the name decides which one
+is asked. An unknown name is reported rather than ignored: a flag that Luau
+renamed is a setting that silently stopped working, and the user is the only
+one who can fix it.
+*/
+int larvae_set_flag(const char* name, const char* value)
+{
+    for (Luau::FValue<bool>* it = Luau::FValue<bool>::list; it; it = it->next)
+    {
+        if (strcmp(it->name, name) != 0)
+            continue;
+
+        if (strcmp(value, "true") == 0 || strcmp(value, "True") == 0)
+            it->value = true;
+        else if (strcmp(value, "false") == 0 || strcmp(value, "False") == 0)
+            it->value = false;
+        else
+            return 2;
+
+        return 0;
+    }
+
+    for (Luau::FValue<int>* it = Luau::FValue<int>::list; it; it = it->next)
+    {
+        if (strcmp(it->name, name) != 0)
+            continue;
+
+        char* end = nullptr;
+        const long parsed = strtol(value, &end, 10);
+
+        if (end == value || *end != '\0')
+            return 2;
+
+        it->value = static_cast<int>(parsed);
+
+        return 0;
+    }
+
+    return 1;
+}
 
 LarvaeSession* larvae_session_new(void)
 {

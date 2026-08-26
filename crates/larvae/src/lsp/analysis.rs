@@ -236,6 +236,20 @@ pub trait Analysis: Send {
         Vec::new()
     }
 
+    /*
+    Apply Luau's own feature flags, in the order that makes a later step win.
+
+    Every flag on, then the project's overrides, then the values larvae
+    cannot work without. The names it did not recognise come back, because a
+    flag Luau renamed is a setting that quietly stopped working and only the
+    user can fix it.
+    */
+    fn set_flags(&mut self, flags: &crate::config::lsp::FFlagsConfig) -> Vec<String> {
+        let _ = flags;
+
+        Vec::new()
+    }
+
     /// Drop the cached state of one document and its dependents
     fn invalidate(&mut self, path: &Path);
 }

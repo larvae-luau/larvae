@@ -44,6 +44,99 @@ pub struct LspConfig {
     /// The link the Roblox Studio plugin talks to
     #[serde(default)]
     pub studio: StudioConfig,
+
+    /// Luau's own feature flags, for the analyzer
+    #[serde(default)]
+    pub fflags: FFlagsConfig,
+
+    /// How the analyzer would compile, for a build that reads bytecode
+    #[serde(default)]
+    pub bytecode: BytecodeConfig,
+}
+
+/*
+`[lsp.fflags]`, Luau's own feature flags.
+
+Luau ships a change behind a flag long before the flag flips, so a language
+server that reads only the defaults reads an older Luau than the one it
+links. luau-lsp turns them all on for that reason, and it defaults that on.
+
+Larvae defaults it off, and the difference is deliberate. larvae ships one
+pinned Luau and the same binary to everyone, so a flag that misbehaves
+misbehaves for every user at once and there is no fallback to a system
+install. A project that wants the newer behaviour asks for it.
+
+Order of application, which luau-lsp also follows: every flag on, then this
+table's overrides, then the two values larvae cannot work without. A later
+step wins, which is why the required values go last.
+*/
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct FFlagsConfig {
+    /// Turn on every Luau analysis flag that Luau does not mark experimental
+    #[serde(default)]
+    pub enable_by_default: bool,
+
+    /// Turn on Luau's new type solver
+    #[serde(default)]
+    pub enable_new_solver: bool,
+
+    /*
+    One value per flag name, which wins over the two switches above.
+
+    The value is text because Luau keeps a boolean list and an integer list,
+    and the name decides which one is asked. `"true"` and `"120"` are both
+    written the same way here.
+    */
+    #[serde(default)]
+    pub over: std::collections::BTreeMap<String, String>,
+}
+
+/*
+`[lsp.bytecode]`, how the analyzer would compile.
+
+Nothing reads these yet. They are here because the editor extension already
+sends them, and a setting the server drops on the floor is worse than one it
+stores: the user changes it, nothing happens, and nothing says why.
+*/
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct BytecodeConfig {
+    /// 0 none, 1 lines, 2 lines and locals
+    #[serde(default = "one")]
+    pub debug_level: u8,
+
+    /// 0 none, 1 the types the compiler knows
+    #[serde(default = "one")]
+    pub type_info_level: u8,
+
+    /// The library a vector literal comes from, for a project with its own
+    #[serde(default = "vector3")]
+    pub vector_lib: String,
+
+    #[serde(default = "new_")]
+    pub vector_ctor: String,
+
+    #[serde(default = "vector3")]
+    pub vector_type: String,
+}
+
+fn one() -> u8 {
+    1
+}
+
+fn vector3() -> String {
+    "Vector3".to_string()
+}
+
+fn new_() -> String {
+    "new".to_string()
+}
+
+impl Default for BytecodeConfig {
+    fn default() -> Self {
+        toml::from_str("").expect("every field has a default")
+    }
 }
 
 /*

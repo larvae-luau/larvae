@@ -1952,3 +1952,110 @@ fn the_completion_knobs_default_on() {
     assert!(server.lsp.completion.imports.enabled);
     assert!(server.lsp.index.enabled);
 }
+
+// --- [lsp.fflags] and [lsp.bytecode] ---------------------------------------
+
+/*
+The two tables the extension already sends reach the server.
+
+It sends them as of its commit 604baf1, and the server dropped them. A
+setting the server drops is worse than one it stores: the user changes it,
+nothing happens, and nothing says why.
+*/
+#[test]
+fn the_flag_and_bytecode_settings_reach_the_server() {
+    let mut server = Server {
+        editor: json!({
+            "larvae-lsp": {
+                "fflags": {
+                    "enableByDefault": true,
+                    "enableNewSolver": true,
+                    "override": { "LuauTarjanChildLimit": "20000", "LuauSolverV2": "false" },
+                },
+                "bytecode": {
+                    "debugLevel": 2,
+                    "typeInfoLevel": 0,
+                    "vectorLib": "Vec",
+                    "vectorCtor": "make",
+                    "vectorType": "Vec3",
+                },
+            }
+        }),
+        ..Default::default()
+    };
+
+    server.apply_editor_settings();
+
+    assert!(server.lsp.fflags.enable_by_default);
+    assert!(server.lsp.fflags.enable_new_solver);
+    assert_eq!(
+        server
+            .lsp
+            .fflags
+            .over
+            .get("LuauTarjanChildLimit")
+            .map(String::as_str),
+        Some("20000")
+    );
+    assert_eq!(
+        server
+            .lsp
+            .fflags
+            .over
+            .get("LuauSolverV2")
+            .map(String::as_str),
+        Some("false")
+    );
+
+    assert_eq!(server.lsp.bytecode.debug_level, 2);
+    assert_eq!(server.lsp.bytecode.type_info_level, 0);
+    assert_eq!(server.lsp.bytecode.vector_lib, "Vec");
+    assert_eq!(server.lsp.bytecode.vector_ctor, "make");
+    assert_eq!(server.lsp.bytecode.vector_type, "Vec3");
+}
+
+/*
+An override arrives as text whatever the editor sent.
+
+Luau keeps a boolean list and an integer list, and the flag name decides
+which one is asked, so a JSON number and a JSON string have to reach the
+same place.
+*/
+#[test]
+fn an_override_of_any_json_type_becomes_text() {
+    let mut server = Server {
+        editor: json!({
+            "larvae-lsp": {
+                "fflags": { "override": { "AsNumber": 120, "AsBool": true, "AsText": "no" } }
+            }
+        }),
+        ..Default::default()
+    };
+
+    server.apply_editor_settings();
+
+    let over = &server.lsp.fflags.over;
+
+    assert_eq!(over.get("AsNumber").map(String::as_str), Some("120"));
+    assert_eq!(over.get("AsBool").map(String::as_str), Some("true"));
+    assert_eq!(over.get("AsText").map(String::as_str), Some("no"));
+}
+
+/*
+Both default to what larvae is without them.
+
+`enable_by_default` is off, which departs from luau-lsp on purpose: larvae
+ships one pinned Luau and the same binary to everyone, so a flag that
+misbehaves misbehaves for every user at once.
+*/
+#[test]
+fn the_flag_defaults_are_conservative() {
+    let server = Server::default();
+
+    assert!(!server.lsp.fflags.enable_by_default);
+    assert!(!server.lsp.fflags.enable_new_solver);
+    assert!(server.lsp.fflags.over.is_empty());
+
+    assert_eq!(server.lsp.bytecode.debug_level, 1);
+    assert_eq!(server.lsp.bytecode.vector_lib, "Vector3");
+}

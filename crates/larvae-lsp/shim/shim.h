@@ -33,6 +33,21 @@ void larvae_set_resolver(LarvaeSession* s, void* userdata, larvae_resolve_fn res
 /* Declaration text in .d.luau form, loaded into the global scope. */
 int larvae_set_definitions(LarvaeSession* s, const char* name, const char* source);
 
+/* Luau's own feature flags. They are process wide, not per session.
+
+   Apply them in the order luau-lsp applies them: every flag on, then the
+   project's overrides, then the values larvae requires. A later step wins,
+   which is why the required values go last. */
+
+/* Turn on every non experimental Luau analysis flag. */
+void larvae_enable_all_flags(void);
+
+/* Set one flag by name. 0 ok, 1 unknown name, 2 the value does not parse. */
+int larvae_set_flag(const char* name, const char* value);
+
+/* Put back the values larvae cannot work without. Call after any override. */
+void larvae_apply_required_flags(void);
+
 /* The text of one open module; replaces what the session held. */
 void larvae_open(LarvaeSession* s, const char* path, const char* text);
 
