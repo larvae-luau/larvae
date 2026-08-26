@@ -120,7 +120,12 @@ unsafe extern "C" {
     fn larvae_open(s: *mut c_void, path: *const c_char, text: *const c_char);
     fn larvae_invalidate(s: *mut c_void, path: *const c_char);
     fn larvae_check(s: *mut c_void, path: *const c_char, out: *mut RawDiag, cap: usize) -> usize;
-    fn larvae_hover(s: *mut c_void, path: *const c_char, byte: u32) -> *const c_char;
+    fn larvae_hover(
+        s: *mut c_void,
+        path: *const c_char,
+        byte: u32,
+        show_table_kinds: i32,
+    ) -> *const c_char;
     fn larvae_completions(
         s: *mut c_void,
         path: *const c_char,
@@ -551,9 +556,9 @@ impl Analysis for LuauAnalysis {
             .collect()
     }
 
-    fn hover(&mut self, path: &Path, at: u32) -> Option<String> {
+    fn hover(&mut self, path: &Path, at: u32, show_table_kinds: bool) -> Option<String> {
         let key = self.key(path);
-        let text = unsafe { larvae_hover(self.session, key, at) };
+        let text = unsafe { larvae_hover(self.session, key, at, show_table_kinds as i32) };
 
         if text.is_null() {
             return None;
@@ -772,5 +777,99 @@ mod flags {
 
         assert!(analysis.set_flags(&flags).is_empty());
         assert!(analysis.definitions("@roblox", GLOBAL_TYPES));
+    }
+}
+
+#[cfg(test)]
+mod hover_cards {
+    use super::*;
+    use larvae::lsp::analysis::Analysis;
+
+    /// Hover the source at a byte offset, with table kinds hidden as they are by default.
+    fn card(src: &str, at: u32) -> Option<String> {
+        let mut analysis = LuauAnalysis::new();
+        let path = std::path::Path::new("/t.luau");
+
+        analysis.open(path, src);
+        analysis.hover(path, at, false)
+    }
+
+    /// The offset of the first byte of `word` in `src`.
+    fn at(src: &str, word: &str) -> u32 {
+        src.find(word).expect("the word is in the source") as u32
+    }
+
+    /*
+    A local hovers, which is the case the first cut of this missed entirely.
+
+    It asked `findTypeAtPosition`, which answers for an expression. A local's
+    declaration is not one, so the name a reader just wrote showed nothing.
+    */
+    #[test]
+    fn a_local_shows_its_name_and_type() {
+        let src = "--!strict\nlocal total = 1 + 2\nreturn total\n";
+
+        assert_eq!(
+            card(src, at(src, "total")),
+            Some("local total: number".into())
+        );
+    }
+
+    /// A function shows the signature the author wrote, not its type.
+    #[test]
+    fn a_function_shows_its_signature() {
+        let src = "--!strict\nlocal function add(a: number, b: number): number\n\treturn a + b\nend\nreturn add\n";
+        let text = card(src, at(src, "add")).expect("a card");
+
+        assert_eq!(text, "function add(a: number, b: number): number");
+    }
+
+    /*
+    A type alias shows what the name stands for, at the declaration and at
+    every use. The use needed the walk to include types, which it does not do
+    by default, so a reference hovered as nothing while its declaration was
+    fine.
+    */
+    #[test]
+    fn a_type_alias_shows_what_it_stands_for() {
+        let src = "--!strict\ntype Point = { x: number }\nlocal p: Point = { x = 1 }\nreturn p\n";
+
+        let declaration = card(src, at(src, "Point")).expect("the declaration");
+        let reference = card(src, src.rfind("Point").expect("the use") as u32).expect("the use");
+
+        assert!(declaration.starts_with("type Point ="), "{declaration}");
+        assert!(reference.starts_with("type Point ="), "{reference}");
+    }
+
+    /*
+    The sealed table marker is hidden unless the project asks for it.
+
+    `{| x: number |}` answers a question somebody writing a type asks, and a
+    reader hovering a value is not asking it. luau-lsp hides it too.
+    */
+    #[test]
+    fn the_table_kind_marker_follows_the_setting() {
+        let src = "--!strict\nlocal map = { x = 1 }\nreturn map\n";
+        let mut analysis = LuauAnalysis::new();
+        let path = std::path::Path::new("/t.luau");
+
+        analysis.open(path, src);
+
+        let hidden = analysis.hover(path, at(src, "map"), false).expect("a card");
+        let shown = analysis.hover(path, at(src, "map"), true).expect("a card");
+
+        assert!(!hidden.contains("{|"), "the marker leaked: {hidden}");
+        assert!(
+            shown.contains("{|"),
+            "the marker did not come back: {shown}"
+        );
+    }
+
+    /// Nothing under the cursor answers with nothing, rather than a guess.
+    #[test]
+    fn empty_space_hovers_nothing() {
+        let src = "--!strict\nlocal x = 1\n\n\nreturn x\n";
+
+        assert_eq!(card(src, src.len() as u32 - 1), None);
     }
 }

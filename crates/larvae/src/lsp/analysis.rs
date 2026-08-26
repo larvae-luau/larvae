@@ -195,8 +195,14 @@ pub trait Analysis: Send {
     /// Type diagnostics for one document
     fn check(&mut self, path: &Path) -> Vec<AnalysisDiag>;
 
-    /// The type at a byte offset, rendered for a hover card
-    fn hover(&mut self, path: &Path, at: u32) -> Option<String>;
+    /*
+    The type at a byte offset, rendered for a hover card.
+
+    `show_table_kinds` keeps the `{| |}` markers that say a table is sealed.
+    They matter to somebody writing a type and to nobody reading one, so the
+    caller passes what the project asked for.
+    */
+    fn hover(&mut self, path: &Path, at: u32, show_table_kinds: bool) -> Option<String>;
 
     /// Completions at a byte offset
     fn completions(&mut self, path: &Path, at: u32) -> Vec<AnalysisCompletion>;

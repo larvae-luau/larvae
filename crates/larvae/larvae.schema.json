@@ -2350,6 +2350,15 @@
           ],
           "default": true,
           "description": "Answer a hover with the type under the cursor."
+        },
+        "show_table_kinds": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": false,
+          "description": "Keep the `{| |}` markers that say a table is sealed. Off, as luau-lsp has it: the marker answers a question somebody writing a type asks, and a reader hovering a value is not asking it."
         }
       }
     },

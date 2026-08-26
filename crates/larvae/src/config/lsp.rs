@@ -248,6 +248,15 @@ impl Default for SignatureHelpConfig {
 pub struct HoverConfig {
     #[serde(default = "on")]
     pub enabled: bool,
+
+    /*
+    Keep the `{| |}` markers that say a table is sealed.
+
+    Off, as luau-lsp has it. The marker answers a question somebody writing a
+    type asks, and a reader hovering a value is not asking it.
+    */
+    #[serde(default)]
+    pub show_table_kinds: bool,
 }
 
 impl Default for HoverConfig {

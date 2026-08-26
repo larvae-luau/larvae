@@ -148,7 +148,11 @@ impl Server {
             let Some(text) = analysis.as_mut().and_then(|a| {
                 a.open(&path, &lowered);
 
-                a.hover(&path, lowered_offset(src, &lowered, at))
+                a.hover(
+                    &path,
+                    lowered_offset(src, &lowered, at),
+                    self.lsp.hover.show_table_kinds,
+                )
             }) else {
                 return Value::Null;
             };
@@ -164,7 +168,7 @@ impl Server {
         let Some(text) = analysis.as_mut().and_then(|a| {
             a.open(&path, &view);
 
-            a.hover(&path, at)
+            a.hover(&path, at, self.lsp.hover.show_table_kinds)
         }) else {
             return Value::Null;
         };

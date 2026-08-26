@@ -14,6 +14,7 @@ session is used from one thread, which the Rust side guarantees.
 #include "shim.h"
 
 #include "Luau/AstQuery.h"
+#include "Luau/Scope.h"
 #include "Luau/Autocomplete.h"
 #include "Luau/ConfigResolver.h"
 #include "Luau/BuiltinDefinitions.h"
@@ -401,7 +402,30 @@ size_t larvae_check(LarvaeSession* s, const char* path, LarvaeDiag* out, size_t 
     return n;
 }
 
-const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte)
+/*
+The hover card, in the shape a reader expects to see.
+
+Three things decide whether a hover is useful, and the first cut of this got
+all three wrong.
+
+It asked `findTypeAtPosition`, which answers for an expression. A local's
+declaration is not an expression, so hovering the name a reader just wrote
+gave nothing at all: `local total = add(1, 2)` had a type and would not show
+it. `findExprOrLocalAtPosition` answers for both, and a local's type comes
+from the scope that holds it.
+
+It printed a function as its type, `(number, number) -> number`. A reader
+wants the signature they wrote, with the name and the argument names, and
+Luau renders that itself through `toStringNamedFunction`.
+
+It printed a local as a bare type. A card that reads `local total: number`
+says what the line is as well as what it holds, which is what luau-lsp shows
+and what a reader is looking for.
+
+The options match luau-lsp's, because the two servers should not disagree
+about how one type reads.
+*/
+const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int show_table_kinds)
 {
     auto it = s->open.find(path);
     if (it == s->open.end())
@@ -424,18 +448,161 @@ const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte)
     LineIndex lines(it->second);
     Luau::Position position = lines.positionOf(byte);
 
-    std::optional<Luau::TypeId> type = Luau::findTypeAtPosition(*module, *source, position);
+    Luau::ScopePtr scope = Luau::findScopeAtPosition(*module, position);
+    Luau::ExprOrLocal found = Luau::findExprOrLocalAtPosition(*source, position);
+
+    std::optional<Luau::TypeId> type;
+    std::string aliasName;
+
+    /*
+    A type name answers with what it stands for.
+
+    `type Point = { x: number }` and every later `Point` both read as the
+    alias, so hovering either shows the shape the name hides. The type
+    namespace is separate from the value namespace, so the scope is asked a
+    different question here.
+    */
+    /*
+    Types are asked for outright. The walk leaves them out by default, so a
+    `Point` in `local p: Point` was never reached and the reference hovered
+    as nothing while its declaration hovered fine.
+    */
+    std::vector<Luau::AstNode*> ancestry =
+        Luau::findAstAncestryOfPosition(*source, position, /* includeTypes = */ true);
+
+    if (scope && !ancestry.empty())
+    {
+        Luau::AstNode* node = ancestry.back();
+
+        if (auto ref = node->as<Luau::AstTypeReference>())
+        {
+            std::optional<Luau::TypeFun> fun = ref->prefix
+                ? scope->lookupImportedType(ref->prefix->value, ref->name.value)
+                : scope->lookupType(ref->name.value);
+
+            if (fun)
+            {
+                aliasName = ref->prefix
+                    ? std::string(ref->prefix->value) + "." + ref->name.value
+                    : std::string(ref->name.value);
+                type = fun->type;
+            }
+        }
+        else
+        {
+            // The declaration itself, which is one node above the name.
+            for (auto up = ancestry.rbegin(); up != ancestry.rend(); ++up)
+            {
+                auto alias = (*up)->as<Luau::AstStatTypeAlias>();
+
+                if (!alias || !alias->nameLocation.containsClosed(position))
+                    continue;
+
+                if (auto fun = scope->lookupType(alias->name.value))
+                {
+                    aliasName = alias->name.value;
+                    type = fun->type;
+                }
+
+                break;
+            }
+        }
+    }
+
+    // A local is not an expression, so the scope answers for it.
+    if (!type)
+    if (Luau::AstLocal* local = found.getLocal())
+    {
+        if (scope)
+            type = scope->lookup(local);
+    }
+
+    if (!type)
+        type = Luau::findTypeAtPosition(*module, *source, position);
+
     if (!type)
         return nullptr;
 
     Luau::ToStringOptions opts;
-    opts.exhaustive = false;
-    opts.maxTypeLength = 1000;
+    opts.exhaustive = true;
+    opts.useLineBreaks = true;
+    opts.functionTypeArguments = true;
+    opts.hideNamedFunctionTypeParameters = false;
+    opts.scope = scope;
 
-    s->hoverStorage = Luau::toString(*type, opts);
+    /*
+    `{| x: number |}` says the table is sealed, which matters to somebody
+    writing a type and to nobody reading one. luau-lsp hides it by default
+    for that reason, and a project that wants it turns it back on.
+    */
+    opts.hideTableKind = show_table_kinds == 0;
+
+    Luau::TypeId followed = Luau::follow(*type);
+
+    /*
+    A function shows its signature. The name comes from whichever half of
+    the answer carries one, and a function with no name still renders, so an
+    anonymous one is not left blank.
+    */
+    if (const Luau::FunctionType* ftv = Luau::get<Luau::FunctionType>(followed))
+    {
+        std::string name;
+
+        if (Luau::AstLocal* local = found.getLocal())
+            name = local->name.value;
+        else if (Luau::AstExpr* expr = found.getExpr())
+        {
+            if (auto global = expr->as<Luau::AstExprGlobal>())
+                name = global->name.value;
+            else if (auto localExpr = expr->as<Luau::AstExprLocal>())
+                name = localExpr->local->name.value;
+            else if (auto index = expr->as<Luau::AstExprIndexName>())
+                name = index->index.value;
+        }
+
+        /*
+        The `function` keyword goes in front, because the card should read
+        like the line the author would write. Luau renders the rest.
+        */
+        s->hoverStorage = name.empty()
+            ? "function" + Luau::toStringNamedFunction("", *ftv, opts)
+            : "function " + Luau::toStringNamedFunction(name, *ftv, opts);
+
+        return s->hoverStorage.c_str();
+    }
+
+    std::string text = Luau::toString(followed, opts);
+
+    // A type name says it is a type, and what it stands for.
+    if (!aliasName.empty())
+    {
+        s->hoverStorage = "type " + aliasName + " = " + text;
+
+        return s->hoverStorage.c_str();
+    }
+
+    // A local says what the line is, as well as what it holds.
+    if (Luau::AstLocal* local = found.getLocal())
+    {
+        s->hoverStorage = "local " + std::string(local->name.value) + ": " + text;
+
+        return s->hoverStorage.c_str();
+    }
+
+    if (Luau::AstExpr* expr = found.getExpr())
+    {
+        if (auto localExpr = expr->as<Luau::AstExprLocal>())
+        {
+            s->hoverStorage = "local " + std::string(localExpr->local->name.value) + ": " + text;
+
+            return s->hoverStorage.c_str();
+        }
+    }
+
+    s->hoverStorage = text;
+
     return s->hoverStorage.c_str();
 }
-
 
 /*
 Fill a location from a module name and a Luau span.

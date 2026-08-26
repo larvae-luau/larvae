@@ -150,6 +150,10 @@ impl Server {
             self.lsp.hover.enabled = on;
         }
 
+        if let Some(on) = settings["hover"]["showTableKinds"].as_bool() {
+            self.lsp.hover.show_table_kinds = on;
+        }
+
         let hints = &settings["inlayHints"];
 
         if let Some(on) = hints["variableTypes"].as_bool() {
