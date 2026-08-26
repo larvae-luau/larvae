@@ -40,6 +40,44 @@ pub struct LspConfig {
     /// The project wide symbol index that `workspace/symbol` searches
     #[serde(default)]
     pub index: IndexConfig,
+
+    /// The link the Roblox Studio plugin talks to
+    #[serde(default)]
+    pub studio: StudioConfig,
+}
+
+/*
+`[lsp.studio]`, the link to the Roblox Studio plugin.
+
+The plugin mirrors the live DataModel into larvae, so the type checker knows
+the instances the place actually holds and not only the ones a sourcemap
+describes.
+
+Off by default, and this default is a decision rather than caution. To turn
+it on opens a listening socket, and a tool that opens one without being asked
+has changed what it is. The socket binds to loopback and to nothing else, so
+the tree never leaves the machine, but any process on that machine can still
+reach it. A user who wants the link says so.
+*/
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct StudioConfig {
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// The port the plugin posts to. The plugin ships with the same number.
+    #[serde(default = "studio_port")]
+    pub port: u16,
+}
+
+fn studio_port() -> u16 {
+    3773
+}
+
+impl Default for StudioConfig {
+    fn default() -> Self {
+        toml::from_str("").expect("every field has a default")
+    }
 }
 
 /*

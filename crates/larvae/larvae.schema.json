@@ -2194,6 +2194,9 @@
         },
         "index": {
           "$ref": "#/$defs/lsp_index"
+        },
+        "studio": {
+          "$ref": "#/$defs/lsp_studio"
         }
       }
     },
@@ -2357,6 +2360,29 @@
           ],
           "default": true,
           "description": "Build the project wide symbol index that `workspace/symbol` searches."
+        }
+      }
+    },
+    "lsp_studio": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "`[lsp.studio]`, the link to the Roblox Studio plugin. The plugin mirrors the live DataModel into larvae, so the type checker knows the instances the place actually holds and not only the ones a sourcemap describes.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": false,
+          "description": "Open the listener the plugin posts to. Off by default, and the default is a decision rather than caution: turning it on opens a listening socket, and a tool that opens one without being asked has changed what it is. The socket binds to loopback and nothing else, so the tree never leaves the machine, but any process on that machine can still reach it."
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 3773,
+          "description": "The port the plugin posts to. The plugin ships with the same number."
         }
       }
     }

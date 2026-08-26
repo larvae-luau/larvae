@@ -83,6 +83,16 @@ impl Server {
             self.lsp.index.enabled = on;
         }
 
+        let studio = &settings["studio"];
+
+        if let Some(on) = studio["enabled"].as_bool() {
+            self.lsp.studio.enabled = on;
+        }
+
+        if let Some(port) = studio["port"].as_u64() {
+            self.lsp.studio.port = port as u16;
+        }
+
         if let Some(on) = settings["signatureHelp"]["enabled"].as_bool() {
             self.lsp.signature_help.enabled = on;
         }
@@ -161,6 +171,8 @@ impl Server {
         mount belongs to `larvae check` and not to a keystroke, so the
         diagnostics of the build go nowhere here.
         */
+        self.link_studio(out)?;
+
         if let Some(analysis) = self.analysis.borrow_mut().as_mut() {
             /*
             A project with no larvae.toml still gets its mounts. The rojo
@@ -375,4 +387,76 @@ fn stamp_of(pool: &Pool) -> Vec<(std::path::PathBuf, Option<std::time::SystemTim
 /// A pool with no worm in it. Every file then takes the Luau route.
 pub(super) fn no_worms() -> Pool {
     Pool::new(Vec::new(), 1)
+}
+
+impl Server {
+    /*
+    Open or close the Studio link, to match what the config now says.
+
+    A link that is already open on the right port is left alone, because a
+    restart would drop the tree the plugin sent and cost a full resync for
+    nothing.
+
+    A port that will not bind is reported once and then let go. Another
+    larvae is usually holding it, and the server works without the link, so
+    a failure here must not stop the editor from getting its diagnostics.
+    */
+    pub(super) fn link_studio(&mut self, out: &mut impl Write) -> Result<()> {
+        let want = &self.lsp.studio;
+
+        if !want.enabled {
+            self.studio = None;
+
+            return Ok(());
+        }
+
+        if self.studio.as_ref().is_some_and(|l| l.port() == want.port) {
+            return Ok(());
+        }
+
+        // The old listener drops first, or the new one cannot take the port.
+        self.studio = None;
+
+        match crate::lsp::studio_link::Link::start(want.port) {
+            Ok(link) => self.studio = Some(link),
+
+            Err(e) => warn(
+                out,
+                &format!(
+                    "the Roblox Studio link cannot open on port {}: {e}; larvae serves without it",
+                    want.port
+                ),
+            )?,
+        }
+
+        Ok(())
+    }
+
+    /*
+    Give the analyzer the tree the plugin sent, when it changed.
+
+    The listener runs on its own thread and cannot reach the analyzer, which
+    lives here behind a `RefCell` and is busy whenever a request is in
+    flight. So the listener raises a flag, and this lowers it at the moment
+    the analyzer is free. The cost is that a change lands on the next
+    request rather than the instant it arrives, and the author is typing
+    anyway.
+    */
+    pub(super) fn refresh_studio(&self) {
+        let Some(link) = &self.studio else {
+            return;
+        };
+
+        if !link.take_dirty() {
+            return;
+        }
+
+        let Some(text) = link.definitions() else {
+            return;
+        };
+
+        if let Some(analysis) = self.analysis.borrow_mut().as_mut() {
+            analysis.definitions("@studio", &text);
+        }
+    }
 }

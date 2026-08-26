@@ -262,7 +262,21 @@ impl LuauAnalysis {
             services: Vec::new(),
         };
 
-        larvae::lsp::analysis::Analysis::definitions(&mut new, "@roblox", GLOBAL_TYPES);
+        /*
+        The result is read, not dropped.
+
+        It was dropped, and the load had been failing: Luau refused the
+        whole file on its inference limits, so `game` had no type and every
+        Roblox completion came from nothing. A silent failure hid that for
+        as long as the file has shipped. A server that cannot type the
+        platform says so.
+        */
+        if !larvae::lsp::analysis::Analysis::definitions(&mut new, "@roblox", GLOBAL_TYPES) {
+            eprintln!(
+                "larvae-lsp: the Roblox type definitions did not load, so \
+                 game and the services have no type"
+            );
+        }
 
         new
     }
@@ -536,5 +550,109 @@ impl Analysis for LuauAnalysis {
         let key = self.key(path);
 
         unsafe { larvae_invalidate(self.session, key) };
+    }
+}
+
+#[cfg(test)]
+mod studio_definitions {
+    use super::*;
+    use larvae::lsp::analysis::Analysis;
+
+    /*
+    The Studio tree's declaration text has to load into the real frontend.
+
+    The generator is checked against larvae's own definitions parser, which
+    answers whether the syntax is legal. Whether Luau accepts the meaning is
+    a different question: the text declares a subclass that shadows a
+    property of the class it extends, and only the frontend decides if that
+    holds. This is the measurement.
+    */
+
+    /*
+    The vendored Roblox types have to load, or the platform has no types.
+
+    They did not load. Luau refused the whole file on its inference limits
+    and reported one error with no useful location, and the caller dropped
+    the result, so `game` had no type and nobody saw why. This is the test
+    that would have caught it.
+    */
+    #[test]
+    fn the_vendored_roblox_types_load() {
+        let mut analysis = LuauAnalysis::new();
+
+        assert!(
+            analysis.definitions("@roblox", GLOBAL_TYPES),
+            "Luau refused the vendored globalTypes.d.luau"
+        );
+    }
+
+    /// And what they declare has to be usable, which is the point of loading them.
+    #[test]
+    fn a_service_call_type_checks_against_them() {
+        let mut analysis = LuauAnalysis::new();
+        let path = std::path::Path::new("/place.luau");
+
+        analysis.open(
+            path,
+            "--!strict\nlocal players = game:GetService(\"Players\")\nreturn players\n",
+        );
+
+        let complaints: Vec<String> = analysis
+            .check(path)
+            .into_iter()
+            .map(|d| d.message)
+            .collect();
+
+        assert!(
+            complaints.is_empty(),
+            "GetService did not type check, so the platform types are not in: {complaints:?}"
+        );
+    }
+
+    #[test]
+    fn a_mirrored_place_loads_into_luau() {
+        let place = larvae::lsp::studio::sample_place();
+        let text = larvae::lsp::studio::definitions(&place);
+
+        assert!(!text.is_empty(), "the sample place produced no text");
+
+        let mut analysis = LuauAnalysis::new();
+
+        assert!(
+            analysis.definitions("@studio", &text),
+            "Luau refused the Studio definitions:\n{text}"
+        );
+    }
+
+    /*
+    And the types it declares have to be usable, not only loadable.
+
+    A file that reads `game.Workspace.Baseplate` must type check, or the
+    mirror gives the editor nothing a reader can see.
+    */
+    #[test]
+    fn a_path_through_the_mirrored_tree_type_checks() {
+        let place = larvae::lsp::studio::sample_place();
+        let text = larvae::lsp::studio::definitions(&place);
+
+        let mut analysis = LuauAnalysis::new();
+
+        assert!(analysis.definitions("@studio", &text), "the text loads");
+
+        let path = std::path::Path::new("/place.luau");
+        let src = "--!strict\nlocal part = game.Workspace.Baseplate\nreturn part\n";
+
+        analysis.open(path, src);
+
+        let complaints: Vec<String> = analysis
+            .check(path)
+            .into_iter()
+            .map(|d| d.message)
+            .collect();
+
+        assert!(
+            complaints.is_empty(),
+            "the mirrored path did not type check: {complaints:?}\n{text}"
+        );
     }
 }

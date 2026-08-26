@@ -38,6 +38,8 @@ pub mod navigate;
 mod parity;
 mod state;
 pub mod structure;
+pub mod studio;
+mod studio_link;
 #[cfg(test)]
 mod tests;
 pub mod tokens;
@@ -117,6 +119,11 @@ struct Server {
     */
     symbols: workspace::Index,
     /*
+    The link the Roblox Studio plugin posts to, when the project asked for
+    one. It owns a thread, so dropping the server stops the listener.
+    */
+    studio: Option<studio_link::Link>,
+    /*
     The settings blob the editor sent, kept whole.
 
     The extension mirrors luau-lsp's ids, and the server knows only some of
@@ -143,6 +150,7 @@ impl Default for Server {
             lsp: Default::default(),
             aliases: HashMap::new(),
             symbols: workspace::Index::default(),
+            studio: None,
             editor: Value::Null,
             analysis: std::cell::RefCell::new(None),
         }

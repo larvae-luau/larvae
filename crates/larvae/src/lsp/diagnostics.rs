@@ -17,6 +17,13 @@ use super::{Server, rpc};
 impl Server {
     /// Lint one document and push the result
     pub(super) fn publish(&self, uri: &str, out: &mut impl Write) -> Result<()> {
+        /*
+        The Studio tree reaches the type checker here, because a publish is
+        the moment the analyzer is free and the moment its answer is about
+        to be read.
+        */
+        self.refresh_studio();
+
         let Some(src) = self.documents.get(uri) else {
             return Ok(());
         };

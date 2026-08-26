@@ -21,7 +21,11 @@ session is used from one thread, which the Rust side guarantees.
 #include "Luau/ToString.h"
 #include "Luau/TypeAttach.h"
 
+#include "Luau/Common.h"
+
+#include <cstring>
 #include <map>
+#include <utility>
 #include <optional>
 #include <string>
 #include <vector>
@@ -163,8 +167,56 @@ void larvae_set_resolver(LarvaeSession* s, void* userdata, larvae_resolve_fn res
     s->files.load = load;
 }
 
+/*
+Luau refuses a definition file that its constraint generator finds too deep.
+
+The Roblox type file is 19728 lines and about 2271 declarations, and the
+default recursion limit of 300 stops it with "Code is too complex to
+typecheck". The whole file then loads as nothing, so `game` has no type, and
+the failure is silent because a definition file reports one error and no
+location worth reading.
+
+The limit exists to stop a pathological user file from hanging the checker.
+A vendored declaration file is neither pathological nor a user file: it ships
+with larvae and it is the same every run. So it is raised for the load and
+put back after, which leaves the guard in place for the code a project
+writes.
+*/
 int larvae_set_definitions(LarvaeSession* s, const char* name, const char* source)
 {
+
+    /*
+    Raise the inference limits while the file loads, then put them back.
+
+    Luau guards its checker with about twenty five limits on recursion,
+    iteration and constraint count. They exist so a pathological user file
+    cannot hang an editor. A vendored declaration file is neither
+    pathological nor a user file: it ships inside larvae, it is the same on
+    every run, and it is 19728 lines of nothing but declarations.
+
+    No single limit is the one that fires. Raising them one at a time leaves
+    the file refused, and raising the family together loads it, so the cost
+    is spread across several of them. The multiplier is blunt for that
+    reason, and it is safe for the same reason the limits are unnecessary
+    here: the input is fixed and larvae ships it.
+
+    Every value is restored before this returns, so the code a project
+    writes is checked under Luau's own limits.
+    */
+    std::vector<std::pair<Luau::FValue<int>*, int>> raised;
+
+    for (Luau::FValue<int>* it = Luau::FValue<int>::list; it; it = it->next)
+    {
+        const bool guards = strstr(it->name, "Recursion") || strstr(it->name, "Limit");
+
+        // A Debug flag is not a guard, and a zero or negative value means off.
+        if (!guards || strncmp(it->name, "Debug", 5) == 0 || it->value <= 0)
+            continue;
+
+        raised.push_back({it, it->value});
+        it->value = it->value * 64;
+    }
+
     Luau::unfreeze(s->frontend.globals.globalTypes);
     Luau::unfreeze(s->frontend.globalsForAutocomplete.globalTypes);
 
@@ -176,6 +228,39 @@ int larvae_set_definitions(LarvaeSession* s, const char* name, const char* sourc
 
     Luau::freeze(s->frontend.globals.globalTypes);
     Luau::freeze(s->frontend.globalsForAutocomplete.globalTypes);
+
+    for (auto& [flag, was] : raised)
+        flag->value = was;
+
+    if (!result.success && getenv("LARVAE_DEFS_DEBUG"))
+    {
+        for (const auto& e : result.parseResult.errors)
+            fprintf(stderr, "defs %s:%d: %s\n", name, e.getLocation().begin.line + 1,
+                    e.getMessage().c_str());
+
+        if (result.parseResult.errors.empty())
+        {
+            if (result.module)
+            {
+                int shown = 0;
+
+                for (const auto& e : result.module->errors)
+                {
+                    fprintf(stderr, "defs %s:%d: %s\n", name, e.location.begin.line + 1,
+                            Luau::toString(e).c_str());
+
+                    if (++shown >= 5)
+                        break;
+                }
+
+                fprintf(stderr, "defs %s: %zu type error(s)\n", name, result.module->errors.size());
+            }
+            else
+            {
+                fprintf(stderr, "defs %s: no module came back\n", name);
+            }
+        }
+    }
 
     return result.success && forAutocomplete.success ? 0 : 1;
 }
