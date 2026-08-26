@@ -120,6 +120,45 @@ static Luau::FrontendOptions options()
     return o;
 }
 
+/*
+Set one Luau integer flag by name, because the linker cannot give the symbol.
+
+The flag lives in the vendored archive and the shim is a separate shared
+object, so naming the variable fails at the link. Luau registers every flag
+in a list it walks itself, and the list is reachable from here.
+*/
+static void setLuauInt(const char* flag, int value)
+{
+    for (Luau::FValue<int>* it = Luau::FValue<int>::list; it; it = it->next)
+    {
+        if (strcmp(it->name, flag) == 0)
+        {
+            it->value = value;
+
+            return;
+        }
+    }
+}
+
+/*
+The two flag values a Luau language server needs, which luau-lsp sets too.
+
+`LuauTarjanChildLimit` guards the type graph walk at 10000 children. The
+Roblox type file crosses it, and Luau then refuses the whole file with one
+error, `Code is too complex to typecheck`, reported at line 1 of 19728. So
+`game` had no type, every Roblox completion came from nothing, and the load
+failed quietly. 15000 is the number luau-lsp settles on for the same file.
+
+`LuauTableTypeMaximumStringifierLength` cuts a rendered table type at 40
+characters. That is Studio's number, chosen for a panel that cannot scroll.
+An editor hover can, so zero lifts the cut and a table type reads in full.
+*/
+static void applyRequiredFlags()
+{
+    setLuauInt("LuauTarjanChildLimit", 15000);
+    setLuauInt("LuauTableTypeMaximumStringifierLength", 0);
+}
+
 struct LarvaeSession
 {
     RustFileResolver files;
@@ -140,6 +179,7 @@ struct LarvaeSession
     {
         files.open = &open;
         configs.defaultConfig.mode = Luau::Mode::Nonstrict;
+        applyRequiredFlags();
 
         Luau::registerBuiltinGlobals(frontend, frontend.globals, false);
         Luau::registerBuiltinGlobals(frontend, frontend.globalsForAutocomplete, true);
@@ -168,55 +208,18 @@ void larvae_set_resolver(LarvaeSession* s, void* userdata, larvae_resolve_fn res
 }
 
 /*
-Luau refuses a definition file that its constraint generator finds too deep.
+Load one declaration file into the global scope.
 
-The Roblox type file is 19728 lines and about 2271 declarations, and the
-default recursion limit of 300 stops it with "Code is too complex to
-typecheck". The whole file then loads as nothing, so `game` has no type, and
-the failure is silent because a definition file reports one error and no
-location worth reading.
+The globals are frozen after the built in load, so they are thawed for this
+and frozen again. The autocomplete globals take the same text, because a
+completion list and a type check that disagree about what exists is worse
+than either being wrong on its own.
 
-The limit exists to stop a pathological user file from hanging the checker.
-A vendored declaration file is neither pathological nor a user file: it ships
-with larvae and it is the same every run. So it is raised for the load and
-put back after, which leaves the guard in place for the code a project
-writes.
+Whether the big Roblox file loads at all is decided in `applyRequiredFlags`,
+not here.
 */
 int larvae_set_definitions(LarvaeSession* s, const char* name, const char* source)
 {
-
-    /*
-    Raise the inference limits while the file loads, then put them back.
-
-    Luau guards its checker with about twenty five limits on recursion,
-    iteration and constraint count. They exist so a pathological user file
-    cannot hang an editor. A vendored declaration file is neither
-    pathological nor a user file: it ships inside larvae, it is the same on
-    every run, and it is 19728 lines of nothing but declarations.
-
-    No single limit is the one that fires. Raising them one at a time leaves
-    the file refused, and raising the family together loads it, so the cost
-    is spread across several of them. The multiplier is blunt for that
-    reason, and it is safe for the same reason the limits are unnecessary
-    here: the input is fixed and larvae ships it.
-
-    Every value is restored before this returns, so the code a project
-    writes is checked under Luau's own limits.
-    */
-    std::vector<std::pair<Luau::FValue<int>*, int>> raised;
-
-    for (Luau::FValue<int>* it = Luau::FValue<int>::list; it; it = it->next)
-    {
-        const bool guards = strstr(it->name, "Recursion") || strstr(it->name, "Limit");
-
-        // A Debug flag is not a guard, and a zero or negative value means off.
-        if (!guards || strncmp(it->name, "Debug", 5) == 0 || it->value <= 0)
-            continue;
-
-        raised.push_back({it, it->value});
-        it->value = it->value * 64;
-    }
-
     Luau::unfreeze(s->frontend.globals.globalTypes);
     Luau::unfreeze(s->frontend.globalsForAutocomplete.globalTypes);
 
@@ -228,9 +231,6 @@ int larvae_set_definitions(LarvaeSession* s, const char* name, const char* sourc
 
     Luau::freeze(s->frontend.globals.globalTypes);
     Luau::freeze(s->frontend.globalsForAutocomplete.globalTypes);
-
-    for (auto& [flag, was] : raised)
-        flag->value = was;
 
     if (!result.success && getenv("LARVAE_DEFS_DEBUG"))
     {

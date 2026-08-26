@@ -163,19 +163,35 @@ jobs:
       # `larvae` out by its exact name, so the second file does not confuse it.
       - name: Package
         if: runner.os != 'Windows'
+        shell: bash
         run: |
-          zip -j -9 "${{ matrix.asset }}.zip" \
-            "target/${{ matrix.target }}/release/larvae" \
-            "target/${{ matrix.target }}/release/larvae-lsp"
+          set -euo pipefail
+          OUT="target/${{ matrix.target }}/release"
+
+          # The analyzer lives in a shared library that the server finds
+          # through an rpath of $ORIGIN, so it has to be in the archive with
+          # it. Without it the server does not fall back, it refuses to
+          # start, and the editor gives up after five restarts.
+          FILES=("$OUT/larvae" "$OUT/larvae-lsp")
+
+          for lib in "$OUT"/libeclipse_analysis.*; do
+            [ -e "$lib" ] && FILES+=("$lib")
+          done
+
+          zip -j -9 "${{ matrix.asset }}.zip" "${FILES[@]}"
+          unzip -l "${{ matrix.asset }}.zip"
 
       - name: Package
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Compress-Archive -DestinationPath "${{ matrix.asset }}.zip" -Path @(
-            "target\${{ matrix.target }}\release\larvae.exe",
-            "target\${{ matrix.target }}\release\larvae-lsp.exe"
-          )
+          $out = "target\${{ matrix.target }}\release"
+          $files = @("$out\larvae.exe", "$out\larvae-lsp.exe")
+          $files += (Get-ChildItem "$out\*eclipse_analysis*" -ErrorAction SilentlyContinue).FullName
+
+          Compress-Archive -DestinationPath "${{ matrix.asset }}.zip" -Path $files
+          Expand-Archive -Path "${{ matrix.asset }}.zip" -DestinationPath check -Force
+          Get-ChildItem check
 
       - uses: actions/upload-artifact@v4
         with:

@@ -91,44 +91,71 @@ fn install() -> Result<ExitCode> {
 }
 
 /*
-Put `larvae-lsp` beside `larvae`, when the release shipped one.
+Put the language server beside `larvae`, with the library it needs.
 
-The editor extension looks for the server next to the binary it resolved, so
-a release that installs one and not the other gives a user the fallback
-server: lint and format, no hover, no completion. That reads as larvae being
-worse than luau-lsp rather than as a missing file.
+The editor extension looks for `larvae-lsp` next to the binary it resolved,
+so a release that installs one and not the other gives a user the fallback
+server: lint and format, no hover, no completion.
 
-A silent skip is right when the file is not there. The server is a separate
-artifact, `larvae lsp` still runs the same server without the analyzer, and a
-user who installed the CLI alone has not done anything wrong.
+The analyzer lives in a shared library, and the server finds it through an
+rpath of `$ORIGIN`, which is the directory the server sits in. So the library
+travels with it. A server installed without the library does not fall back,
+it refuses to start:
+
+```text
+larvae-lsp: error while loading shared libraries: libeclipse_analysis.so
+```
+
+The editor then restarts it five times and gives up, which is a worse
+failure than not installing the server at all.
+
+A silent skip is right when a file is not there. A build without the analyzer
+has the server and no library, `larvae lsp` still runs, and a user who
+installed the CLI alone has not done anything wrong.
 */
 fn install_server(me: &Path, bin_dir: &Path) {
-    let name = format!("larvae-lsp{}", std::env::consts::EXE_SUFFIX);
-
-    let Some(source) = me.parent().map(|dir| dir.join(&name)) else {
+    let Some(from) = me.parent() else {
         return;
     };
 
-    if !source.is_file() {
+    let server = format!("larvae-lsp{}", std::env::consts::EXE_SUFFIX);
+
+    if !from.join(&server).is_file() {
         return;
     }
 
-    let target = bin_dir.join(&name);
+    /*
+    The library is named the way the platform names one. The server's build
+    script writes a `.so` today, and the constants keep this right if it
+    ever writes the other two.
+    */
+    let library = format!(
+        "{}eclipse_analysis{}",
+        std::env::consts::DLL_PREFIX,
+        std::env::consts::DLL_SUFFIX
+    );
 
-    if paths::same_file(&source, &target) {
-        return;
-    }
+    for name in [server.as_str(), library.as_str()] {
+        let source = from.join(name);
 
-    match replace_exe(&source, &target) {
-        Ok(()) => ui::print_success(&format!("Installed larvae-lsp to {}", target.display())),
+        if !source.is_file() {
+            continue;
+        }
 
-        /*
-        A failure here does not fail the install. The CLI is on disk and
-        works, and the message says what the user lost.
-        */
-        Err(e) => eprintln!(
-            "note: could not install larvae-lsp, the editor falls back to `larvae lsp`: {e:#}"
-        ),
+        let target = bin_dir.join(name);
+
+        if paths::same_file(&source, &target) {
+            continue;
+        }
+
+        match replace_exe(&source, &target) {
+            Ok(()) => ui::print_success(&format!("Installed {name} to {}", target.display())),
+
+            // The CLI is on disk and works; the message says what was lost.
+            Err(e) => eprintln!(
+                "note: could not install {name}, the editor falls back to `larvae lsp`: {e:#}"
+            ),
+        }
     }
 }
 
