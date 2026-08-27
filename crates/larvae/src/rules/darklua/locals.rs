@@ -19,13 +19,16 @@ The rule removes only whole statements. A partly removed `local a, b`
 would change the number of values that the right hand side supplies. The
 declaration must also be inert. `local x = f()` must still call f, even
 when no code reads the result.
+
+A type counts as a reader. `local T = {}` under `type Alias = typeof(T)`
+stays, because the removal would leave the alias with nothing to read.
 */
 pub fn remove_unused_variable(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     let names = scope::resolve(ctx);
     let dead: Vec<u32> = names
         .bindings
         .iter()
-        .filter(|b| b.uses.is_empty())
+        .filter(|b| b.uses.is_empty() && b.type_uses.is_empty())
         .map(|b| b.declared_at)
         .collect();
 
@@ -91,20 +94,20 @@ output, but the rule needs no shadowing analysis to be correct. The
 difference only matters when the dense generator exists to make short
 names useful.
 
-The rule does not rename a name that appears anywhere in a type. Larvae
-keeps types as raw spans, so `typeof(x)` would still hold the old name
-after the rename.
+A type reads names too, and the parser keeps a type as a raw span. The
+scope walk recovers those reads, so `x :: jecs.Component` takes the new
+name of `jecs` with it. Where the walk cannot say what a name in a type
+means, it blocks that name and the rule leaves the binding alone.
 */
 pub fn rename_variables(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
     let names = scope::resolve(ctx);
-    let in_types = type_text(ctx);
     let mut supply = Supply::new(&names.taken);
 
     for binding in &names.bindings {
         let old = ctx.tok_text(binding.declared_at);
 
         // A vararg has no name to take, and Luau passes self implicitly.
-        if old == "self" || in_types.contains(old) {
+        if old == "self" || names.type_blocked.contains(old) {
             continue;
         }
 
@@ -112,14 +115,17 @@ pub fn rename_variables(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
             return;
         };
 
-        for at in std::iter::once(&binding.declared_at).chain(binding.uses.iter()) {
+        for at in std::iter::once(&binding.declared_at)
+            .chain(binding.uses.iter())
+            .chain(binding.type_uses.iter())
+        {
             let tok = &ctx.toks[*at as usize];
             edits.push((tok.start, tok.end, new.clone()));
         }
     }
 }
 
-/// Short names in order. The supply skips each name that the file already uses.
+/// New names in order. The supply skips each name that the file already uses.
 struct Supply<'a> {
     taken: &'a std::collections::HashSet<String>,
     counter: usize,
@@ -131,24 +137,11 @@ impl<'a> Supply<'a> {
     }
 
     fn next_name(&mut self) -> Option<String> {
-        const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-
         // After a few million names, the state is wrong. Stop without a report.
         while self.counter < 5_000_000 {
-            let mut n = self.counter;
+            let n = self.counter;
             self.counter += 1;
-            let mut name = String::new();
-
-            loop {
-                name.push(ALPHABET[n % ALPHABET.len()] as char);
-                n /= ALPHABET.len();
-
-                if n == 0 {
-                    break;
-                }
-
-                n -= 1;
-            }
+            let name = short_name(n);
 
             // is_ident rejects the keywords, so the supply never emits `do` or `end`.
             if !self.taken.contains(&name) && crate::rules::native::is_ident(&name) {
@@ -160,204 +153,21 @@ impl<'a> Supply<'a> {
     }
 }
 
-/// Each identifier that appears inside a type annotation anywhere in the file.
-fn type_text<'src>(ctx: &RuleCtx<'src>) -> std::collections::HashSet<&'src str> {
-    let mut found = std::collections::HashSet::new();
-    let mut v = TypeScan {
-        ctx,
-        found: &mut found,
-    };
+/// The nth name in `a`, `b`, ... `z`, `A`, ... `aa`, ...
+fn short_name(mut n: usize) -> String {
+    const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let mut name = String::new();
 
-    walk_types(ctx.chunk, &mut v);
+    loop {
+        name.push(ALPHABET[n % ALPHABET.len()] as char);
+        n /= ALPHABET.len();
 
-    found
-}
-
-struct TypeScan<'a, 'b> {
-    ctx: &'a RuleCtx<'b>,
-    found: &'a mut std::collections::HashSet<&'b str>,
-}
-
-impl<'b> TypeScan<'_, 'b> {
-    fn span(&mut self, span: TokSpan) {
-        for i in span.start..span.end {
-            self.found.insert(self.ctx.tok_text(i));
-        }
-    }
-
-    fn maybe(&mut self, span: &Option<TokSpan>) {
-        if let Some(s) = span {
-            self.span(*s);
-        }
-    }
-
-    fn body(&mut self, f: &FunctionBody) {
-        self.maybe(&f.generics);
-        self.maybe(&f.ret_type);
-
-        for p in &f.params {
-            self.maybe(&p.ty);
+        if n == 0 {
+            return name;
         }
 
-        self.block(&f.block);
+        n -= 1;
     }
-
-    fn block(&mut self, b: &Block) {
-        for s in &b.stmts {
-            self.stmt(s);
-        }
-    }
-
-    fn stmt(&mut self, s: &Stmt) {
-        match s {
-            // A whole alias is type text. This includes each name that typeof reads.
-            Stmt::TypeAlias(n) => self.span(n.span),
-
-            Stmt::Local(n) => {
-                for name in &n.names {
-                    self.maybe(&name.ty);
-                }
-
-                for e in &n.values {
-                    self.expr(e);
-                }
-            }
-
-            Stmt::LocalFunction(n) => self.body(&n.body),
-
-            Stmt::Function(n) => self.body(&n.body),
-
-            Stmt::Assign(n) => {
-                for e in n.targets.iter().chain(n.values.iter()) {
-                    self.expr(e);
-                }
-            }
-
-            Stmt::Call(e, _) => self.expr(e),
-
-            Stmt::Do(n) => self.block(&n.block),
-
-            Stmt::While(n) => {
-                self.expr(&n.cond);
-                self.block(&n.block);
-            }
-
-            Stmt::Repeat(n) => {
-                self.block(&n.block);
-                self.expr(&n.cond);
-            }
-
-            Stmt::If(n) => {
-                for (cond, body) in &n.branches {
-                    self.expr(cond);
-                    self.block(body);
-                }
-
-                if let Some(e) = &n.else_block {
-                    self.block(e);
-                }
-            }
-
-            Stmt::NumericFor(n) => {
-                self.maybe(&n.var.ty);
-                self.block(&n.block);
-            }
-
-            Stmt::GenericFor(n) => {
-                for v in &n.vars {
-                    self.maybe(&v.ty);
-                }
-
-                self.block(&n.block);
-            }
-
-            Stmt::Return(n) => {
-                for e in &n.values {
-                    self.expr(e);
-                }
-            }
-
-            _ => {}
-        }
-    }
-
-    fn expr(&mut self, e: &Expr) {
-        match e {
-            Expr::TypeAssert { expr, ty, .. } => {
-                self.span(*ty);
-                self.expr(expr);
-            }
-
-            Expr::Function { body, .. } => self.body(body),
-
-            Expr::Paren { inner, .. } => self.expr(inner),
-
-            Expr::Unary { operand, .. } => self.expr(operand),
-
-            Expr::Binary { lhs, rhs, .. } => {
-                self.expr(lhs);
-                self.expr(rhs);
-            }
-
-            Expr::Index { object, key, .. } => {
-                self.expr(object);
-
-                if let IndexKey::Computed(k) = key {
-                    self.expr(k);
-                }
-            }
-
-            Expr::Call { func, args, .. } => {
-                self.expr(func);
-
-                match args {
-                    CallArgs::Paren(list) => {
-                        for a in list {
-                            self.expr(a);
-                        }
-                    }
-
-                    CallArgs::Table(t) => self.expr(t),
-
-                    CallArgs::Str(_) => {}
-                }
-            }
-
-            Expr::Table { fields, .. } => {
-                for f in fields {
-                    match f {
-                        TableField::Positional(e) => self.expr(e),
-
-                        TableField::Named { value, .. } => self.expr(value),
-
-                        TableField::Computed { key, value } => {
-                            self.expr(key);
-                            self.expr(value);
-                        }
-                    }
-                }
-            }
-
-            Expr::IfElse {
-                branches,
-                else_value,
-                ..
-            } => {
-                for (c, val) in branches {
-                    self.expr(c);
-                    self.expr(val);
-                }
-
-                self.expr(else_value);
-            }
-
-            _ => {}
-        }
-    }
-}
-
-fn walk_types(chunk: &Chunk, v: &mut TypeScan) {
-    v.block(&chunk.block);
 }
 
 /// True when evaluation of the expression cannot have an observable effect.
@@ -523,8 +333,16 @@ mod rename_tests {
     fn rename(src: &str) -> String {
         let out = run(src, rename_variables);
         assert_lines_kept(src, &out);
+        parses(&out);
 
         out
+    }
+
+    /// A rename that strands a name in a type produces source that still lexes.
+    /// Only a parse proves the output is Luau.
+    fn parses(src: &str) {
+        let lexed = crate::syntax::lexer::lex(src).expect("lexes");
+        crate::syntax::parser::parse(src, &lexed.toks).expect("parses");
     }
 
     #[test]
@@ -568,17 +386,103 @@ mod rename_tests {
     }
 
     #[test]
-    fn a_name_used_in_a_type_is_left_alone() {
-        // typeof would still hold the old name, because types are raw spans.
-        let src = "local config = {}\ntype T = typeof(config)\nreturn config\n";
-        assert_eq!(rename(src), src);
-    }
-
-    #[test]
     fn shadowing_still_resolves_to_the_inner_one() {
         assert_eq!(
             rename("local x = 1\ndo local x = 2\nreturn x end\n"),
             "local a = 1\ndo local b = 2\nreturn b end\n"
+        );
+    }
+
+    /// The reported defect. The cast held the old name while the binding moved.
+    #[test]
+    fn a_cast_takes_the_new_name_of_its_prefix() {
+        assert_eq!(
+            rename(
+                "local jecs = require(\"@pkg/jecs\")\nlocal e = x :: jecs.Component\nreturn e\n"
+            ),
+            "local a = require(\"@pkg/jecs\")\nlocal b = x :: a.Component\nreturn b\n"
+        );
+    }
+
+    /// The same file without the cast. This is what already worked.
+    #[test]
+    fn the_same_file_without_a_cast_is_unchanged() {
+        assert_eq!(
+            rename("local jecs = require(\"@pkg/jecs\")\nlocal e = x\nreturn e\n"),
+            "local a = require(\"@pkg/jecs\")\nlocal b = x\nreturn b\n"
+        );
+    }
+
+    #[test]
+    fn an_annotation_takes_the_new_name_of_its_prefix() {
+        assert_eq!(
+            rename("local jecs = require(\"@pkg/jecs\")\nlocal e: jecs.Entity = x\nreturn e\n"),
+            "local a = require(\"@pkg/jecs\")\nlocal b: a.Entity = x\nreturn b\n"
+        );
+    }
+
+    #[test]
+    fn a_generic_argument_takes_the_new_name_of_its_prefix() {
+        assert_eq!(
+            rename(
+                "local jecs = require(\"@pkg/jecs\")\nlocal e: Array<jecs.Entity> = x\nreturn e\n"
+            ),
+            "local a = require(\"@pkg/jecs\")\nlocal b: Array<a.Entity> = x\nreturn b\n"
+        );
+    }
+
+    #[test]
+    fn a_prefix_in_an_alias_a_return_type_and_a_parameter_all_follow() {
+        assert_eq!(
+            rename(
+                "local t = require(\"@pkg/t\")\ntype E = t.Entity\nlocal function f(v: t.Id): t.Out return v end\nreturn f\n"
+            ),
+            "local a = require(\"@pkg/t\")\ntype E = a.Entity\nlocal function b(c: a.Id): a.Out return c end\nreturn b\n"
+        );
+    }
+
+    /// A table type puts the field name in front of the colon, so `e` declares
+    /// and does not read. Only the prefix behind the colon moves.
+    #[test]
+    fn a_field_name_in_a_table_type_is_not_a_reference() {
+        assert_eq!(
+            rename("local t = require(\"@pkg/t\")\ntype R = { e: t.Entity }\nreturn t\n"),
+            "local a = require(\"@pkg/t\")\ntype R = { e: a.Entity }\nreturn a\n"
+        );
+    }
+
+    #[test]
+    fn typeof_reads_a_value_so_the_local_and_the_type_move_together() {
+        assert_eq!(
+            rename("local config = {}\ntype T = typeof(config)\nreturn config\n"),
+            "local a = {}\ntype T = typeof(a)\nreturn a\n"
+        );
+    }
+
+    /// A bare name in a type is a type. The walk cannot prove the local and the
+    /// alias are the same thing, so it renames neither.
+    #[test]
+    fn a_bare_name_in_a_type_blocks_the_local_of_that_name() {
+        let src = "local Entity = 1\ntype T = Entity\nreturn Entity\n";
+        assert_eq!(rename(src), src);
+    }
+
+    /// A type function runs at check time and cannot see a runtime local, so a
+    /// name in its body means something else.
+    #[test]
+    fn a_type_function_body_blocks_the_names_it_mentions() {
+        let src = "local ty = 1\ntype function f(t) return ty.x end\nreturn ty\n";
+        assert_eq!(rename(src), src);
+    }
+
+    /// The type positions that the old walk never reached.
+    #[test]
+    fn a_cast_in_a_loop_header_and_a_call_type_argument_follow() {
+        assert_eq!(
+            rename(
+                "local t = require(\"@pkg/t\")\nfor i = 1, (n :: t.Count) do f<<t.Id>>(i) end\n"
+            ),
+            "local a = require(\"@pkg/t\")\nfor b = 1, (n :: a.Count) do f<<a.Id>>(b) end\n"
         );
     }
 }

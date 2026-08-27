@@ -10,12 +10,19 @@ binding covers.
 Lua's binding order matters, and the walk follows it. `local x = x` reads
 the outer x on the right. A `local function f` can call itself. A for
 variable exists only inside its own loop.
+
+The parser takes a type for its extent and never reads inside it, so a
+name that only a type uses is invisible to the tree. `type_refs` recovers
+those references from the tokens, in the same way as the linter's
+resolver. A rename that skipped them would leave `x :: jecs.Component`
+behind while the `jecs` binding took a new name.
 */
 
 use std::collections::HashSet;
 
 use crate::rules::engine::RuleCtx;
 use crate::syntax::ast::*;
+use crate::syntax::lexer::TokKind;
 
 /// One local, the point of its declaration, and each point where the code reads it.
 #[derive(Debug)]
@@ -24,6 +31,8 @@ pub struct Binding {
     pub declared_at: u32,
     /// The token indexes of each reference to it. A recursive call counts.
     pub uses: Vec<u32>,
+    /// The token indexes of references inside a type that read this value.
+    pub type_uses: Vec<u32>,
     /// The statement kind that introduced it. Deletion depends on this.
     pub origin: Origin,
 }
@@ -49,6 +58,15 @@ pub struct Names {
     pub globals: HashSet<u32>,
     /// Each name that appears anywhere. A generated name can then avoid all of them.
     pub taken: HashSet<String>,
+    /*
+    Names that a type mentions where the walk cannot say what they mean.
+
+    A bare name in a type is a type: `type T = Entity` names an alias and
+    not the local `Entity` beside it. A rename must leave such a name in
+    place, because the token to change is unknown. A rule reads this set
+    and skips those bindings.
+    */
+    pub type_blocked: HashSet<String>,
 }
 
 /// The token indexes of each name reference that no enclosing scope bound.
@@ -92,6 +110,7 @@ impl<'src> Binder<'_, 'src> {
         self.out.bindings.push(Binding {
             declared_at: span.start,
             uses: Vec::new(),
+            type_uses: Vec::new(),
             origin,
         });
         self.out.taken.insert(name.to_string());
@@ -112,6 +131,137 @@ impl<'src> Binder<'_, 'src> {
             None => {
                 self.out.globals.insert(span.start);
             }
+        }
+    }
+
+    /*
+    Recover the value names that a type references.
+
+    A token in a type falls into one of three groups.
+
+    A name in front of a dot reads a value: `jecs.Component` reads the
+    module and asks it for a type, and `Foo<jecs.Entity>` does the same
+    inside a generic argument. A name inside `typeof(...)` reads a value
+    too, because the parentheses hold an expression. Both groups record a
+    use, so a rename reaches them.
+
+    A name behind a dot is a member of the thing in front of it, so it
+    names nothing this scope holds. The walk drops it.
+
+    Every other name is a type: an alias, a generic parameter, or a
+    builtin such as `string`. The walk cannot tell those apart from a
+    local of the same name, so it blocks that name from a rename instead
+    of guessing.
+    */
+    fn type_refs(&mut self, span: TokSpan) {
+        let mut depth = 0usize;
+        // The paren depth that the innermost open `typeof(` started from.
+        let mut typeof_at: Option<usize> = None;
+        let mut i = span.start;
+
+        while i < span.end {
+            let kind = self.ctx.toks[i as usize].kind;
+
+            match kind {
+                TokKind::LParen => depth += 1,
+
+                TokKind::RParen => {
+                    depth = depth.saturating_sub(1);
+
+                    if typeof_at == Some(depth) {
+                        typeof_at = None;
+                    }
+                }
+
+                TokKind::Ident => {
+                    let name = self.ctx.tok_text(i);
+                    self.out.taken.insert(name.to_string());
+
+                    if name == "typeof" && self.kind_at(i + 1) == Some(TokKind::LParen) {
+                        typeof_at.get_or_insert(depth);
+                        i += 1;
+                        continue;
+                    }
+
+                    self.type_ident(span, i, typeof_at.is_some());
+                }
+
+                _ => {}
+            }
+
+            i += 1;
+        }
+    }
+
+    /// Every name in the span blocks a rename. `type function` bodies use this.
+    fn type_names_block(&mut self, span: TokSpan) {
+        for i in span.start..span.end {
+            if self.ctx.toks[i as usize].kind == TokKind::Ident {
+                let name = self.ctx.tok_text(i);
+                self.out.taken.insert(name.to_string());
+                self.out.type_blocked.insert(name.to_string());
+            }
+        }
+    }
+
+    fn kind_at(&self, index: u32) -> Option<TokKind> {
+        self.ctx.toks.get(index as usize).map(|t| t.kind)
+    }
+
+    /// Sort one name in a type into a use, a member, or a name to leave alone.
+    fn type_ident(&mut self, span: TokSpan, index: u32, in_typeof: bool) {
+        let prev = (index > span.start)
+            .then(|| self.kind_at(index - 1))
+            .flatten();
+
+        // A member of the thing in front of the dot. It names nothing here.
+        if prev == Some(TokKind::Dot) {
+            return;
+        }
+
+        /*
+        A name in front of a colon declares something: the field of a table
+        type in `{ e: T }`, or the parameter of a function type in
+        `(e: T) -> ()`. Neither reads a name, so neither blocks one.
+        */
+        if self.kind_at(index + 1) == Some(TokKind::Colon) {
+            return;
+        }
+
+        /*
+        `obj:method()` and `x :: T` both appear inside typeof. The name
+        after either one is a method or a type, so only the name in front
+        of a dot reads a value there.
+        */
+        let after_colon = prev == Some(TokKind::Colon)
+            || (index > span.start && self.ctx.tok_text(index - 1) == "::");
+        let reads_value =
+            self.kind_at(index + 1) == Some(TokKind::Dot) || (in_typeof && !after_colon);
+        let name = self.ctx.tok_text(index);
+
+        if !reads_value {
+            self.out.type_blocked.insert(name.to_string());
+            return;
+        }
+
+        match self.lookup(name) {
+            Some(binding) => self.out.bindings[binding].type_uses.push(index),
+
+            /*
+            A type alias is hoisted, so `type T = typeof(x)` can stand
+            above the `local x` it reads. The walk has not bound the name
+            yet at that point, so it blocks the name rather than miss the
+            use and rename half of it.
+            */
+            None => {
+                self.out.type_blocked.insert(name.to_string());
+            }
+        }
+    }
+
+    fn maybe_type(&mut self, span: &Option<TokSpan>) {
+        if let Some(s) = span {
+            self.type_refs(*s);
         }
     }
 
@@ -136,8 +286,12 @@ impl<'src> Binder<'_, 'src> {
     /// A function body owns its parameters, so they live in the body's scope.
     fn body(&mut self, f: &FunctionBody) {
         self.open();
+        self.maybe_type(&f.generics);
+        self.maybe_type(&f.ret_type);
 
         for p in &f.params {
+            self.maybe_type(&p.ty);
+
             if !p.is_vararg {
                 self.bind(p.name, Origin::Param);
             }
@@ -152,11 +306,26 @@ impl<'src> Binder<'_, 'src> {
 
     fn stmt(&mut self, s: &Stmt) {
         match s {
-            Stmt::Empty(_)
-            | Stmt::Break(_)
-            | Stmt::Continue(_)
-            | Stmt::TypeAlias(_)
-            | Stmt::Declare(_) => {}
+            Stmt::Empty(_) | Stmt::Break(_) | Stmt::Continue(_) | Stmt::Declare(_) => {}
+
+            /*
+            `type Foo = Types.Foo` reads the local `Types`.
+
+            A `type function f() ... end` holds Luau that runs at check
+            time, and that code cannot see a runtime local. A name in there
+            that matches one is a different name, so the whole body blocks
+            instead of renaming.
+            */
+            Stmt::TypeAlias(n) => {
+                let is_type_function =
+                    n.name.start > 0 && self.ctx.tok_text(n.name.start - 1) == "function";
+
+                if is_type_function {
+                    self.type_names_block(n.span);
+                } else {
+                    self.type_refs(n.span);
+                }
+            }
 
             // The walk reads the values before the names exist. `local x = x` sees the outer x.
             Stmt::Local(n) => {
@@ -165,6 +334,7 @@ impl<'src> Binder<'_, 'src> {
                 }
 
                 for name in &n.names {
+                    self.maybe_type(&name.ty);
                     self.bind(name.name, Origin::Local);
                 }
             }
@@ -186,8 +356,10 @@ impl<'src> Binder<'_, 'src> {
                 self.bind(n.name, Origin::Local);
 
                 for member in &n.members {
-                    if let crate::syntax::ast::ClassMember::Method(f) = member {
-                        self.body(&f.body);
+                    match member {
+                        ClassMember::Field { ty, .. } => self.maybe_type(ty),
+
+                        ClassMember::Method(f) => self.body(&f.body),
                     }
                 }
             }
@@ -243,6 +415,7 @@ impl<'src> Binder<'_, 'src> {
                 }
 
                 self.open();
+                self.maybe_type(&n.var.ty);
                 self.bind(n.var.name, Origin::Loop);
 
                 for s in &n.block.stmts {
@@ -260,6 +433,7 @@ impl<'src> Binder<'_, 'src> {
                 self.open();
 
                 for v in &n.vars {
+                    self.maybe_type(&v.ty);
                     self.bind(v.name, Origin::Loop);
                 }
 
@@ -325,8 +499,14 @@ impl<'src> Binder<'_, 'src> {
                 }
             }
 
-            Expr::Call { func, args, .. } => {
+            Expr::Call {
+                func,
+                args,
+                type_args,
+                ..
+            } => {
                 self.expr(func);
+                self.maybe_type(type_args);
 
                 match args {
                     CallArgs::Paren(list) => {
@@ -354,7 +534,10 @@ impl<'src> Binder<'_, 'src> {
                 self.expr(else_value);
             }
 
-            Expr::TypeAssert { expr, .. } => self.expr(expr),
+            Expr::TypeAssert { expr, ty, .. } => {
+                self.expr(expr);
+                self.type_refs(*ty);
+            }
         }
     }
 }
