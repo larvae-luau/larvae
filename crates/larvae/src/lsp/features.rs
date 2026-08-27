@@ -365,6 +365,10 @@ impl Server {
     the Luau the place receives.
     */
     pub(super) fn bytecode(&self, params: &Value, remarks: bool) -> Value {
+        if !self.lsp.analyzer {
+            return Value::Null;
+        }
+
         let uri = super::uri::uri_of(params);
 
         let Some(src) = self.documents.get(&uri) else {
@@ -462,7 +466,8 @@ impl Server {
         let uri = super::uri::uri_of(params);
 
         // `[lsp.hover] enabled = false` answers with nothing, as luau-lsp does.
-        if !self.lsp.hover.enabled || self.declines(&uri) {
+        // `[lsp] analyzer = false` turns the whole half off the same way.
+        if !self.lsp.analyzer || !self.lsp.hover.enabled || self.declines(&uri) {
             return Value::Null;
         }
 
@@ -570,7 +575,7 @@ impl Server {
     pub(super) fn completions(&self, params: &Value) -> Value {
         let uri = super::uri::uri_of(params);
 
-        if !self.lsp.completion.enabled || self.declines(&uri) {
+        if !self.lsp.analyzer || !self.lsp.completion.enabled || self.declines(&uri) {
             return json!([]);
         }
 

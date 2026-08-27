@@ -340,7 +340,8 @@ impl Server {
                 */
                 let caps = match self.lsp.enabled {
                     // What it will do, not what it can do this instant.
-                    true => capabilities(self.will_analyse()),
+                    // What it will do: the analyzer half needs the seam AND the setting.
+                    true => capabilities(self.will_analyse() && self.lsp.analyzer),
 
                     false => serde_json::json!({ "capabilities": {} }),
                 };

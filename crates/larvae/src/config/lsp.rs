@@ -21,6 +21,17 @@ pub struct LspConfig {
     #[serde(default)]
     pub claim_only: bool,
 
+    /*
+    Off serves what larvae always served, and nothing the analyzer adds.
+
+    The lints, the format, the code actions, and the outline stay, on
+    claimed and plain files alike. Hover, completion, type diagnostics, and
+    the rest of the Luau parity go quiet, and the session is never built,
+    which is the serving larvae had before the analyzer landed.
+    */
+    #[serde(default = "on")]
+    pub analyzer: bool,
+
     /// What the completion list offers, and how it writes what it inserts
     #[serde(default)]
     pub completion: CompletionConfig,

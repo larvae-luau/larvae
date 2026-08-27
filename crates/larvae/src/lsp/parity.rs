@@ -78,6 +78,11 @@ impl Server {
 
     /// Goto the declaration of the type, which only the analyzer knows
     pub(super) fn type_definition(&self, params: &Value) -> Value {
+        // `[lsp] analyzer = false` turns this half off whole.
+        if !self.lsp.analyzer {
+            return Value::Null;
+        }
+
         let Some((_, _, byte)) = self.at(params) else {
             return Value::Null;
         };
@@ -421,6 +426,11 @@ impl Server {
 
     /// The signature of the call the caret sits in; the analyzer alone knows it
     pub(super) fn signature_help(&self, params: &Value) -> Value {
+        // `[lsp] analyzer = false` turns this half off whole.
+        if !self.lsp.analyzer {
+            return Value::Null;
+        }
+
         if !self.lsp.signature_help.enabled {
             return Value::Null;
         }
@@ -468,6 +478,11 @@ impl Server {
     so the editor receives only what it drew.
     */
     pub(super) fn inlay_hints(&self, params: &Value) -> Value {
+        // `[lsp] analyzer = false` turns this half off whole.
+        if !self.lsp.analyzer {
+            return json!([]);
+        }
+
         let Some(path) = params["textDocument"]["uri"].as_str().and_then(path_of_uri) else {
             return json!([]);
         };

@@ -2180,6 +2180,12 @@
           "default": false,
           "description": "On serves only the files that a worm claims, so stock luau-lsp can own the plain Luau. Off serves every Luau file, which is what larvae always did."
         },
+        "analyzer": {
+          "type": "boolean",
+          "enum": [true, false],
+          "default": true,
+          "description": "Off serves what larvae always served and nothing the analyzer adds: lints, format, code actions, and the outline stay, on claimed and plain files alike, while hover, completion, and type diagnostics go quiet and the session is never built."
+        },
         "character_type": {
           "type": "string",
           "enum": ["r15", "r6", "not_set"],

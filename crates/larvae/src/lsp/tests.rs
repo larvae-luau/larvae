@@ -1871,6 +1871,60 @@ fn the_bytecode_request_reaches_the_analyzer() {
     );
 }
 
+/*
+`[lsp] analyzer = false` serves what larvae always served, and no more.
+
+The lints, the format, and the actions stay on both kinds of file. The
+capabilities of the analyzer are not advertised, hover answers nothing even
+though the seam holds an analyzer, and the type findings stay out of a
+publish. That is the serving larvae had before the analyzer landed.
+*/
+#[test]
+fn analyzer_off_is_the_classic_server() {
+    let mut server = Server {
+        analysis: std::cell::RefCell::new(Some(Box::new(BytecodeAnalysis))),
+        ..Default::default()
+    };
+    server.lsp.analyzer = false;
+    let mut out = Vec::new();
+
+    // Not advertised, so the editor never asks.
+    let caps = capabilities(server.will_analyse() && server.lsp.analyzer);
+    assert!(caps["capabilities"]["hoverProvider"].is_null(), "{caps}");
+    assert!(caps["capabilities"]["completionProvider"].is_null());
+
+    // The classic half still is.
+    assert_eq!(
+        caps["capabilities"]["documentFormattingProvider"],
+        json!(true)
+    );
+    assert_eq!(caps["capabilities"]["codeActionProvider"], json!(true));
+
+    // An editor that asks anyway gets the honest nothing.
+    let uri = "file:///project/a.luau";
+    server
+        .handle(
+            &message(
+                "textDocument/didOpen",
+                None,
+                json!({ "textDocument": { "uri": uri, "text": "local unused = 1\nreturn 2\n" } }),
+            ),
+            &mut out,
+        )
+        .unwrap();
+
+    let hover = ask(
+        &mut server,
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": at(0, 7) }),
+    );
+    assert!(hover.is_null(), "{hover}");
+
+    // The lints still publish: the open above pushed diagnostics.
+    let text = String::from_utf8(out).unwrap();
+    assert!(text.contains("unused"), "the lint pass went quiet: {text}");
+}
+
 /// A later change replaces what the editor said before.
 #[test]
 fn a_configuration_change_replaces_the_blob() {

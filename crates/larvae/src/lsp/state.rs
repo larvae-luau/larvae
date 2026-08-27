@@ -87,6 +87,10 @@ impl Server {
             self.lsp.claim_only = on;
         }
 
+        if let Some(on) = editor(&["analyzer"]).as_bool() {
+            self.lsp.analyzer = on;
+        }
+
         if let Some(on) = editor(&["completion", "enabled"]).as_bool() {
             self.lsp.completion.enabled = on;
         }
@@ -419,6 +423,14 @@ impl Server {
     until the session lands as an event.
     */
     fn start_analysis(&mut self) {
+        /*
+        Off means never built. The builder stays, so a project that turns
+        the analyzer back on gets its session then, without a restart.
+        */
+        if !self.lsp.analyzer {
+            return;
+        }
+
         let (Some(build), Some(events)) = (self.builder.take(), self.events.clone()) else {
             return;
         };
@@ -863,6 +875,22 @@ impl Server {
 
     /// True while the session is still being built, so a reply can say so
     pub(super) fn analysis_loading(&self) -> bool {
-        self.analysis.borrow().is_none() && self.analysis_pending
+        self.lsp.analyzer && self.analysis.borrow().is_none() && self.analysis_pending
+    }
+
+    /*
+    The analyzer, when the project wants it answering.
+
+    One gate for every type question, so `[lsp] analyzer = false` reads as
+    one rule: the session may exist, and no answer comes from it.
+    */
+    pub(super) fn analyser(
+        &self,
+    ) -> Option<std::cell::RefMut<'_, Option<Box<dyn crate::lsp::analysis::Analysis>>>> {
+        if !self.lsp.analyzer {
+            return None;
+        }
+
+        Some(self.analysis.borrow_mut())
     }
 }

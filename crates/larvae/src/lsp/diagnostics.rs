@@ -102,6 +102,7 @@ impl Server {
         tier-1 hooks lower it; the lints of the worm already cover it.
         */
         if claimed.is_none()
+            && self.lsp.analyzer
             && let Some(analysis) = self.analysis.borrow_mut().as_mut()
             && let Some(path) = path.as_deref()
         {
