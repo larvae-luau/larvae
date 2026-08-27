@@ -13,6 +13,29 @@ session is used from one thread, which the Rust side guarantees.
 
 #include "shim.h"
 
+/*
+The layout the Rust side declares, checked where it is defined.
+
+A field added to one of these structs and not to the other is a write past
+the end of the caller's array. That is heap corruption, and heap corruption
+surfaces somewhere else entirely: two crash reports for this shim landed in
+an unrelated hash table and in a destructor. `analyzer.rs` asserts the same
+numbers, so a one sided edit fails to build rather than shipping.
+*/
+static_assert(sizeof(LarvaeDiag) == 24, "LarvaeDiag must match RawDiag");
+static_assert(sizeof(LarvaeCompletion) == 56, "LarvaeCompletion must match RawCompletion");
+static_assert(sizeof(LarvaeLocation) == 24, "LarvaeLocation must match RawLocation");
+static_assert(sizeof(LarvaeParameter) == 8, "LarvaeParameter must match RawParameter");
+static_assert(sizeof(LarvaeSignature) == 24, "LarvaeSignature must match RawSignature");
+static_assert(sizeof(LarvaeHint) == 24, "LarvaeHint must match RawHint");
+
+static_assert(alignof(LarvaeDiag) == 8, "LarvaeDiag must align like RawDiag");
+static_assert(alignof(LarvaeCompletion) == 8, "LarvaeCompletion must align like RawCompletion");
+static_assert(alignof(LarvaeLocation) == 8, "LarvaeLocation must align like RawLocation");
+static_assert(alignof(LarvaeParameter) == 8, "LarvaeParameter must align like RawParameter");
+static_assert(alignof(LarvaeSignature) == 8, "LarvaeSignature must align like RawSignature");
+static_assert(alignof(LarvaeHint) == 8, "LarvaeHint must align like RawHint");
+
 #include "Luau/AstQuery.h"
 #include "Luau/Scope.h"
 #include "Luau/Autocomplete.h"
@@ -243,6 +266,12 @@ struct LarvaeSession
     cleared where a call starts, so no answer outlives the text it read.
     */
     std::map<std::string, std::string> commentText;
+
+    /*
+    The type arenas this session still owns, gathered where a call starts.
+    See `ownedByLiveArena`, which is the reason they are gathered at all.
+    */
+    std::vector<const Luau::TypeArena*> liveArenas;
 
     /* The declared type of `script`, per module. See larvae_set_script_type. */
     std::map<std::string, std::string> scriptTypes;
@@ -1195,6 +1224,60 @@ struct AttachComments final : Luau::AstVisitor
     }
 };
 
+/*
+The type arenas this session still owns, gathered for one call.
+
+`Luau::autocomplete` builds part of its answer in a `TypeArena` that it
+destroys before it returns, so a completion entry can carry a type that no
+longer exists. Rendering one reads a tag and stops, which is why that has
+gone unnoticed. Reading where a function was declared follows an owning
+string out of the type, and a wild pointer there is a crash the user sees:
+two of them arrived as core dumps, one inside a hash table lookup with a
+garbage key and one in the destructor of the entry map itself.
+
+So a type is read only when the arena that holds it is one of these.
+*/
+static void gatherArenas(LarvaeSession* s)
+{
+    s->liveArenas.clear();
+    s->liveArenas.push_back(&s->frontend.globals.globalTypes);
+    s->liveArenas.push_back(&s->frontend.globalsForAutocomplete.globalTypes);
+
+    for (const auto& [name, parsed] : s->frontend.sourceModules)
+    {
+        (void)parsed;
+
+        for (const Luau::ModulePtr& module :
+             {s->frontend.moduleResolver.getModule(name), s->frontend.moduleResolverForAutocomplete.getModule(name)})
+        {
+            if (!module)
+                continue;
+
+            s->liveArenas.push_back(&module->interfaceTypes);
+
+            if (module->internalTypes)
+                s->liveArenas.push_back(module->internalTypes.get());
+        }
+    }
+
+    std::sort(s->liveArenas.begin(), s->liveArenas.end());
+    s->liveArenas.erase(std::unique(s->liveArenas.begin(), s->liveArenas.end()), s->liveArenas.end());
+}
+
+/*
+Whether a type sits in an arena the session still holds.
+
+A type that names no arena is a builtin, ex: `number`. Those are persistent
+and outlive every session, and they carry no declaration to read anyway, so
+they answer no rather than passing through a lookup that says nothing.
+*/
+static bool ownedByLiveArena(LarvaeSession* s, Luau::TypeId ty)
+{
+    const Luau::TypeArena* arena = ty->owningArena;
+
+    return arena && std::binary_search(s->liveArenas.begin(), s->liveArenas.end(), arena);
+}
+
 /// The text of one module, whether the editor holds it or the disk does.
 static const std::string* moduleText(LarvaeSession* s, const Luau::ModuleName& name)
 {
@@ -1224,7 +1307,7 @@ comment gives every line it holds, minus its two fence lines and minus the
 indentation they share. A plain `-- ` line is not documentation and says
 nothing, which is the rule luau-lsp follows and the one moonwave defines.
 */
-static std::vector<std::string> commentsFor(LarvaeSession* s, const Luau::ModuleName& name, const Luau::Location& node)
+static std::vector<std::string> commentsFor(LarvaeSession* s, const Luau::ModuleName name, const Luau::Location node)
 {
     const Luau::SourceModule* source = s->frontend.getSourceModule(name);
 
@@ -1234,6 +1317,10 @@ static std::vector<std::string> commentsFor(LarvaeSession* s, const Luau::Module
     const std::string* text = moduleText(s, name);
 
     if (!text)
+        return {};
+
+    // A module that did not parse has no tree to walk and no comments in it.
+    if (!source->root)
         return {};
 
     AttachComments walk(node, source->commentLocations);
@@ -1458,10 +1545,16 @@ static std::string printMoonwave(const std::vector<std::string>& comments)
     return result;
 }
 
-/// The comments above one location, rendered.
-static std::string documentationAt(LarvaeSession* s, const Luau::ModuleName& name, const Luau::Location& at)
+/*
+The comments above one location, rendered.
+
+The name arrives by value on purpose. It often points into a type or into a
+map that the lookup below writes to, and a reference to either is a
+reference this call cannot promise will outlive it.
+*/
+static std::string documentationAt(LarvaeSession* s, Luau::ModuleName name, Luau::Location at)
 {
-    return printMoonwave(commentsFor(s, name, at));
+    return printMoonwave(commentsFor(s, std::move(name), at));
 }
 
 /*
@@ -1473,7 +1566,18 @@ whole of luau-lsp's `getDocumentationForType`.
 */
 static std::string documentationOfType(LarvaeSession* s, Luau::TypeId ty)
 {
+    /*
+    A type from an arena the session no longer holds is not read. See
+    `ownedByLiveArena`: a completion entry can carry one, and following the
+    declaration out of it is a wild pointer.
+    */
+    if (!ownedByLiveArena(s, ty))
+        return {};
+
     const Luau::TypeId followed = Luau::follow(ty);
+
+    if (followed != ty && !ownedByLiveArena(s, followed))
+        return {};
 
     if (const Luau::FunctionType* ftv = Luau::get<Luau::FunctionType>(followed))
     {
@@ -1714,6 +1818,13 @@ const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int 
     const Luau::SourceModule* source = s->frontend.getSourceModule(path);
     if (!module || !source)
         return nullptr;
+
+    /*
+    After the check, because a check builds the modules whose arenas these
+    are. Gathering them first left the set empty on the first hover of a
+    session, and every type then read as one this session does not own.
+    */
+    gatherArenas(s);
 
     LineIndex lines(it->second);
     Luau::Position position = lines.positionOf(byte);
@@ -2959,14 +3070,25 @@ size_t larvae_completions(LarvaeSession* s, const char* path, uint32_t byte, Lar
         return 0;
     }
 
+    /*
+    After the check, because a check builds the modules whose arenas these
+    are, and before the loop, which reads a type only when its arena is one
+    of them.
+    */
+    gatherArenas(s);
+
     s->completionStorage.clear();
     /*
     Six strings per entry at most: the label, the type, the argument
     names, the insertion, the documentation, and the documentation symbol.
     Reserved for the same reason as the diagnostics: no reallocation after
-    the first pointer is handed out.
+    the first pointer is handed out. A seventh push would reallocate and
+    every pointer already handed out would point at freed memory, so the
+    number lives here and the loop stops rather than crossing it.
     */
-    s->completionStorage.reserve(cap * 6);
+    const size_t kStringsPerEntry = 6;
+
+    s->completionStorage.reserve(cap * kStringsPerEntry);
     size_t n = 0;
 
     /*
@@ -3001,6 +3123,14 @@ size_t larvae_completions(LarvaeSession* s, const char* path, uint32_t byte, Lar
         */
         if (label.rfind("_larvae_", 0) == 0)
             continue;
+
+        /*
+        The room this entry needs, before any of it is handed out. The
+        reserve above covers every entry the cap allows, so this only ever
+        fires if somebody adds a seventh string and forgets the number.
+        */
+        if (s->completionStorage.size() + kStringsPerEntry > s->completionStorage.capacity())
+            break;
 
         s->completionStorage.push_back(label);
         out[n].label = s->completionStorage.back().c_str();

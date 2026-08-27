@@ -1885,6 +1885,40 @@ mod type_completions {
 }
 
 #[cfg(test)]
+mod ffi_layout {
+    use super::*;
+
+    /*
+    The layout both sides of the seam agree on.
+
+    A field added to one struct and not to its twin is a write past the end
+    of the array this side allocates, and that is heap corruption: it
+    surfaces somewhere else entirely, which is exactly how it arrived, as
+    two core dumps in an unrelated hash table and in a destructor. `shim.cpp`
+    holds the same numbers as static asserts, so an edit on one side alone
+    fails to build rather than shipping.
+
+    A number here changes only when the C struct changes with it.
+    */
+    #[test]
+    fn every_shared_struct_has_the_size_the_shim_asserts() {
+        assert_eq!(std::mem::size_of::<RawDiag>(), 24);
+        assert_eq!(std::mem::size_of::<RawCompletion>(), 56);
+        assert_eq!(std::mem::size_of::<RawLocation>(), 24);
+        assert_eq!(std::mem::size_of::<RawParameter>(), 8);
+        assert_eq!(std::mem::size_of::<RawSignature>(), 24);
+        assert_eq!(std::mem::size_of::<RawHint>(), 24);
+
+        assert_eq!(std::mem::align_of::<RawDiag>(), 8);
+        assert_eq!(std::mem::align_of::<RawCompletion>(), 8);
+        assert_eq!(std::mem::align_of::<RawLocation>(), 8);
+        assert_eq!(std::mem::align_of::<RawParameter>(), 8);
+        assert_eq!(std::mem::align_of::<RawSignature>(), 8);
+        assert_eq!(std::mem::align_of::<RawHint>(), 8);
+    }
+}
+
+#[cfg(test)]
 mod startup_cost {
     use super::*;
     use larvae::lsp::analysis::Analysis;
