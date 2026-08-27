@@ -878,19 +878,4 @@ impl Server {
         self.lsp.analyzer && self.analysis.borrow().is_none() && self.analysis_pending
     }
 
-    /*
-    The analyzer, when the project wants it answering.
-
-    One gate for every type question, so `[lsp] analyzer = false` reads as
-    one rule: the session may exist, and no answer comes from it.
-    */
-    pub(super) fn analyser(
-        &self,
-    ) -> Option<std::cell::RefMut<'_, Option<Box<dyn crate::lsp::analysis::Analysis>>>> {
-        if !self.lsp.analyzer {
-            return None;
-        }
-
-        Some(self.analysis.borrow_mut())
-    }
 }
