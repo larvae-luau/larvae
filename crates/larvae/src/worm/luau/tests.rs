@@ -534,6 +534,7 @@ return {
         let settings = crate::worm::Settings {
             fmt: r#"{"column_width":88}"#.to_owned(),
             lint: r#"{"tidy":"warn"}"#.to_owned(),
+            root: "/project".to_owned(),
         };
         let config = toml::from_str::<toml::Value>("").unwrap();
 

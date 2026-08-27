@@ -171,7 +171,7 @@ pub fn pool_with(
     Ok(Pool::with_settings(
         registry.specs(),
         cfg.process.run_order,
-        crate::worm::Settings::new(fmt, &lint),
+        crate::worm::Settings::new(fmt, &lint, root),
     ))
 }
 
