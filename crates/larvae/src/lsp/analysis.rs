@@ -314,9 +314,15 @@ pub trait Analysis: Send {
         None
     }
 
-    /// The types the author left out, for the whole module
-    fn hints(&mut self, path: &Path) -> Vec<AnalysisHint> {
-        let _ = path;
+    /*
+    The types the author left out, for the whole module.
+
+    Both kinds render as a type hint of the protocol, so only the collector
+    behind this can tell a local's hint from a parameter's. The two flags
+    carry the project's settings down to where the split exists.
+    */
+    fn hints(&mut self, path: &Path, variables: bool, parameters: bool) -> Vec<AnalysisHint> {
+        let _ = (path, variables, parameters);
 
         Vec::new()
     }
@@ -333,6 +339,28 @@ pub trait Analysis: Send {
         let _ = flags;
 
         Vec::new()
+    }
+
+    /*
+    The compiled form of one module, rendered for a reader.
+
+    `remarks` picks the second view: the source annotated with what the
+    compiler chose, rather than the instruction listing. Both answer the
+    question `[lsp.bytecode]` exists for, and luau-lsp serves both.
+
+    The compiler is self-contained, so the input is text and not a path:
+    no module graph takes part, and a claimed file passes its lowering.
+    */
+    fn bytecode(
+        &mut self,
+        source: &str,
+        optimization: u8,
+        remarks: bool,
+        config: &crate::config::lsp::BytecodeConfig,
+    ) -> Option<String> {
+        let _ = (source, optimization, remarks, config);
+
+        None
     }
 
     /// Drop the cached state of one document and its dependents

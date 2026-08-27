@@ -87,6 +87,26 @@ A failure here is not worth a message. The database ships with the binary,
 so a failure means the binary is damaged, and every other answer still holds
 without it.
 */
+/*
+One page, found under the symbol Luau reports or under `@roblox`.
+
+Luau names a symbol after the package that declared the thing, and larvae
+re-declares some Roblox globals: the sourcemap tree declares `game`, and the
+Studio mirror does too. `@sourcemap/global/game` then matches no page, while
+`@roblox/global/game` is the page the reader wants. The tail is the same
+thing either way, so the retry is safe: a name the reference does not hold
+still answers nothing.
+*/
+fn page<'a>(docs: &'a HashMap<String, DocEntry>, symbol: &str) -> Option<&'a DocEntry> {
+    if let Some(found) = docs.get(symbol) {
+        return Some(found);
+    }
+
+    let (_, tail) = symbol.strip_prefix('@')?.split_once('/')?;
+
+    docs.get(&format!("@roblox/{tail}"))
+}
+
 fn read_api_docs() -> HashMap<String, DocEntry> {
     use std::io::Read;
 
@@ -187,6 +207,8 @@ unsafe extern "C" {
         path: *const c_char,
         out: *mut RawHint,
         cap: usize,
+        want_variables: i32,
+        want_parameters: i32,
     ) -> usize;
     fn larvae_definition(
         s: *mut c_void,
@@ -649,7 +671,12 @@ impl Analysis for LuauAnalysis {
         })
     }
 
-    fn hints(&mut self, path: &Path) -> Vec<larvae::lsp::analysis::AnalysisHint> {
+    fn hints(
+        &mut self,
+        path: &Path,
+        variables: bool,
+        parameters: bool,
+    ) -> Vec<larvae::lsp::analysis::AnalysisHint> {
         let key = self.key(path);
 
         /*
@@ -667,7 +694,16 @@ impl Analysis for LuauAnalysis {
             }
         }; CAP];
 
-        let n = unsafe { larvae_inlay_hints(self.session, key, raw.as_mut_ptr(), CAP) };
+        let n = unsafe {
+            larvae_inlay_hints(
+                self.session,
+                key,
+                raw.as_mut_ptr(),
+                CAP,
+                variables as i32,
+                parameters as i32,
+            )
+        };
 
         raw[..n.min(CAP)]
             .iter()
@@ -831,7 +867,7 @@ impl Analysis for LuauAnalysis {
                 */
                 documentation: text(c.documentation).or_else(|| {
                     text(c.documentation_symbol)
-                        .and_then(|symbol| docs.get(&symbol))
+                        .and_then(|symbol| page(docs, &symbol))
                         .and_then(DocEntry::markdown)
                 }),
                 deprecated: c.deprecated == 1,
@@ -851,7 +887,7 @@ impl Analysis for LuauAnalysis {
         let key = self.key(path);
         let symbol = text(unsafe { larvae_documentation_symbol(self.session, key, at) })?;
 
-        self.docs.get(&symbol).and_then(DocEntry::markdown)
+        page(&self.docs, &symbol).and_then(DocEntry::markdown)
     }
 
     /*
@@ -900,6 +936,49 @@ impl Analysis for LuauAnalysis {
     }
 }
 
+/*
+The Luau globals and the machine, guarded for the tests.
+
+Two problems share this pool. Luau keeps its flags in the process, so a test
+that changes them changes what every concurrently running test infers, and
+the suite died on it: a flag flipped in the middle of another session's
+check. And every session loads the full Roblox types, so sixteen of them at
+once starve the machine and allocation starts failing, which read as hovers
+that answered nothing on a loaded box.
+
+So a session test takes one permit of six, and a flag test takes the whole
+pool. The sweep acquires in index order, so two exclusives cannot deadlock,
+and a permit holder blocks nothing but its own slot.
+*/
+#[cfg(test)]
+mod luau_globals {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Mutex, MutexGuard};
+
+    const PERMITS: usize = 6;
+
+    static POOL: [Mutex<()>; PERMITS] = [const { Mutex::new(()) }; PERMITS];
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+    pub struct Shared(#[allow(dead_code)] MutexGuard<'static, ()>);
+
+    pub fn shared() -> Shared {
+        let at = NEXT.fetch_add(1, Ordering::Relaxed) % PERMITS;
+
+        Shared(POOL[at].lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    pub struct Exclusive(#[allow(dead_code)] Vec<MutexGuard<'static, ()>>);
+
+    pub fn exclusive() -> Exclusive {
+        Exclusive(
+            POOL.iter()
+                .map(|m| m.lock().unwrap_or_else(|e| e.into_inner()))
+                .collect(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod studio_definitions {
     use super::*;
@@ -925,6 +1004,7 @@ mod studio_definitions {
     */
     #[test]
     fn the_vendored_roblox_types_load() {
+        let _luau = super::luau_globals::shared();
         let mut analysis = LuauAnalysis::new();
 
         assert!(
@@ -936,6 +1016,7 @@ mod studio_definitions {
     /// And what they declare has to be usable, which is the point of loading them.
     #[test]
     fn a_service_call_type_checks_against_them() {
+        let _luau = super::luau_globals::shared();
         let mut analysis = LuauAnalysis::new();
         let path = std::path::Path::new("/place.luau");
 
@@ -958,6 +1039,7 @@ mod studio_definitions {
 
     #[test]
     fn a_mirrored_place_loads_into_luau() {
+        let _luau = super::luau_globals::shared();
         let place = larvae::lsp::studio::sample_place();
         let text = larvae::lsp::studio::definitions(&place);
 
@@ -979,6 +1061,7 @@ mod studio_definitions {
     */
     #[test]
     fn a_path_through_the_mirrored_tree_type_checks() {
+        let _luau = super::luau_globals::shared();
         let place = larvae::lsp::studio::sample_place();
         let text = larvae::lsp::studio::definitions(&place);
 
@@ -1018,7 +1101,13 @@ mod flags {
     Every hover test failed for that reason, and only when the whole suite
     ran. The guard puts them back however the test leaves.
     */
-    struct Flags;
+    struct Flags(#[allow(dead_code)] super::luau_globals::Exclusive);
+
+    impl Flags {
+        fn hold() -> Self {
+            Self(super::luau_globals::exclusive())
+        }
+    }
 
     impl Drop for Flags {
         fn drop(&mut self) {
@@ -1029,7 +1118,7 @@ mod flags {
     /// An override reaches Luau, and a bad name comes back rather than vanishing.
     #[test]
     fn an_override_reaches_luau_and_a_typo_is_reported() {
-        let _flags = Flags;
+        let _flags = Flags::hold();
         let mut analysis = LuauAnalysis::new();
 
         let mut flags = FFlagsConfig::default();
@@ -1067,7 +1156,7 @@ mod flags {
     */
     #[test]
     fn a_required_value_wins_over_an_override() {
-        let _flags = Flags;
+        let _flags = Flags::hold();
         let mut analysis = LuauAnalysis::new();
 
         let mut flags = FFlagsConfig::default();
@@ -1090,7 +1179,7 @@ mod flags {
     /// Turning every flag on must not stop the types loading.
     #[test]
     fn every_flag_on_still_loads_the_types() {
-        let _flags = Flags;
+        let _flags = Flags::hold();
         let mut analysis = LuauAnalysis::new();
 
         let flags = FFlagsConfig {
@@ -1130,6 +1219,7 @@ mod hover_cards {
     */
     #[test]
     fn a_local_shows_its_name_and_type() {
+        let _luau = super::luau_globals::shared();
         let src = "--!strict\nlocal total = 1 + 2\nreturn total\n";
 
         assert_eq!(
@@ -1141,6 +1231,7 @@ mod hover_cards {
     /// A function shows the signature the author wrote, not its type.
     #[test]
     fn a_function_shows_its_signature() {
+        let _luau = super::luau_globals::shared();
         let src = "--!strict\nlocal function add(a: number, b: number): number\n\treturn a + b\nend\nreturn add\n";
         let text = card(src, at(src, "add")).expect("a card");
 
@@ -1155,6 +1246,7 @@ mod hover_cards {
     */
     #[test]
     fn a_type_alias_shows_what_it_stands_for() {
+        let _luau = super::luau_globals::shared();
         let src = "--!strict\ntype Point = { x: number }\nlocal p: Point = { x = 1 }\nreturn p\n";
 
         let declaration = card(src, at(src, "Point")).expect("the declaration");
@@ -1172,6 +1264,7 @@ mod hover_cards {
     */
     #[test]
     fn the_table_kind_marker_follows_the_setting() {
+        let _luau = super::luau_globals::shared();
         let src = "--!strict\nlocal map = { x = 1 }\nreturn map\n";
         let mut analysis = LuauAnalysis::new();
         let path = std::path::Path::new("/t.luau");
@@ -1195,6 +1288,7 @@ mod hover_cards {
     /// Nothing under the cursor answers with nothing, rather than a guess.
     #[test]
     fn empty_space_hovers_nothing() {
+        let _luau = super::luau_globals::shared();
         let src = "--!strict\nlocal x = 1\n\n\nreturn x\n";
 
         assert_eq!(card(src, src.len() as u32 - 1), None);
@@ -1226,6 +1320,7 @@ mod luau_lsp_parity {
     /// A service comes back as itself, not as the `Instance` the signature says.
     #[test]
     fn get_service_answers_with_the_service() {
+        let _luau = super::luau_globals::shared();
         let src = "local Players = game:GetService(\"Players\")\nreturn Players\n";
 
         assert_eq!(card(src, "Players"), "local Players: Players");
@@ -1234,6 +1329,7 @@ mod luau_lsp_parity {
     /// A method is named for the type it hangs off, with no `self` in the list.
     #[test]
     fn a_method_reads_as_the_type_that_has_it() {
+        let _luau = super::luau_globals::shared();
         let src = "local p = Instance.new(\"Part\")\np:Destroy()\n";
 
         assert_eq!(card(src, "Destroy"), "function Instance:Destroy(): nil");
@@ -1242,6 +1338,7 @@ mod luau_lsp_parity {
     /// A field keeps the path the author wrote, so the card says where it came from.
     #[test]
     fn a_field_keeps_its_path() {
+        let _luau = super::luau_globals::shared();
         let src = "local x = math.cos(1)\nreturn x\n";
 
         assert_eq!(card(src, "cos"), "function math.cos(n: number): number");
@@ -1250,6 +1347,7 @@ mod luau_lsp_parity {
     /// A type in a return pack resolves, which needed the visitor to enter the pack.
     #[test]
     fn a_return_type_resolves() {
+        let _luau = super::luau_globals::shared();
         let src = "--!strict\nlocal function g(a: number): (number, string)\n\treturn a, \"x\"\nend\nreturn g\n";
         let at = src.rfind("string").expect("the return type") as u32;
 
@@ -1267,6 +1365,7 @@ mod luau_lsp_parity {
     /// A string literal says how long it is, which is the part a reader cannot count.
     #[test]
     fn a_string_literal_says_its_length() {
+        let _luau = super::luau_globals::shared();
         let src = "local s = \"Loaded\"\nreturn s\n";
 
         assert_eq!(card(src, "\"Loaded\""), "string (6 bytes)");
@@ -1275,6 +1374,7 @@ mod luau_lsp_parity {
     /// A global says it is a type, so a table of constructors is not read as a value.
     #[test]
     fn a_global_reads_as_a_type() {
+        let _luau = super::luau_globals::shared();
         let src = "local c = Color3\nreturn c\n";
 
         assert!(
@@ -1312,6 +1412,7 @@ mod bytecode_listing {
     */
     #[test]
     fn a_function_lists_its_opcodes() {
+        let _luau = super::luau_globals::shared();
         let mut analysis = LuauAnalysis::new();
         let text = listing(
             &mut analysis,
@@ -1335,6 +1436,7 @@ mod bytecode_listing {
     */
     #[test]
     fn the_optimization_level_changes_the_listing() {
+        let _luau = super::luau_globals::shared();
         let mut analysis = LuauAnalysis::new();
         let src = "local x = 1 + 2 * 3\nreturn x\n";
 
@@ -1352,6 +1454,7 @@ mod bytecode_listing {
     */
     #[test]
     fn the_remarks_view_annotates_the_source() {
+        let _luau = super::luau_globals::shared();
         let src = "local t = {}\nfor i = 1, 10 do\n\tt[i] = i * i\nend\nreturn t\n";
 
         let remarks = LuauAnalysis::new()
@@ -1372,6 +1475,7 @@ mod bytecode_listing {
     */
     #[test]
     fn a_source_that_does_not_compile_says_why() {
+        let _luau = super::luau_globals::shared();
         let mut analysis = LuauAnalysis::new();
         let text = listing(&mut analysis, "local x =\n", 2);
 
@@ -1388,6 +1492,7 @@ mod bytecode_listing {
     */
     #[test]
     fn the_vector_configuration_reaches_the_compiler() {
+        let _luau = super::luau_globals::shared();
         let mut analysis = LuauAnalysis::new();
         let src = "local v = Vector3.new(1, 2, 3)\nreturn v\n";
 
@@ -1437,6 +1542,7 @@ mod statement_names {
     /// The dot form names the type the function hangs off, and keeps `self`.
     #[test]
     fn a_function_statement_names_the_type_it_hangs_off() {
+        let _luau = super::luau_globals::shared();
         assert_eq!(
             card(MODULE, "Init"),
             "function Self.Init(self: Self, n: number): number"
@@ -1446,6 +1552,7 @@ mod statement_names {
     /// The colon form keeps its colon and drops the receiver from the list.
     #[test]
     fn a_method_statement_hides_the_receiver() {
+        let _luau = super::luau_globals::shared();
         assert_eq!(
             card(MODULE, "Bump"),
             "function Self:Bump<a>(by: number): number"
@@ -1455,6 +1562,7 @@ mod statement_names {
     /// The `type` keyword hovers the alias it opens, and not nothing.
     #[test]
     fn the_type_keyword_hovers_its_alias() {
+        let _luau = super::luau_globals::shared();
         assert_eq!(
             card(MODULE, "type Stat"),
             "type Stat = \"Strength\" | \"Walkspeed\""
@@ -1464,12 +1572,14 @@ mod statement_names {
     /// A property name inside a table type answers with what the property holds.
     #[test]
     fn a_property_name_in_a_table_type_answers() {
+        let _luau = super::luau_globals::shared();
         assert_eq!(card(MODULE, "value: any"), "any");
     }
 
     /// A literal inside a type answers with itself, and not with the union.
     #[test]
     fn a_literal_inside_a_type_answers_with_itself() {
+        let _luau = super::luau_globals::shared();
         assert_eq!(card(MODULE, "\"Strength\""), "\"Strength\"");
     }
 }

@@ -487,7 +487,7 @@ impl Server {
             .analysis
             .borrow_mut()
             .as_mut()
-            .map(|a| a.hints(&path))
+            .map(|a| a.hints(&path, cfg.variable_types, cfg.parameter_types))
             .unwrap_or_default();
 
         let from = params["range"]["start"]["line"].as_u64().map(|l| l as u32);

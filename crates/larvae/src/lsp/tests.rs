@@ -860,6 +860,48 @@ while True:
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
+/*
+Answers `bytecode` with what it was asked, so the dispatch is provable:
+the method, the optimization level, and the view all read back.
+*/
+struct BytecodeAnalysis;
+
+impl crate::lsp::analysis::Analysis for BytecodeAnalysis {
+    fn open(&mut self, _: &std::path::Path, _: &str) {}
+
+    fn check(&mut self, _: &std::path::Path) -> Vec<crate::lsp::analysis::AnalysisDiag> {
+        Vec::new()
+    }
+
+    fn hover(&mut self, _: &std::path::Path, _: u32, _: bool, _: bool) -> Option<String> {
+        None
+    }
+
+    fn completions(
+        &mut self,
+        _: &std::path::Path,
+        _: u32,
+    ) -> Vec<crate::lsp::analysis::AnalysisCompletion> {
+        Vec::new()
+    }
+
+    fn invalidate(&mut self, _: &std::path::Path) {}
+
+    fn bytecode(
+        &mut self,
+        source: &str,
+        optimization: u8,
+        remarks: bool,
+        config: &crate::config::lsp::BytecodeConfig,
+    ) -> Option<String> {
+        Some(format!(
+            "O{optimization} remarks={remarks} debug={} first={:?}",
+            config.debug_level,
+            source.lines().next().unwrap_or_default(),
+        ))
+    }
+}
+
 /// Captures what the server installs through the seam
 struct MockAnalysis {
     hooks: std::sync::Arc<std::sync::Mutex<Option<crate::lsp::analysis::ModuleHooks>>>,
@@ -1775,6 +1817,58 @@ fn a_project_that_names_one_flag_leaves_the_others_to_the_editor() {
 
     assert!(!server.lsp.fflags.enable_new_solver);
     assert!(server.lsp.fflags.enable_by_default);
+}
+
+/*
+`larvae/bytecode` compiles the open document at the level the editor asked.
+
+The reply carries the analyzer's text, and the params reach it: the
+optimization level from the request, the debug level from `[lsp.bytecode]`,
+and the remarks flag from which method was called.
+*/
+#[test]
+fn the_bytecode_request_reaches_the_analyzer() {
+    let mut server = Server {
+        analysis: std::cell::RefCell::new(Some(Box::new(BytecodeAnalysis))),
+        ..Default::default()
+    };
+    let mut out = Vec::new();
+
+    let uri = "file:///project/a.luau";
+
+    server
+        .handle(
+            &message(
+                "textDocument/didOpen",
+                None,
+                json!({ "textDocument": { "uri": uri, "text": "return 1\n" } }),
+            ),
+            &mut out,
+        )
+        .unwrap();
+
+    let reply = ask(
+        &mut server,
+        "larvae/bytecode",
+        json!({ "textDocument": { "uri": uri }, "optimizationLevel": 1 }),
+    );
+
+    assert_eq!(
+        reply.as_str().unwrap(),
+        "O1 remarks=false debug=1 first=\"return 1\""
+    );
+
+    let reply = ask(
+        &mut server,
+        "larvae/compilerRemarks",
+        json!({ "textDocument": { "uri": uri } }),
+    );
+
+    // No level in the request compiles at O2, which is luau-lsp's default.
+    assert!(
+        reply.as_str().unwrap().starts_with("O2 remarks=true"),
+        "{reply}"
+    );
 }
 
 /// A later change replaces what the editor said before.

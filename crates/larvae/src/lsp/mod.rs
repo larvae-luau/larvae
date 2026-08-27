@@ -265,6 +265,8 @@ struct Server {
     instances: instances::Instances,
     /// What the sourcemap looked like at the last read, so a rewrite reloads
     sourcemap_stamp: Option<(std::time::SystemTime, u64)>,
+    /// Which `[lsp] sourcemap` value the last read used, so a rename reloads
+    sourcemap_config: String,
     /*
     Whether a read happened at all.
 
@@ -307,6 +309,7 @@ impl Default for Server {
             events: None,
             instances: instances::Instances::default(),
             sourcemap_stamp: None,
+            sourcemap_config: String::new(),
             sourcemap_read: false,
             sourcemap_generation: 0,
         }
@@ -372,6 +375,9 @@ impl Server {
                 for uri in self.documents.keys().cloned().collect::<Vec<_>>() {
                     self.publish(&uri, out)?;
                 }
+
+                // A setting can turn the hints on, and only the editor redraws them.
+                rpc::request(out, "workspace/inlayHint/refresh", Value::Null)?;
             }
 
             "textDocument/didOpen" => {
@@ -586,6 +592,25 @@ impl Server {
                 actions.extend(extend::code_actions(&self.worms, &uri, &text, &range));
 
                 self.reply(message, out, Value::Array(actions))?;
+            }
+
+            /*
+            The compiled form of a document, under larvae's own names.
+
+            The editor's command asks here, with an optimization level, and
+            shows the answer in a read-only document. luau-lsp serves the
+            same two views under its own prefix.
+            */
+            "larvae/bytecode" => {
+                let result = self.bytecode(&message.params, false);
+
+                self.reply(message, out, result)?;
+            }
+
+            "larvae/compilerRemarks" => {
+                let result = self.bytecode(&message.params, true);
+
+                self.reply(message, out, result)?;
             }
 
             /*

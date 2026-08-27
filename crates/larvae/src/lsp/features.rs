@@ -355,6 +355,56 @@ fn completion_item(c: &crate::lsp::analysis::AnalysisCompletion) -> Value {
 
 impl Server {
     /*
+    The compiled form of one open document, for `larvae/bytecode` and
+    `larvae/compilerRemarks`.
+
+    The editor asks with an optimization level, and `[lsp.bytecode]` supplies
+    the rest: the debug level, the type info level, and the vector
+    configuration, so the listing matches what a build of this project would
+    run. A claimed file compiles through its worm's lowering, because that is
+    the Luau the place receives.
+    */
+    pub(super) fn bytecode(&self, params: &Value, remarks: bool) -> Value {
+        let uri = super::uri::uri_of(params);
+
+        let Some(src) = self.documents.get(&uri) else {
+            return Value::Null;
+        };
+
+        let Some(path) = path_of_uri(&uri) else {
+            return Value::Null;
+        };
+
+        // luau-lsp's default is O2, and its editor command asks the same way.
+        let optimization = params["optimizationLevel"].as_u64().unwrap_or(2).min(2) as u8;
+
+        let text = match self.worms.frontend_for(&path) {
+            Some(index) => match self.worms.compile(index, src) {
+                Ok(outcome) if outcome.ok => outcome.text,
+
+                // A file that does not compile has no bytecode to show.
+                _ => return Value::Null,
+            },
+
+            None => src.clone(),
+        };
+
+        let view = super::analysis::plain_view(&text);
+
+        let listing = self
+            .analysis
+            .borrow_mut()
+            .as_mut()
+            .and_then(|a| a.bytecode(&view, optimization, remarks, &self.lsp.bytecode));
+
+        match listing {
+            Some(text) => json!(text),
+
+            None => Value::Null,
+        }
+    }
+
+    /*
     What the half-written require at the cursor can become.
 
     Every offer carries its own insertion, because a directory ends in a

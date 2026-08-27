@@ -85,6 +85,11 @@ Notable changes land here. Format follows
 - The root of the project reaches a worm at init, so a worm resolves a file
   of its own against it. A host older than the field sends nothing and the
   working directory stays the fallback
+- `larvae/bytecode` and `larvae/compilerRemarks`, the two compiled views a
+  reader asks for. The editor sends a document and an optimization level,
+  `[lsp.bytecode]` supplies the rest, and a claimed file compiles through its
+  worm's lowering, because that is the Luau the place receives. luau-lsp
+  serves the same two views under its own prefix
 
 
 - `[lsp]`, the table for the editor server. `enabled = false` answers every
@@ -164,6 +169,20 @@ Notable changes land here. Format follows
   changes
 - The hover card says `Loading...` while the type session is still being
   built. It said `...`, which says nothing to the person who reads it
+- A message the server cannot read as a request is skipped inside the read.
+  `None` used to mean both "the stream ended" and "this body did not parse",
+  and the loop read the second as the first: one response from the editor
+  was a clean shutdown. The server sends `workspace/inlayHint/refresh` now,
+  so responses arrive
+- The editor redraws its inlay hints when the session lands and when a
+  setting changes. The hints on screen were drawn before there were types,
+  and nothing else makes the editor ask again
+- `variable_types` and `parameter_types` gate their own hints. Both kinds
+  render as a type hint of the protocol, so only the collector can tell a
+  local's hint from a parameter's, and the settings now reach it
+- The sourcemap reloads when its file or its `[lsp] sourcemap` path changes,
+  and not on every configuration message. Each re-read declared the whole
+  tree into the global scope again
 - A worm reads a file of its own against the root of the project. The luaux
   worm reads `luaux.toml` that way, and the working directory answered for
   `larvae process` and not for the editor: the file went missing, every

@@ -186,7 +186,8 @@ typedef struct {
 } LarvaeHint;
 
 /* The hints for a whole module. Returns how many, writes at most cap. */
-size_t larvae_inlay_hints(LarvaeSession* s, const char* path, LarvaeHint* out, size_t cap);
+size_t larvae_inlay_hints(LarvaeSession* s, const char* path, LarvaeHint* out, size_t cap,
+                          int want_variables, int want_parameters);
 
 /* One source text, compiled, in the listing an editor shows.
 

@@ -340,8 +340,16 @@ impl Server {
 
         mark("mounts");
 
-        // The sourcemap is read again, against the config that names it.
-        self.sourcemap_read = false;
+        /*
+        A new sourcemap path is a new tree; the same path is checked by its
+        stamp. Re-reading on every config change redeclared the whole tree
+        into the global scope each time the editor sent its settings.
+        */
+        if self.sourcemap_config != self.lsp.sourcemap {
+            self.sourcemap_config = self.lsp.sourcemap.clone();
+            self.sourcemap_read = false;
+        }
+
         self.load_instances();
 
         mark("sourcemap");
@@ -815,6 +823,13 @@ impl Server {
         for uri in self.documents.keys().cloned().collect::<Vec<_>>() {
             self.publish(&uri, out)?;
         }
+
+        /*
+        The hints on screen were drawn before there were types, so the
+        editor is asked to draw them again. Only a request can say that,
+        and the editor's reply says nothing the server acts on.
+        */
+        rpc::request(out, "workspace/inlayHint/refresh", Value::Null)?;
 
         Ok(())
     }

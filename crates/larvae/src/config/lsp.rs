@@ -108,11 +108,11 @@ pub struct FFlagsConfig {
 }
 
 /*
-`[lsp.bytecode]`, how the analyzer would compile.
+`[lsp.bytecode]`, how the compiled views compile.
 
-Nothing reads these yet. They are here because the editor extension already
-sends them, and a setting the server drops on the floor is worse than one it
-stores: the user changes it, nothing happens, and nothing says why.
+`larvae/bytecode` and `larvae/compilerRemarks` read them: the editor sends a
+document and an optimization level, and this table supplies the rest, so the
+listing matches what a build of this project would run.
 */
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]

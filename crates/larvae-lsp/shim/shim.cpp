@@ -645,8 +645,12 @@ static Luau::ModulePtr strictCheck(LarvaeSession* s, const char* path)
     {
         s->frontend.check(path, options);
     }
-    catch (const std::exception&)
+    catch (const std::exception& e)
     {
+        // The silence hid a whole class of failure; the reason goes to the log.
+        if (getenv("LARVAE_HOVER_DEBUG"))
+            fprintf(stderr, "strictCheck %s: %s\n", path, e.what());
+
         return nullptr;
     }
 
@@ -1855,6 +1859,14 @@ struct HintCollector : Luau::AstVisitor
     Luau::ModulePtr module;
     std::vector<std::pair<Luau::Position, std::pair<std::string, uint8_t>>> found;
 
+    /*
+    Which sites the project asked for. Both kinds render as a type hint of
+    the protocol, so only the collector can tell a local's hint from a
+    parameter's, and the setting has to be answered here.
+    */
+    bool wantVariables = true;
+    bool wantParameters = true;
+
     Luau::ToStringOptions opts;
 
     HintCollector(LarvaeSession* s, Luau::ModulePtr m)
@@ -1886,6 +1898,9 @@ struct HintCollector : Luau::AstVisitor
 
     bool visit(Luau::AstStatLocal* node) override
     {
+        if (!wantVariables)
+            return true;
+
         for (size_t i = 0; i < node->vars.size; ++i)
         {
             Luau::AstLocal* local = node->vars.data[i];
@@ -1910,6 +1925,9 @@ struct HintCollector : Luau::AstVisitor
 
     bool visit(Luau::AstExprFunction* node) override
     {
+        if (!wantParameters)
+            return true;
+
         auto* self = module->astTypes.find(node);
         if (!self)
             return true;
@@ -1943,7 +1961,8 @@ struct HintCollector : Luau::AstVisitor
     }
 };
 
-size_t larvae_inlay_hints(LarvaeSession* s, const char* path, LarvaeHint* out, size_t cap)
+size_t larvae_inlay_hints(LarvaeSession* s, const char* path, LarvaeHint* out, size_t cap,
+                          int want_variables, int want_parameters)
 {
     auto it = s->open.find(path);
     if (it == s->open.end())
@@ -1964,6 +1983,8 @@ size_t larvae_inlay_hints(LarvaeSession* s, const char* path, LarvaeHint* out, s
         return 0;
 
     HintCollector collector(s, module);
+    collector.wantVariables = want_variables != 0;
+    collector.wantParameters = want_parameters != 0;
     source->root->visit(&collector);
 
     s->hintStorage.clear();
