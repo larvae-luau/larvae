@@ -275,6 +275,15 @@
           "default": true,
           "description": "Read require(script.Parent.Foo) style requires as input and rewrite them to the configured target. Turn it off to leave instance requires exactly as written."
         },
+        "client_relative_requires": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": false,
+          "description": "Write a require whose two ends both sit in the StarterPlayer tree as a relative ./ or ../ path. Roblox clones a Starter container into each player, so the script that runs is a copy and a DataModel path names the template. Off by default: it lets a relative walk cross a mount boundary inside one container. A shared file that requires client code stays an error either way."
+        },
         "overrides": {
           "type": "object",
           "description": "A different require target for the paths a glob matches, relative to [process].input. First match wins. The value is a target name, or a table with target and indexing_style.",

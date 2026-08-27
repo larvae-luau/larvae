@@ -222,6 +222,7 @@ fn run_inner(
         quote: config.process.quotes.char(),
         strict: config.requires.strict,
         claimed: &claimed,
+        client_relative_requires: config.requires.client_relative_requires,
     };
 
     let opts = FileOpts::from_config(&root, config, write)?;

@@ -48,6 +48,16 @@ pub struct Resolver<'a> {
     is correct.
     */
     pub claimed: &'a [String],
+    /*
+    `[requires] client_relative_requires`: write a require inside the
+    StarterPlayer tree as a relative path.
+
+    Roblox clones a Starter container per player, so the script that runs is
+    a copy and the DataModel path names the template. A relative require
+    walks the tree the copy sits in, which is the one form that holds after
+    the clone. See [`emit::Resolver::emit_roblox_string`].
+    */
+    pub client_relative_requires: bool,
 }
 
 /// The context for one file, computed once
@@ -237,7 +247,7 @@ pub(super) mod fixture {
             }
         }
 
-        pub(crate) fn resolver(&self) -> Resolver<'_> {
+        pub(crate) fn resolver(&self, client_relative_requires: bool) -> Resolver<'_> {
             Resolver {
                 root: Path::new("/proj"),
                 toml_aliases: &self.aliases,
@@ -248,6 +258,7 @@ pub(super) mod fixture {
                 quote: '"',
                 strict: false,
                 claimed: &self.claimed,
+                client_relative_requires,
             }
         }
 

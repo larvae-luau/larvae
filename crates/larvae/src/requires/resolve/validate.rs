@@ -374,7 +374,7 @@ mod tests {
     /// Run the datamodel checks over one require, from one file to another
     fn check(from: &str, to: &str) -> Vec<Diag> {
         let project = Project::new();
-        let resolver = project.resolver();
+        let resolver = project.resolver(false);
         let path = std::path::PathBuf::from(from);
         let ctx = project.ctx(&path);
         let mut diags = Vec::new();

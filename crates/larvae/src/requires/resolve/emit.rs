@@ -8,6 +8,12 @@ use crate::requires::datamodel::Realm;
 
 use super::*;
 
+/// The container that holds one player's scripts, and the tree above it
+const STARTER_PLAYER: &str = "StarterPlayer";
+
+/// `StarterPlayer/StarterPlayerScripts`: the node that Roblox clones per player
+const STARTER_CONTAINER_DEPTH: usize = 2;
+
 impl<'a> Resolver<'a> {
     pub(super) fn emit_fs(
         &self,
@@ -175,6 +181,30 @@ impl<'a> Resolver<'a> {
             .zip(&target_dm.segments)
             .take_while(|(a, b)| a == b)
             .count();
+
+        /*
+        Both ends inside one StarterPlayer container, and the project set
+        `client_relative_requires`.
+
+        The floor of a relative walk is the mount by default, so two mounts
+        in StarterPlayerScripts cannot name each other and the resolver
+        reports that below. This setting lowers the floor to the container,
+        which is the node that Roblox clones into the player. A script in
+        the clone reaches its siblings by walking up and down from itself,
+        and it never names StarterPlayer, which holds the template it is a
+        copy of.
+
+        A shared requirer never arrives here: [`Resolver::check_dm`] stops
+        the realm crossing first, with the setting on or off.
+        */
+        if self.client_relative_requires
+            && req_dm.service() == STARTER_PLAYER
+            && target_dm.service() == STARTER_PLAYER
+            && common >= STARTER_CONTAINER_DEPTH
+        {
+            return Some(relative_spec(base, &target_dm.segments, common));
+        }
+
         let relative_ok = same_mount && common >= req_dm.mount_depth.min(target_dm.mount_depth);
 
         if relative_ok || target_dm.realm() == Realm::StarterClone {
@@ -187,16 +217,7 @@ impl<'a> Resolver<'a> {
                 return None;
             }
 
-            let ups = base.len() - common;
-            let mut parts: Vec<&str> = std::iter::repeat_n("..", ups).collect();
-
-            parts.extend(target_dm.segments[common..].iter().map(String::as_str));
-
-            return Some(if ups == 0 {
-                format!("./{}", parts.join("/"))
-            } else {
-                parts.join("/")
-            });
+            return Some(relative_spec(base, &target_dm.segments, common));
         }
 
         Some(target_dm.game_path())
@@ -250,6 +271,26 @@ impl<'a> Resolver<'a> {
             self.quote,
             &target_dm.segments,
         ))
+    }
+}
+
+/*
+The `./` or `../` spec that walks from the requirer to the target.
+
+`base` is the requirer without its own name, so the walk starts at the node
+that holds it. `common` is the count of leading segments the two share, and
+the caller decides how far up the walk may go before it computes that count.
+*/
+fn relative_spec(base: &[String], target: &[String], common: usize) -> String {
+    let ups = base.len() - common;
+    let mut parts: Vec<&str> = std::iter::repeat_n("..", ups).collect();
+
+    parts.extend(target[common..].iter().map(String::as_str));
+
+    match ups {
+        0 => format!("./{}", parts.join("/")),
+
+        _ => parts.join("/"),
     }
 }
 
@@ -324,4 +365,84 @@ pub fn lua_quote(name: &str, quote: char) -> String {
         .replace('\\', "\\\\")
         .replace(quote, &format!("\\{quote}"));
     format!("{quote}{escaped}{quote}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::fixture::Project;
+    use super::*;
+
+    /// One require, so the offset of the spec needs no arithmetic.
+    const SRC: &str = "return require(\"../x\")\n";
+
+    /// The emitted spec, or the diagnostics that stopped the rewrite
+    fn emit(from: &str, to: &str, client_relative: bool) -> Result<String, Vec<Diag>> {
+        let project = Project::new();
+        let resolver = project.resolver(client_relative);
+        let path = std::path::PathBuf::from(from);
+        let ctx = project.ctx(&path);
+        let mut diags = Vec::new();
+
+        let out = resolver.emit_roblox_string(
+            &ctx,
+            "../x",
+            &ModuleNode::File(to.into()),
+            SRC,
+            15,
+            &mut diags,
+        );
+
+        out.ok_or(diags)
+    }
+
+    const CLIENT: &str = "/proj/src/client/main.luau";
+    const SIBLING: &str = "/proj/src/ui/button.luau";
+
+    /*
+    Two mounts in StarterPlayerScripts, which the default form will not cross.
+
+    `App` and `Ui` are separate mounts, so the relative walk stops at the
+    mount and the resolver reports that it cannot write the require. The
+    setting lowers the floor to the container that Roblox clones, and the
+    walk then reaches the sibling.
+    */
+    #[test]
+    fn client_relative_requires_writes_a_client_sibling_as_a_relative_path() {
+        assert_eq!(emit(CLIENT, SIBLING, true).unwrap(), "../Ui/button");
+    }
+
+    #[test]
+    fn without_the_setting_the_same_require_stops_at_the_mount() {
+        let diags = emit(CLIENT, SIBLING, false).expect_err("the mounts do not meet");
+
+        assert!(
+            diags[0]
+                .message
+                .contains("cannot be expressed as a relative require"),
+            "{}",
+            diags[0].message
+        );
+    }
+
+    /// A sibling in one mount reads the same with the setting on or off.
+    #[test]
+    fn the_setting_leaves_a_require_inside_one_mount_alone() {
+        let inside = "/proj/src/client/hud.luau";
+
+        assert_eq!(emit(CLIENT, inside, false).unwrap(), "./hud");
+        assert_eq!(emit(CLIENT, inside, true).unwrap(), "./hud");
+    }
+
+    /// The realm rule runs first, so the setting does not open a way in.
+    #[test]
+    fn shared_code_still_cannot_reach_the_client_with_the_setting_on() {
+        let diags =
+            emit("/proj/src/shared/util.luau", SIBLING, true).expect_err("shared cannot reach it");
+
+        assert!(
+            diags[0].message.ends_with("(cross_realm_require)"),
+            "{}",
+            diags[0].message
+        );
+    }
 }
