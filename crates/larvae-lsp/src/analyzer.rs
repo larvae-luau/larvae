@@ -844,8 +844,18 @@ impl Analysis for LuauAnalysis {
 
     fn completions(&mut self, path: &Path, at: u32) -> Vec<AnalysisCompletion> {
         let key = self.key(path);
-        let mut raw: Vec<RawCompletion> = Vec::with_capacity(256);
-        let n = unsafe { larvae_completions(self.session, key, at, raw.as_mut_ptr(), 256) };
+
+        /*
+        Room for a whole global scope and a project's own types beside it.
+
+        256 was not. A type position offers every type in reach, and the
+        Roblox definitions alone carry more than that, so a project's own
+        aliases fell off the end of an unordered list and the reader could
+        not offer them at all.
+        */
+        const CAP: usize = 2048;
+        let mut raw: Vec<RawCompletion> = Vec::with_capacity(CAP);
+        let n = unsafe { larvae_completions(self.session, key, at, raw.as_mut_ptr(), CAP) };
 
         unsafe { raw.set_len(n) };
 
@@ -1780,6 +1790,96 @@ mod moonwave_documentation {
         assert_eq!(
             analysis.hover_documentation(&main, at).as_deref(),
             Some("Doubles a number.\n\n\n**Parameters**\n\n- `n` number -- the number")
+        );
+    }
+}
+
+#[cfg(test)]
+mod type_completions {
+    use super::*;
+    use larvae::lsp::analysis::Analysis;
+
+    /// The labels a completion at a byte offset offers.
+    fn labels(analysis: &mut LuauAnalysis, path: &std::path::Path, at: u32) -> Vec<String> {
+        analysis
+            .completions(path, at)
+            .into_iter()
+            .map(|c| c.label)
+            .collect()
+    }
+
+    /*
+    A project's own alias is offered in a type position, as an interface.
+
+    luau-lsp draws a type entry as `Interface`, and not as the function its
+    alias may stand for: an annotation takes a name, and an editor that
+    offered a call there offered the wrong thing.
+    */
+    #[test]
+    fn an_alias_is_offered_in_a_type_position() {
+        let _luau = super::luau_globals::shared();
+
+        let src = "type Foo = number\ntype Handler = () -> ()\nlocal x: F\nreturn x\n";
+        let mut analysis = LuauAnalysis::new();
+        let path = std::path::Path::new("/t.luau");
+
+        analysis.open(path, src);
+
+        let at = src.find("local x: F").expect("the annotation") as u32 + 10;
+        let offered = analysis.completions(path, at);
+
+        let alias = offered
+            .iter()
+            .find(|c| c.label == "Foo")
+            .expect("the alias is offered");
+
+        assert_eq!(alias.kind, 8, "a type reads as an interface");
+
+        let handler = offered
+            .iter()
+            .find(|c| c.label == "Handler")
+            .expect("the function alias is offered");
+
+        assert_eq!(handler.kind, 8, "an alias of a function is still a type");
+    }
+
+    /*
+    The generated instance-tree names never reach a list.
+
+    The sourcemap declares one extern type per instance of the place. They
+    are larvae's own spelling, a reader can never write one, and there are
+    hundreds of them: a type position that offered them buried the names
+    the project wrote.
+    */
+    #[test]
+    fn a_generated_instance_type_is_never_offered() {
+        let _luau = super::luau_globals::shared();
+
+        let mut analysis = LuauAnalysis::new();
+
+        assert!(analysis.definitions(
+            "@sourcemap",
+            "declare extern type _larvae_sourcemap_2_0 extends Instance with\nend\n\
+             declare extern type _larvae_sourcemap_2_1 extends Instance with\n\tParent: _larvae_sourcemap_2_0\nend\n",
+        ));
+
+        let src = "type Mine = number\nlocal x: M\nreturn x\n";
+        let path = std::path::Path::new("/t.luau");
+
+        analysis.open(path, src);
+
+        let at = src.find("local x: M").expect("the annotation") as u32 + 10;
+        let offered = labels(&mut analysis, path, at);
+
+        assert!(offered.iter().any(|l| l == "Mine"), "the alias is offered");
+
+        assert!(
+            !offered.iter().any(|l| l.starts_with("_larvae_")),
+            "a generated name reached the list: {:?}",
+            offered
+                .iter()
+                .filter(|l| l.starts_with("_larvae_"))
+                .collect::<Vec<_>>()
         );
     }
 }

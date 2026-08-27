@@ -2966,6 +2966,20 @@ size_t larvae_completions(LarvaeSession* s, const char* path, uint32_t byte, Lar
         if (n >= cap)
             break;
 
+        /*
+        larvae's own generated names are not names a reader can write.
+
+        The sourcemap tree and the Studio mirror each declare one extern
+        type per instance, `_larvae_sourcemap_2_17` and the like, and a type
+        position offers every type in scope. A real project has hundreds of
+        instances, so the list filled with generated names and the project's
+        own aliases fell off the end of it. The skip comes before the cap,
+        so they take no room either. A card renders these as the class they
+        stand for, which is the name a reader knows them by.
+        */
+        if (label.rfind("_larvae_", 0) == 0)
+            continue;
+
         s->completionStorage.push_back(label);
         out[n].label = s->completionStorage.back().c_str();
 
@@ -2981,11 +2995,21 @@ size_t larvae_completions(LarvaeSession* s, const char* path, uint32_t byte, Lar
         case Luau::AutocompleteEntryKind::Module:
             kind = 9; /* Module */
             break;
+        case Luau::AutocompleteEntryKind::Type:
+            kind = 8; /* Interface */
+            break;
         default:
             break;
         }
 
-        if (entry.type && Luau::get<Luau::FunctionType>(Luau::follow(*entry.type)))
+        /*
+        A function reads as a function, unless the entry is a type. `type
+        Handler = () -> ()` is a type the author writes in an annotation,
+        and an editor that drew it as a callable offered a call where no
+        call belongs. luau-lsp draws the same line.
+        */
+        if (entry.kind != Luau::AutocompleteEntryKind::Type && entry.type
+            && Luau::get<Luau::FunctionType>(Luau::follow(*entry.type)))
             kind = 3; /* Function */
 
         out[n].kind = kind;
