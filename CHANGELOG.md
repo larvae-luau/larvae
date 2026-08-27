@@ -70,6 +70,19 @@ Notable changes land here. Format follows
 - Luau's own error number on a type diagnostic. The editor shows it as
   `Luau(1061)` and links it to the page that explains the checker, which is
   what luau-lsp shows
+- The comment an author wrote reaches the card. A `--- ` line or a
+  `--[[ ]]` block above a declaration renders under the type, on the
+  definition and on every use, across a require, with moonwave tags
+  formatted the way luau-lsp formats them: `@param` and `@return` become
+  their sections, and a plain `-- ` line stays code
+- `Instance.new` answers with the class the string names, so
+  `Instance.new("Part")` is a `Part` and its methods read as the class a
+  reader is looking at
+- A type position offers the project's own types. The list capped at 256
+  entries out of an unordered map, so the generated instance-tree names
+  crowded a file's own aliases out at random. The generated names are
+  hidden, the cap holds a full scope, and a type entry carries the kind
+  luau-lsp gives one
 - The Roblox reference under the type on a hover card, and on a completion.
   The trimmed database ships with the binary: 3.7MB of JSON, 438KB deflated,
   inflated on the thread that builds the session. Luau names the page for a
@@ -167,6 +180,12 @@ Notable changes land here. Format follows
   working worm went back to being read as Luau, and its requires reported as
   unknown. The message names the reason. It repeats only when the reason
   changes
+- A completion never reads a type whose arena is gone. Luau's autocomplete
+  frees its local arena before it returns, so an entry's type can point into
+  freed memory; the documentation path followed one into a crash. The
+  session now gathers the arenas it still owns after the check, and reads
+  nothing outside them. Size assertions on both sides of the FFI structs
+  keep a one-sided edit from shipping again
 - The hover card says `Loading...` while the type session is still being
   built. It said `...`, which says nothing to the person who reads it
 - A message the server cannot read as a request is skipped inside the read.
