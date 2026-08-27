@@ -1,11 +1,17 @@
 [workspace]
 resolver = "3"
-members = ["crates/eclipse_luau", "crates/larvae", "crates/larvae-lsp", "crates/larvae-worm"]
+members = [
+  "crates/eclipse_luau",
+  "crates/larvae",
+  "crates/larvae-lsp",
+  "crates/larvae-worm",
+]
+default-members = ["crates/larvae"]
 # fuzz needs nightly, the fixture worm only builds for wasm32
 exclude = ["crates/larvae/fuzz", "crates/larvae/tests/fixtures/echo-worm"]
 
 [workspace.package]
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/larvae-luau/larvae"
