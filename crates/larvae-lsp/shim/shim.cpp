@@ -28,6 +28,10 @@ session is used from one thread, which the Rust side guarantees.
 #include "Luau/Common.h"
 #include "Luau/ExperimentalFlags.h"
 
+/* The AST printer, for the path an author wrote in front of a member. */
+#include "Luau/PrettyPrinter.h"
+
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -645,6 +649,272 @@ static Luau::ModulePtr strictCheck(LarvaeSession* s, const char* path)
 }
 
 /*
+The name a type carries, which is what goes in front of a method on a card.
+
+A table takes the name of the alias that declared it, a metatable takes the
+name of its own metatable, and a class takes its own. A type that carries
+none answers nothing, and the caller keeps the path the author wrote.
+
+Luau spells the synthetic name of a builtin table as `typeof(math)`, which
+is not a name anybody wrote, so the wrapper comes off. luau-lsp reads the
+name the same way, which is why `p:Destroy()` says `Instance` and
+`function M.Init()` says the alias that names `M`.
+*/
+static std::optional<std::string> nameOfType(Luau::TypeId id)
+{
+    Luau::TypeId followed = Luau::follow(id);
+    std::optional<std::string> name;
+
+    if (const std::string* found = Luau::getName(followed))
+        name = *found;
+    else if (const Luau::MetatableType* mtv = Luau::get<Luau::MetatableType>(followed))
+    {
+        if (const std::string* found = Luau::getName(mtv->metatable))
+            name = *found;
+    }
+    else if (const Luau::ExternType* etv = Luau::get<Luau::ExternType>(followed))
+        name = etv->name;
+
+    if (name && name->rfind("typeof(", 0) == 0 && !name->empty() && name->back() == ')')
+        return name->substr(7, name->size() - 8);
+
+    return name;
+}
+
+/*
+Every read type one name stands for on a type, gathered.
+
+A metatable keeps its methods behind `__index`, an intersection spreads them
+over its parts, and a union has one per branch. The walk follows all three,
+which is the shape a Luau module written with `setmetatable` takes, and it
+is the walk luau-lsp does for the same question.
+
+The seen list stops a cycle: `T.__index = T` points at itself.
+*/
+static void propertiesNamed(
+    Luau::TypeId parent, const std::string& name, std::vector<Luau::TypeId>& seen, std::vector<Luau::TypeId>& out)
+{
+    parent = Luau::follow(parent);
+
+    if (std::find(seen.begin(), seen.end(), parent) != seen.end())
+        return;
+
+    seen.push_back(parent);
+
+    if (const Luau::ExternType* etv = Luau::get<Luau::ExternType>(parent))
+    {
+        if (const Luau::Property* prop = Luau::lookupExternTypeProp(etv, name))
+        {
+            if (prop->readTy)
+                out.push_back(*prop->readTy);
+        }
+
+        return;
+    }
+
+    if (const Luau::TableType* ttv = Luau::get<Luau::TableType>(parent))
+    {
+        auto prop = ttv->props.find(name);
+
+        if (prop != ttv->props.end() && prop->second.readTy)
+            out.push_back(*prop->second.readTy);
+
+        return;
+    }
+
+    if (const Luau::MetatableType* mtv = Luau::get<Luau::MetatableType>(parent))
+    {
+        Luau::TypeId base = Luau::follow(mtv->table);
+
+        // The table itself first, and the metatable only when it has nothing.
+        if (const Luau::TableType* table = Luau::get<Luau::TableType>(base))
+        {
+            auto prop = table->props.find(name);
+
+            if (prop != table->props.end())
+            {
+                if (prop->second.readTy)
+                    out.push_back(*prop->second.readTy);
+
+                return;
+            }
+        }
+
+        if (const Luau::TableType* meta = Luau::get<Luau::TableType>(Luau::follow(mtv->metatable)))
+        {
+            auto index = meta->props.find("__index");
+
+            if (index != meta->props.end() && index->second.readTy)
+            {
+                Luau::TypeId through = Luau::follow(*index->second.readTy);
+
+                if (through != parent
+                    && (Luau::get<Luau::TableType>(through) || Luau::get<Luau::MetatableType>(through)))
+                    propertiesNamed(through, name, seen, out);
+            }
+        }
+
+        return;
+    }
+
+    if (const Luau::IntersectionType* itv = Luau::get<Luau::IntersectionType>(parent))
+    {
+        // The first part that has the name answers, because they are one type.
+        for (Luau::TypeId part : itv->parts)
+        {
+            std::vector<Luau::TypeId> one;
+
+            propertiesNamed(part, name, seen, one);
+
+            if (!one.empty())
+            {
+                out.insert(out.end(), one.begin(), one.end());
+
+                return;
+            }
+        }
+
+        return;
+    }
+
+    if (const Luau::UnionType* utv = Luau::get<Luau::UnionType>(parent))
+    {
+        for (Luau::TypeId option : utv->options)
+            propertiesNamed(option, name, seen, out);
+    }
+}
+
+/*
+The type one property holds, when exactly one answers.
+
+Two answers are not one card, so a union whose branches disagree says
+nothing rather than picking a branch. luau-lsp draws the same line.
+*/
+static std::optional<Luau::TypeId> propertyOf(Luau::TypeId parent, const std::string& name)
+{
+    std::vector<Luau::TypeId> seen;
+    std::vector<Luau::TypeId> found;
+
+    propertiesNamed(parent, name, seen, found);
+
+    if (found.size() != 1)
+        return std::nullopt;
+
+    return found.front();
+}
+
+/// The text with every run of `find` removed, in place.
+static void cutAll(std::string& text, const char* find)
+{
+    const size_t width = strlen(find);
+
+    for (size_t at = text.find(find); at != std::string::npos; at = text.find(find, at))
+        text.erase(at, width);
+}
+
+/// The text without the spaces and tabs at either end.
+static std::string trimmed(const std::string& text)
+{
+    const size_t start = text.find_first_not_of(" \t\r\n");
+
+    if (start == std::string::npos)
+        return {};
+
+    return text.substr(start, text.find_last_not_of(" \t\r\n") - start + 1);
+}
+
+/*
+The name of a member, with the type it hangs off in front of it.
+
+`p:Destroy()` reads as `Instance:Destroy()`, because the card is about the
+method and every `Instance` has it. The receiver names it when its type
+carries a name, and the path the author wrote stands when it does not:
+`net.RecieveFull.Invoke` says where the function came from and no type does.
+
+A colon hides the receiver from the argument list. The author never wrote
+it, so showing it puts a parameter in the card that the source does not have.
+
+A receiver the module recorded no type for loses its base, which is what
+luau-lsp does: the card then carries the member and nothing in front of it.
+*/
+static std::string nameThrough(
+    const Luau::ModulePtr& module, Luau::ToStringOptions& signature, Luau::AstExpr* receiver, char op, const std::string& member)
+{
+    const std::string suffix = (op == '\0' ? std::string() : std::string(1, op)) + member;
+
+    if (op == ':')
+        signature.hideFunctionSelfArgument = true;
+
+    Luau::TypeId* parent = module->astTypes.find(receiver);
+
+    if (!parent)
+        return suffix;
+
+    std::string base = trimmed(Luau::toString(receiver));
+
+    if (std::optional<std::string> named = nameOfType(*parent))
+        base = *named;
+
+    return " " + base + suffix;
+}
+
+/*
+The innermost node that holds a position, types included.
+
+luau-lsp answers a hover from this node and from nothing else, so three
+shapes it covers had no card here at all: the `type` keyword of an alias,
+the name of a property inside a table type, and a type that is not a
+reference, ex: the `"Strength"` of a union of literals.
+
+The span test is half open, which is what luau-lsp uses: the position that
+sits at the end of one node belongs to the next.
+*/
+struct NodeAtPosition final : Luau::AstVisitor
+{
+    Luau::Position position;
+    Luau::AstNode* best = nullptr;
+
+    explicit NodeAtPosition(Luau::Position position)
+        : position(position)
+    {
+    }
+
+    bool visit(Luau::AstNode* node) override
+    {
+        if (!node->location.contains(position))
+            return false;
+
+        // Smallest wins, so a name inside a table type beats the table.
+        if (!best || best->location.encloses(node->location))
+            best = node;
+
+        return true;
+    }
+
+    // Types and packs are skipped by default, and they are half the question.
+    bool visit(Luau::AstType* node) override
+    {
+        return visit(static_cast<Luau::AstNode*>(node));
+    }
+
+    bool visit(Luau::AstTypePack* node) override
+    {
+        return visit(static_cast<Luau::AstNode*>(node));
+    }
+
+    // A generic parameter is a declaration and not a type the cursor asks about.
+    bool visit(Luau::AstGenericType*) override
+    {
+        return false;
+    }
+
+    bool visit(Luau::AstGenericTypePack*) override
+    {
+        return false;
+    }
+};
+
+/*
 The innermost type reference that holds a position.
 
 The ancestry walk is the obvious way to find one and it does not reach every
@@ -764,32 +1034,21 @@ const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int 
     alias, so hovering either shows the shape the name hides. The type
     namespace is separate from the value namespace, so the scope is asked a
     different question here.
-    */
-    /*
-    Types are asked for outright. The walk leaves them out by default, so a
-    `Point` in `local p: Point` was never reached and the reference hovered
-    as nothing while its declaration hovered fine.
+
+    The node the position sits in decides which question is asked at all,
+    and the innermost one wins. luau-lsp reads a hover the same way, which
+    is why the `T` inside `Signal<T...>` answers nothing rather than
+    answering for the `Signal` that holds it.
     */
     std::vector<Luau::AstNode*> ancestry =
         Luau::findAstAncestryOfPosition(*source, position, /* includeTypes = */ true);
 
-    if (scope && !ancestry.empty())
+    NodeAtPosition at(position);
+    source->root->visit(&at);
+
+    if (scope && at.best)
     {
-        /*
-        The innermost type reference the position sits in, and not only the
-        last node.
-
-        A `number` inside a parameter list has the function above it in the
-        walk, and taking the last node alone found the function. So hovering
-        a type annotation showed the signature of whatever held it, which is
-        never what the cursor is on.
-        */
-        TypeAtPosition finder(position);
-        source->root->visit(&finder);
-
-        Luau::AstTypeReference* ref = finder.found;
-
-        if (ref)
+        if (auto ref = at.best->as<Luau::AstTypeReference>())
         {
             std::optional<Luau::TypeFun> fun = ref->prefix
                 ? scope->lookupImportedType(ref->prefix->value, ref->name.value)
@@ -804,24 +1063,14 @@ const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int 
                 type = fun->type;
             }
         }
-        else
+        else if (auto alias = at.best->as<Luau::AstStatTypeAlias>())
         {
-            // The declaration itself, which is one node above the name.
-            for (auto up = ancestry.rbegin(); up != ancestry.rend(); ++up)
+            // The `type` keyword of a declaration hovers the alias it opens.
+            if (std::optional<Luau::TypeFun> fun = scope->lookupType(alias->name.value))
             {
-                auto alias = (*up)->as<Luau::AstStatTypeAlias>();
-
-                if (!alias || !alias->nameLocation.containsClosed(position))
-                    continue;
-
-                if (auto fun = scope->lookupType(alias->name.value))
-                {
-                    aliasName = alias->name.value;
-                    aliasParameters = *fun;
-                    type = fun->type;
-                }
-
-                break;
+                aliasName = alias->name.value;
+                aliasParameters = *fun;
+                type = fun->type;
             }
         }
     }
@@ -851,73 +1100,148 @@ const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int 
         }
     }
 
+    /*
+    A key in a table constructor answers with what the field holds.
+
+    `Cancel = function() ... end` records the key as a string, so hovering
+    the name a reader wrote showed `string (6 bytes)` and not the function
+    it stands for. luau-lsp reads the value the key names.
+    */
     if (!type)
-        type = Luau::findTypeAtPosition(*module, *source, position);
+    {
+        for (auto up = ancestry.rbegin(); up != ancestry.rend(); ++up)
+        {
+            auto table = (*up)->as<Luau::AstExprTable>();
+
+            if (!table)
+                continue;
+
+            for (const Luau::AstExprTable::Item& item : table->items)
+            {
+                if (!item.key || !item.key->location.contains(position))
+                    continue;
+
+                if (Luau::TypeId* held = module->astTypes.find(item.value))
+                    type = *held;
+
+                break;
+            }
+
+            break;
+        }
+    }
 
     /*
     A field or a method reached through a dot.
 
     `findTypeAtPosition` answers for the expression that starts at the
     position, and the name in `a.b` starts after the dot, so `b` answered
-    with nothing. The type of the whole index expression is what a reader
-    hovering `b` is asking about, and the module recorded it.
+    with nothing. The property the name stands for is what a reader hovering
+    `b` is asking about, and the type in front of the dot holds it.
     */
     // Kept for the card's name: the index expression the position sits in.
     Luau::AstExprIndexName* hovered_index = nullptr;
-
-    /*
-    The type a call's callee was declared with, before the call solved it.
-
-    `table.create<V>(count, value)` reads as `table.create(count: number,
-    value: nil)` at a call site, because the recorded type of the expression
-    is the instantiated one. A reader hovering the name wants the signature
-    they can call, generics and all, and that is what the frontend keeps
-    under the call. luau-lsp reads the same map.
-    */
-    for (auto up = ancestry.rbegin(); up != ancestry.rend(); ++up)
-    {
-        auto call = (*up)->as<Luau::AstExprCall>();
-
-        if (!call || !call->func)
-            continue;
-
-        /*
-        Only the name that is called, and not the receiver in front of it.
-        Hovering `world` in `world:add()` asks about `world`, and answering
-        with the signature of `add` is the wrong question answered.
-        */
-        bool on_the_name = false;
-
-        if (auto index = call->func->as<Luau::AstExprIndexName>())
-            on_the_name = index->indexLocation.containsClosed(position);
-        else if (call->func->is<Luau::AstExprGlobal>() || call->func->is<Luau::AstExprLocal>())
-            on_the_name = call->func->location.containsClosed(position);
-
-        if (!on_the_name)
-            break;
-
-        if (auto original = module->astOriginalCallTypes.find(call->func))
-            type = *original;
-
-        break;
-    }
 
     for (auto up = ancestry.rbegin(); up != ancestry.rend(); ++up)
     {
         auto index = (*up)->as<Luau::AstExprIndexName>();
 
-        if (!index || !index->location.containsClosed(position))
+        /*
+        Only the name after the separator, and not the receiver in front of
+        it. Hovering `game` in `game:GetService()` asks about `game`, and
+        answering with the signature of `GetService` answers a question the
+        reader did not ask.
+        */
+        if (!index || !index->indexLocation.containsClosed(position))
             continue;
 
         hovered_index = index;
 
+        /*
+        The property, and not the type the module recorded for the whole
+        index expression.
+
+        `table.create<V>(count, value)` reads as `table.create(count:
+        number, value: nil)` at a call site, because what the module
+        recorded is the instantiated type. A reader hovering the name wants
+        the signature they can call, generics and all, and the declaration
+        of the property is that. The same lookup answers for a name a
+        statement assigns: `function M.Init()` records nothing under
+        `M.Init`, and the type of `M` carries the property. luau-lsp reads
+        both from here.
+        */
         if (!type)
         {
-            if (auto found = module->astTypes.find(index))
-                type = *found;
+            if (Luau::TypeId* parent = module->astTypes.find(index->expr))
+                type = propertyOf(*parent, index->index.value);
+        }
+
+        if (!type)
+        {
+            if (auto recorded = module->astTypes.find(index))
+                type = *recorded;
         }
 
         break;
+    }
+
+    if (!type)
+        type = Luau::findTypeAtPosition(*module, *source, position);
+
+    /*
+    A global the module recorded no type for answers from the scope.
+
+    `function set(key)` writes to a global, and the write records nothing
+    under the name, so hovering the name a reader had just written answered
+    nothing. The scope holds what the name is, and luau-lsp reads it there.
+    */
+    if (!type && scope)
+    {
+        if (Luau::AstExpr* expr = found.getExpr())
+        {
+            if (auto global = expr->as<Luau::AstExprGlobal>())
+                type = scope->lookup(global->name);
+        }
+    }
+
+    /*
+    The node the position sits in, when every lookup above answers nothing.
+
+    luau-lsp reads a hover off the innermost node, so three shapes it
+    covers had no card here at all: the `type` keyword of an alias, the
+    name of a property inside a table type, and a type that is not a
+    reference, ex: the `"Strength"` of a union of literals.
+    */
+    if (!type)
+    {
+        if (Luau::AstNode* node = at.best)
+        {
+            if (auto table = node->as<Luau::AstTypeTable>())
+            {
+                if (Luau::TypeId* resolved = module->astResolvedTypes.find(table))
+                {
+                    type = *resolved;
+
+                    // On one of the property names, the property answers.
+                    for (const Luau::AstTableProp& prop : table->props)
+                    {
+                        if (!prop.location.containsClosed(position))
+                            continue;
+
+                        if (std::optional<Luau::TypeId> held
+                            = propertyOf(Luau::follow(*resolved), prop.name.value))
+                            type = *held;
+
+                        break;
+                    }
+                }
+            }
+            else if (Luau::AstType* written = node->asType())
+            {
+                if (Luau::TypeId* resolved = module->astResolvedTypes.find(written))
+                    type = *resolved;
+            }
+        }
     }
 
     /*
@@ -970,15 +1294,95 @@ const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int 
     Luau::TypeId followed = Luau::follow(*type);
 
     /*
+    A type name says it is a type, and what it stands for.
+
+    It comes before every other shape, including a function, because
+    `type Callback = () -> ()` is an alias first: a card that opened with
+    `function(` answered a question the reader did not ask. luau-lsp reads
+    the alias first for the same reason.
+    */
+    if (!aliasName.empty())
+    {
+        /*
+        The parameters of the alias come with the name.
+
+        `type Entity = { __T: T }` says nothing about where `T` comes from,
+        and the alias is generic: `type Entity<T = nil>` is the line the
+        author wrote and the one a reader is looking for.
+        */
+        std::string parameters;
+
+        const bool generic = aliasParameters
+            && (!aliasParameters->typeParams.empty() || !aliasParameters->typePackParams.empty());
+
+        if (generic)
+        {
+            Luau::ToStringOptions bare;
+
+            parameters = "<";
+            bool written = false;
+
+            for (const Luau::GenericTypeDefinition& param : aliasParameters->typeParams)
+            {
+                if (written)
+                    parameters += ", ";
+
+                parameters += Luau::toString(Luau::follow(param.ty), bare);
+
+                if (param.defaultValue)
+                    parameters += " = " + Luau::toString(Luau::follow(*param.defaultValue), bare);
+
+                written = true;
+            }
+
+            /*
+            A pack parameter counts as well. `type Signal<T... = ...any>` is
+            the line the author wrote, and an alias that lists only its type
+            parameters answered `type Signal`, which is a different alias.
+            */
+            for (const Luau::GenericTypePackDefinition& param : aliasParameters->typePackParams)
+            {
+                if (written)
+                    parameters += ", ";
+
+                parameters += Luau::toString(Luau::follow(param.tp), bare);
+
+                if (param.defaultValue)
+                    parameters += " = " + Luau::toString(Luau::follow(*param.defaultValue), bare);
+
+                written = true;
+            }
+
+            parameters += ">";
+        }
+
+        s->hoverStorage = "type " + aliasName + parameters + " = " + Luau::toString(followed, opts);
+
+        return s->hoverStorage.c_str();
+    }
+
+    /*
     A function shows its signature. The name comes from whichever half of
     the answer carries one, and a function with no name still renders, so an
     anonymous one is not left blank.
     */
     if (const Luau::FunctionType* ftv = Luau::get<Luau::FunctionType>(followed))
     {
-        std::string name;
-        // The expression the method hangs off, so the card names its type.
-        Luau::AstExpr* receiver = nullptr;
+        /*
+        A signature prints a named type by its name.
+
+        The card for a value expands every type it holds, because that is
+        what a reader hovering a value wants to see. A signature is the
+        other case: `self: World` and `component: Component<a>` say what
+        the parameter is, and the whole of `World` inlined says it worse.
+        The line breaks go too, because a signature is one line. luau-lsp
+        splits the two the same way.
+        */
+        Luau::ToStringOptions signature;
+        signature.functionTypeArguments = true;
+        signature.hideNamedFunctionTypeParameters = false;
+        signature.hideTableKind = opts.hideTableKind;
+        signature.scope = scope;
 
         // The expression the position sits in, whichever lookup answered.
         Luau::AstExpr* expr = found.getExpr();
@@ -996,168 +1400,66 @@ const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int 
         */
         if (from_enclosing_function)
             expr = nullptr;
-        else if (Luau::AstLocal* local = found.getLocal())
-            name = local->name.value;
 
-        if (expr && name.empty())
+        // The whole card up to the arguments, ex: `function Instance:Destroy`.
+        std::string head = "function";
+
+        std::optional<Luau::AstName> written = from_enclosing_function
+            ? std::nullopt
+            : found.getName();
+
+        /*
+        A position inside a type has no expression under it, and luau-lsp
+        still writes the space it would put before a name: the card for a
+        field of a table type reads `function (self: T)`. The enclosing
+        function is the other case, and that one carries no space.
+        */
+        if (!written && !expr && !from_enclosing_function && !found.getLocal())
+            head += " ";
+
+        if (written)
         {
-            if (auto global = expr->as<Luau::AstExprGlobal>())
-                name = global->name.value;
-            else if (auto localExpr = expr->as<Luau::AstExprLocal>())
-                name = localExpr->local->name.value;
+            head += " ";
+            head += written->value;
+        }
+        else if (expr)
+        {
+            if (auto local = expr->as<Luau::AstExprLocal>())
+            {
+                head += " ";
+                head += local->local->name.value;
+            }
+            else if (auto global = expr->as<Luau::AstExprGlobal>())
+            {
+                head += " ";
+                head += global->name.value;
+            }
             else if (auto index = expr->as<Luau::AstExprIndexName>())
             {
-                receiver = index->expr;
-
-                /*
-                The whole path, so a card reads `math.cos` and not `cos`.
-
-                A reader hovering a name in `math.cos` wants to know where it
-                came from, and the bare name says nothing they did not
-                already see. The separator is the one the author wrote, so a
-                method keeps its colon.
-                */
-                std::string path(index->index.value);
-
-                /*
-                A method is named for the type it hangs off and not for the
-                variable that holds one. `p:Destroy()` reads as
-                `Instance:Destroy()`, because the card is about the method
-                and every `Instance` has it. A field keeps the path the
-                author wrote, so `math.cos` stays `math.cos`.
-                */
-                if (index->op == ':')
-                {
-                    name = path;
-
-                    goto named;
-                }
-
-                // A field keeps the path the author wrote, and names no type.
-                receiver = nullptr;
-
-                for (Luau::AstExpr* walk = index->expr; walk;)
-                {
-                    if (auto step = walk->as<Luau::AstExprIndexName>())
-                    {
-                        path = std::string(step->index.value) + std::string(1, index->op) + path;
-                        walk = step->expr;
-
-                        continue;
-                    }
-
-                    if (auto global = walk->as<Luau::AstExprGlobal>())
-                        path = std::string(global->name.value) + std::string(1, index->op) + path;
-                    else if (auto local = walk->as<Luau::AstExprLocal>())
-                        path = std::string(local->local->name.value) + std::string(1, index->op) + path;
-
-                    break;
-                }
-
-                /*
-                Two segments are enough. `PlanckRunService.Plugin.new` says
-                no more than `Plugin.new` about where the function came
-                from, and the card is one line. luau-lsp keeps two.
-                */
-                size_t cut = path.rfind('.');
-
-                if (cut != std::string::npos && cut > 0)
-                {
-                    size_t before = path.find_last_of(".:", cut - 1);
-
-                    if (before != std::string::npos)
-                        path = path.substr(before + 1);
-                }
-
-                name = path;
+                head += nameThrough(module, signature, index->expr, index->op,
+                    index->index.value);
+            }
+            else if (auto index = expr->as<Luau::AstExprIndexExpr>())
+            {
+                head += nameThrough(module, signature, index->expr, '\0',
+                    "[" + Luau::toString(index->index) + "]");
             }
         }
-
-    named:
-
-        /*
-        A method reads as `Instance:Destroy()`, not `Destroy(self: Instance)`.
-
-        The receiver is the first argument in the type and the author never
-        wrote it, so showing it puts a parameter in the card that does not
-        exist in the source. Luau hides it on request, and the name carries
-        the type it hangs off instead, which is how luau-lsp writes one and
-        how the Roblox documentation writes one.
-        */
-        if (ftv->hasSelf)
-            opts.hideFunctionSelfArgument = true;
-
-        /*
-        The type the method hangs off goes in front of its name.
-
-        `p:Destroy()` reads as `Instance:Destroy()`, because the card is
-        about the method and every `Instance` has it. The receiver of the
-        call names it, and not the `self` of the declaration:
-        `game:GetService` read as `ServiceProvider:GetService`, which is
-        where the method is declared and not what the reader wrote.
-
-        A method whose type does not carry `self` still gets the prefix. The
-        author wrote a colon, so the card should show one, and a table that
-        holds its methods without a `self` argument is the common shape of a
-        Luau module.
-        */
-        if (receiver && name.find(':') == std::string::npos
-            && name.find('.') == std::string::npos)
-        {
-            Luau::ToStringOptions bare;
-            bare.exhaustive = false;
-
-            std::optional<Luau::TypeId> base_type;
-
-            if (Luau::TypeId* found_receiver = module->astTypes.find(receiver))
-                base_type = Luau::follow(*found_receiver);
-
-            if (!base_type && ftv->hasSelf)
-            {
-                auto [args, tail] = Luau::flatten(ftv->argTypes);
-                (void)tail;
-
-                if (!args.empty())
-                    base_type = Luau::follow(args[0]);
-            }
-
-            if (base_type)
-            {
-                std::string base = Luau::toString(*base_type, bare);
-
-                // A base that renders as a whole table is noise, not a name.
-                if (!base.empty() && base.find('{') == std::string::npos
-                    && base.find('(') == std::string::npos)
-                {
-                    name = base + ":" + name;
-                }
-            }
-        }
-
-        /*
-        A signature prints a named type by its name.
-
-        The card for a value expands every type it holds, because that is
-        what a reader hovering a value wants to see. A signature is the
-        other case: `self: World` and `component: Component<a>` say what
-        the parameter is, and the whole of `World` inlined says it worse.
-        The line breaks go too, because a signature is one line. luau-lsp
-        splits the two the same way.
-        */
-        Luau::ToStringOptions signature;
-        signature.functionTypeArguments = true;
-        signature.hideNamedFunctionTypeParameters = false;
-        signature.hideFunctionSelfArgument = opts.hideFunctionSelfArgument;
-        signature.hideTableKind = opts.hideTableKind;
-        signature.scope = scope;
 
         /*
         The `function` keyword goes in front, because the card should read
         like the line the author would write. Luau renders the rest.
         */
-        s->hoverStorage = name.empty()
-            ? "function" + Luau::toStringNamedFunction("", *ftv, signature)
-            : "function " + Luau::toStringNamedFunction(name, *ftv, signature);
+        std::string rendered = Luau::toStringNamedFunction("", *ftv, signature);
+
+        /*
+        Luau writes an argument the declaration did not name as `_: number`,
+        and a card shows the type alone. luau-lsp cuts the same text for the
+        same reason.
+        */
+        cutAll(rendered, "_: ");
+
+        s->hoverStorage = head + rendered;
 
         return s->hoverStorage.c_str();
     }
@@ -1216,46 +1518,6 @@ const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int 
 
             return s->hoverStorage.c_str();
         }
-    }
-
-    // A type name says it is a type, and what it stands for.
-    if (!aliasName.empty())
-    {
-        /*
-        The parameters of the alias come with the name.
-
-        `type Entity = { __T: T }` says nothing about where `T` comes from,
-        and the alias is generic: `type Entity<T = nil>` is the line the
-        author wrote and the one a reader is looking for.
-        */
-        std::string parameters;
-
-        if (aliasParameters && !aliasParameters->typeParams.empty())
-        {
-            Luau::ToStringOptions bare;
-            bare.exhaustive = false;
-
-            parameters = "<";
-
-            for (size_t i = 0; i < aliasParameters->typeParams.size(); ++i)
-            {
-                if (i > 0)
-                    parameters += ", ";
-
-                const Luau::GenericTypeDefinition& param = aliasParameters->typeParams[i];
-
-                parameters += Luau::toString(param.ty, bare);
-
-                if (param.defaultValue)
-                    parameters += " = " + Luau::toString(*param.defaultValue, bare);
-            }
-
-            parameters += ">";
-        }
-
-        s->hoverStorage = "type " + aliasName + parameters + " = " + text;
-
-        return s->hoverStorage.c_str();
     }
 
     // A local says what the line is, as well as what it holds.
