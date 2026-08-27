@@ -245,6 +245,7 @@ unsafe extern "C" {
     ) -> *const c_char;
     fn larvae_documentation_symbol(s: *mut c_void, path: *const c_char, byte: u32)
     -> *const c_char;
+    fn larvae_source_documentation(s: *mut c_void) -> *const c_char;
     fn larvae_bytecode(
         s: *mut c_void,
         source: *const c_char,
@@ -878,16 +879,29 @@ impl Analysis for LuauAnalysis {
     }
 
     /*
-    The Roblox reference page for the name at a position, as markdown.
+    The prose for the name at a position, as markdown.
 
-    The frontend names the page and this reads it. A name the reference does
-    not cover answers nothing, which is every name a project wrote itself.
+    The Roblox reference answers first: the frontend names the page and this
+    reads it. A name the reference does not cover is every name a project
+    wrote itself, and those carry their own comment block, which the shim
+    read while it answered the hover. luau-lsp reads the two in this order.
+
+    The shim holds the comments from the last hover on this session, and the
+    server asks for the card and then for the prose at one position, so the
+    two answers belong to each other.
     */
     fn hover_documentation(&mut self, path: &Path, at: u32) -> Option<String> {
         let key = self.key(path);
-        let symbol = text(unsafe { larvae_documentation_symbol(self.session, key, at) })?;
 
-        page(&self.docs, &symbol).and_then(DocEntry::markdown)
+        let page = text(unsafe { larvae_documentation_symbol(self.session, key, at) })
+            .and_then(|symbol| page(&self.docs, &symbol).and_then(DocEntry::markdown));
+
+        if page.is_some() {
+            return page;
+        }
+
+        text(unsafe { larvae_source_documentation(self.session) })
+            .filter(|comments| !comments.trim().is_empty())
     }
 
     /*
@@ -1611,6 +1625,162 @@ mod statement_names {
     fn a_literal_inside_a_type_answers_with_itself() {
         let _luau = super::luau_globals::shared();
         assert_eq!(card(MODULE, "\"Strength\""), "\"Strength\"");
+    }
+}
+
+#[cfg(test)]
+mod moonwave_documentation {
+    use super::*;
+    use larvae::lsp::analysis::Analysis;
+
+    /*
+    These pin the prose luau-lsp writes for a comment block, read off the
+    real server on the same source. A card carries two things, and the
+    second one is the reason a project comments its own code at all.
+    */
+
+    /// The comments the hover at `word` answers with.
+    fn docs(src: &str, word: &str) -> Option<String> {
+        let mut analysis = LuauAnalysis::new();
+        let path = std::path::Path::new("/t.luau");
+        let at = src.find(word).expect("the word") as u32;
+
+        analysis.open(path, src);
+
+        // The contract is order: the card first, the prose from the same walk.
+        analysis.hover(path, at, false, true);
+
+        analysis.hover_documentation(path, at)
+    }
+
+    /*
+    A `--- ` block reaches the card, with the moonwave tags read.
+
+    The sections and their order are luau-lsp's: the prose, then the
+    parameters, then what comes back.
+    */
+    #[test]
+    fn a_doc_comment_reaches_the_card() {
+        let _luau = super::luau_globals::shared();
+
+        let src = "--- Adds two numbers together.\n--- @param a number -- the first one\n\
+                   --- @param b number -- the second one\n--- @return number -- their sum\n\
+                   local function add(a: number, b: number): number\n\treturn a + b\nend\nreturn add\n";
+
+        assert_eq!(
+            docs(src, "function add").as_deref(),
+            Some(
+                "Adds two numbers together.\n\n\n**Parameters**\n\n\
+                 - `a` number -- the first one\n- `b` number -- the second one\n\n\
+                 **Returns**\n\n- `number` -- their sum"
+            )
+        );
+    }
+
+    /// A `--[[ ]]` block reaches the card, with its fence and indentation gone.
+    #[test]
+    fn a_block_comment_reaches_the_card() {
+        let _luau = super::luau_globals::shared();
+
+        let src = "--[[\n\tRemoves a thing.\n\tThe entity itself is untouched.\n\t@param key any\n]]\n\
+                   local function unlist(key: any)\n\treturn key\nend\nreturn unlist\n";
+
+        assert_eq!(
+            docs(src, "function unlist").as_deref(),
+            Some(
+                "Removes a thing.\nThe entity itself is untouched.\n\n\n**Parameters**\n\n- `key` any"
+            )
+        );
+    }
+
+    /*
+    A plain `-- ` comment is not documentation.
+
+    Moonwave asks for three dashes or a block, and luau-lsp holds that line.
+    A card that showed every comment above a name would show the reader's
+    working notes, which is why the rule exists.
+    */
+    #[test]
+    fn a_plain_comment_says_nothing() {
+        let _luau = super::luau_globals::shared();
+
+        let src = "-- A plain comment that is not documentation.\n\
+                   local function plain(x: number)\n\treturn x\nend\nreturn plain\n";
+
+        assert_eq!(docs(src, "function plain"), None);
+    }
+
+    /// The flag tags and the version tags render as luau-lsp prints them.
+    #[test]
+    fn the_tags_render_the_way_the_reference_prints_them() {
+        let _luau = super::luau_globals::shared();
+
+        let src = "---\n--- After a blank doc line.\n--- @deprecated 1.2.0 use something else\n\
+                   --- @since 1.0.0\n--- @yields\n--- @error BadThing -- when it breaks\n\
+                   --- @field name string -- the name\nlocal function tagged()\nend\nreturn tagged\n";
+
+        assert_eq!(
+            docs(src, "function tagged").as_deref(),
+            Some(
+                "\n\nAfter a blank doc line.\n**Deprecated** `1.2.0` use something else\n\
+                 **Since** `1.0.0`\n**Yields**\n\n\n**Fields**\n\n- `name` string -- the name\n\n\
+                 **Throws**\n\n- `BadThing` -- when it breaks"
+            )
+        );
+    }
+
+    /// An alias and a local both carry the comment written above them.
+    #[test]
+    fn an_alias_and_a_local_carry_their_comments() {
+        let _luau = super::luau_globals::shared();
+
+        let src = "--- The alias documentation.\ntype Named = { name: string }\n\
+                   --- A documented local value.\nlocal documented = 42\nreturn documented :: Named?\n";
+
+        assert_eq!(
+            docs(src, "Named =").as_deref(),
+            Some("The alias documentation.\n")
+        );
+        assert_eq!(
+            docs(src, "documented =").as_deref(),
+            Some("A documented local value.\n")
+        );
+    }
+
+    /*
+    A function a module required carries the comments of its own file.
+
+    The comments come from the module the type was declared in, which is a
+    file the reader never opened. That is the case a project cares about:
+    the documentation lives with the code, not with the call.
+    */
+    #[test]
+    fn a_required_function_carries_its_own_comments() {
+        let _luau = super::luau_globals::shared();
+
+        let dir = tempfile::tempdir().expect("a temp dir");
+
+        std::fs::write(
+            dir.path().join("util.luau"),
+            "--- Doubles a number.\n--- @param n number -- the number\nlocal function double(n: number): number\n\treturn n * 2\nend\n\nreturn { double = double }\n",
+        )
+        .expect("the module is written");
+
+        let main = dir.path().join("main.luau");
+        let src = "local util = require(\"./util\")\nreturn util.double(2)\n";
+
+        std::fs::write(&main, src).expect("the caller is written");
+
+        let mut analysis = LuauAnalysis::new();
+        let at = src.find("double(2)").expect("the call") as u32;
+
+        analysis.open(&main, src);
+        analysis.hover(&main, at, false, true);
+
+        assert_eq!(
+            analysis.hover_documentation(&main, at).as_deref(),
+            Some("Doubles a number.\n\n\n**Parameters**\n\n- `n` number -- the number")
+        );
     }
 }
 

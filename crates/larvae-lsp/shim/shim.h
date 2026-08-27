@@ -92,6 +92,15 @@ size_t larvae_check(LarvaeSession* s, const char* path, LarvaeDiag* out, size_t 
 const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int show_table_kinds,
                          int include_string_length);
 
+/* The comments that document the last hover, as markdown, or null.
+
+   `larvae_hover` computes it: the walk it already does knows which node the
+   cursor is on and which type answered, and a second walk would have to find
+   both again. So the contract is order: hover first, then this, on the same
+   position and the same session. It belongs to the session until the next
+   hover, and a hover that answered nothing leaves nothing here. */
+const char* larvae_source_documentation(LarvaeSession* s);
+
 /* The documentation symbol at a byte offset, or null.
 
    It names an entry of the Roblox documentation database, which Rust holds

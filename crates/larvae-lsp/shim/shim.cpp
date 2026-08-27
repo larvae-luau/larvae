@@ -233,6 +233,17 @@ struct LarvaeSession
     std::vector<std::string> hintStorage;
     std::string bytecodeStorage;
 
+    /* The comments of the last hover, rendered. See larvae_source_documentation. */
+    std::string sourceDocumentationStorage;
+
+    /*
+    The text of each module a comment lookup read, for the length of one
+    call. A completion list asks about hundreds of names, and every one of
+    them would otherwise read its module off the disk again. The cache is
+    cleared where a call starts, so no answer outlives the text it read.
+    */
+    std::map<std::string, std::string> commentText;
+
     /* The declared type of `script`, per module. See larvae_set_script_type. */
     std::map<std::string, std::string> scriptTypes;
 
@@ -368,6 +379,23 @@ void larvae_set_resolver(LarvaeSession* s, void* userdata, larvae_resolve_fn res
     s->files.load = load;
 }
 
+/*
+`game:GetService("Players")` answers with `Players`, not with `Instance`.
+
+The declaration says the method takes a string and gives an `Instance`,
+because that is all a declaration can say. So every service a project binds
+read as `Instance`, and a reader lost the whole type of the thing they had
+just fetched.
+
+Luau lets a function carry a magic handler that reads the call rather than
+the signature. This one takes the string the author wrote, looks it up in
+the type namespace, and answers with that type. luau-lsp attaches the same
+thing to the same method for the same reason.
+
+A name that is not a type is left alone, and the declared `Instance` stands.
+Reporting it as an error belongs to the checker, not to a hover: a project
+that fetches a service this build has no type for still deserves to run.
+*/
 /*
 A call whose first argument names a type answers with that type.
 
@@ -762,6 +790,13 @@ static std::optional<std::string> nameOfType(Luau::TypeId id)
     return name;
 }
 
+/// One property, and the type that carries it: an intersection needs both.
+struct PropertyOfType
+{
+    Luau::TypeId base;
+    Luau::Property property;
+};
+
 /*
 Every read type one name stands for on a type, gathered.
 
@@ -773,7 +808,7 @@ is the walk luau-lsp does for the same question.
 The seen list stops a cycle: `T.__index = T` points at itself.
 */
 static void propertiesNamed(
-    Luau::TypeId parent, const std::string& name, std::vector<Luau::TypeId>& seen, std::vector<Luau::TypeId>& out)
+    Luau::TypeId parent, const std::string& name, std::vector<Luau::TypeId>& seen, std::vector<PropertyOfType>& out)
 {
     parent = Luau::follow(parent);
 
@@ -785,10 +820,7 @@ static void propertiesNamed(
     if (const Luau::ExternType* etv = Luau::get<Luau::ExternType>(parent))
     {
         if (const Luau::Property* prop = Luau::lookupExternTypeProp(etv, name))
-        {
-            if (prop->readTy)
-                out.push_back(*prop->readTy);
-        }
+            out.push_back({parent, *prop});
 
         return;
     }
@@ -797,8 +829,8 @@ static void propertiesNamed(
     {
         auto prop = ttv->props.find(name);
 
-        if (prop != ttv->props.end() && prop->second.readTy)
-            out.push_back(*prop->second.readTy);
+        if (prop != ttv->props.end())
+            out.push_back({parent, prop->second});
 
         return;
     }
@@ -814,8 +846,7 @@ static void propertiesNamed(
 
             if (prop != table->props.end())
             {
-                if (prop->second.readTy)
-                    out.push_back(*prop->second.readTy);
+                out.push_back({base, prop->second});
 
                 return;
             }
@@ -843,7 +874,7 @@ static void propertiesNamed(
         // The first part that has the name answers, because they are one type.
         for (Luau::TypeId part : itv->parts)
         {
-            std::vector<Luau::TypeId> one;
+            std::vector<PropertyOfType> one;
 
             propertiesNamed(part, name, seen, one);
 
@@ -865,6 +896,17 @@ static void propertiesNamed(
     }
 }
 
+/// Every read type one name stands for on a type, with the type that has it.
+static std::vector<PropertyOfType> propertiesOf(Luau::TypeId parent, const std::string& name)
+{
+    std::vector<Luau::TypeId> seen;
+    std::vector<PropertyOfType> found;
+
+    propertiesNamed(parent, name, seen, found);
+
+    return found;
+}
+
 /*
 The type one property holds, when exactly one answers.
 
@@ -873,15 +915,12 @@ nothing rather than picking a branch. luau-lsp draws the same line.
 */
 static std::optional<Luau::TypeId> propertyOf(Luau::TypeId parent, const std::string& name)
 {
-    std::vector<Luau::TypeId> seen;
-    std::vector<Luau::TypeId> found;
+    std::vector<PropertyOfType> found = propertiesOf(parent, name);
 
-    propertiesNamed(parent, name, seen, found);
-
-    if (found.size() != 1)
+    if (found.size() != 1 || !found.front().property.readTy)
         return std::nullopt;
 
-    return found.front();
+    return *found.front().property.readTy;
 }
 
 /// The text with every run of `find` removed, in place.
@@ -937,6 +976,589 @@ static std::string nameThrough(
         base = *named;
 
     return " " + base + suffix;
+}
+
+/*
+Moonwave documentation, which is the comment block an author wrote.
+
+luau-lsp reads the comments above a declaration and prints them as markdown,
+with the moonwave tags turned into sections. Everything from here down to
+`documentationOfType` is a port of its `DocumentationParser.cpp`, because a
+card that formats the same prose differently is a card a reader has to read
+twice.
+*/
+
+/// Whether the text opens with a prefix.
+static bool beginsWith(const std::string& text, const char* prefix)
+{
+    return text.rfind(prefix, 0) == 0;
+}
+
+/// The text without the whitespace at its end.
+static std::string trimmedEnd(const std::string& text)
+{
+    const size_t last = text.find_last_not_of(" \t\r\n");
+
+    if (last == std::string::npos)
+        return {};
+
+    return text.substr(0, last + 1);
+}
+
+/// One string per line, with the separators dropped.
+static std::vector<std::string> splitLines(const std::string& text)
+{
+    std::vector<std::string> lines;
+    size_t at = 0;
+
+    while (true)
+    {
+        const size_t stop = text.find('\n', at);
+
+        if (stop == std::string::npos)
+        {
+            lines.push_back(text.substr(at));
+
+            return lines;
+        }
+
+        lines.push_back(text.substr(at, stop - at));
+        at = stop + 1;
+    }
+}
+
+/*
+The comments that belong to one node.
+
+A comment belongs to a node when no blank line stands between them, and when
+nothing else was declared in between. The walk finds the closest node before
+the target and takes every comment after it, then keeps only the run that
+touches the target line by line.
+*/
+struct AttachComments final : Luau::AstVisitor
+{
+    Luau::Position pos;
+    std::vector<Luau::Comment> moduleComments;
+    Luau::Position closestPreviousNode{0, 0};
+
+    AttachComments(const Luau::Location& node, std::vector<Luau::Comment> comments)
+        : pos(node.begin)
+        , moduleComments(std::move(comments))
+    {
+    }
+
+    std::vector<Luau::Comment> attached()
+    {
+        std::vector<Luau::Comment> candidates;
+
+        for (const Luau::Comment& comment : moduleComments)
+            if (comment.location.begin <= pos && comment.location.begin >= closestPreviousNode)
+                candidates.push_back(comment);
+
+        if (candidates.empty())
+            return {};
+
+        // Closest to the target first, so the run below reads outward.
+        std::sort(candidates.begin(), candidates.end(),
+            [](const Luau::Comment& a, const Luau::Comment& b)
+            {
+                return a.location.end > b.location.end;
+            });
+
+        std::vector<Luau::Comment> result;
+        unsigned int adjacent = pos.line;
+
+        for (const Luau::Comment& comment : candidates)
+        {
+            // A blank line between the comment and the node ends the block.
+            if (comment.location.end.line + 1 < adjacent)
+                break;
+
+            result.push_back(comment);
+            adjacent = comment.location.begin.line;
+        }
+
+        std::reverse(result.begin(), result.end());
+
+        return result;
+    }
+
+    bool visit(Luau::AstExprTable* table) override
+    {
+        if (table->location.begin >= pos)
+            return false;
+
+        if (table->location.begin > closestPreviousNode)
+            closestPreviousNode = table->location.begin;
+
+        for (const Luau::AstExprTable::Item& item : table->items)
+        {
+            if (item.value->location.begin >= pos)
+                continue;
+
+            if (item.value->location.begin > closestPreviousNode)
+                closestPreviousNode = item.value->location.begin;
+
+            item.value->visit(this);
+
+            if (item.value->location.end <= pos && item.value->location.end > closestPreviousNode)
+                closestPreviousNode = item.value->location.end;
+        }
+
+        return false;
+    }
+
+    bool visit(Luau::AstTypeTable* table) override
+    {
+        if (table->location.begin >= pos)
+            return false;
+
+        if (table->location.begin > closestPreviousNode)
+            closestPreviousNode = table->location.begin;
+
+        for (const Luau::AstTableProp& prop : table->props)
+        {
+            if (prop.type->location.begin >= pos)
+                continue;
+
+            if (prop.type->location.begin > closestPreviousNode)
+                closestPreviousNode = prop.type->location.begin;
+
+            prop.type->visit(this);
+
+            if (prop.type->location.end <= pos && prop.type->location.end > closestPreviousNode)
+                closestPreviousNode = prop.type->location.end;
+        }
+
+        return false;
+    }
+
+    bool visit(Luau::AstStatDeclareExternType* declared) override
+    {
+        if (declared->location.begin >= pos)
+            return false;
+
+        if (declared->location.begin > closestPreviousNode)
+            closestPreviousNode = declared->location.begin;
+
+        for (const auto& prop : declared->props)
+        {
+            if (prop.ty->location.begin >= pos)
+                continue;
+
+            closestPreviousNode = std::max(closestPreviousNode, prop.ty->location.begin);
+            prop.ty->visit(this);
+
+            if (prop.ty->location.end <= pos)
+                closestPreviousNode = std::max(closestPreviousNode, prop.ty->location.end);
+        }
+
+        return false;
+    }
+
+    bool visit(Luau::AstStatBlock* block) override
+    {
+        /*
+        A block that ends before the position says nothing. A block that
+        holds it cuts everything before its own start, because a comment
+        outside the block belongs to whatever opened it.
+        */
+        if (block->location.begin >= pos)
+            return false;
+
+        if (block->location.begin > closestPreviousNode)
+            closestPreviousNode = block->location.begin;
+
+        for (Luau::AstStat* stat : block->body)
+        {
+            if (stat->location.begin >= pos)
+                continue;
+
+            stat->visit(this);
+
+            if (stat->location.end <= pos && stat->location.end > closestPreviousNode)
+                closestPreviousNode = stat->location.end;
+        }
+
+        return false;
+    }
+
+    // Types are skipped by default, and a declaration file is mostly types.
+    bool visit(Luau::AstType*) override
+    {
+        return true;
+    }
+
+    bool visit(Luau::AstTypePack*) override
+    {
+        return true;
+    }
+};
+
+/// The text of one module, whether the editor holds it or the disk does.
+static const std::string* moduleText(LarvaeSession* s, const Luau::ModuleName& name)
+{
+    auto open = s->open.find(name);
+
+    if (open != s->open.end())
+        return &open->second;
+
+    auto cached = s->commentText.find(name);
+
+    if (cached == s->commentText.end())
+    {
+        std::optional<Luau::SourceCode> loaded = s->files.readSource(name);
+
+        // A module that does not load is cached as empty, so it loads once.
+        cached = s->commentText.emplace(name, loaded ? std::move(loaded->source) : std::string()).first;
+    }
+
+    return cached->second.empty() ? nullptr : &cached->second;
+}
+
+/*
+The comments above one node, normalised to the lines inside them.
+
+A `--- ` line keeps its tail and a bare `---` becomes a blank line. A block
+comment gives every line it holds, minus its two fence lines and minus the
+indentation they share. A plain `-- ` line is not documentation and says
+nothing, which is the rule luau-lsp follows and the one moonwave defines.
+*/
+static std::vector<std::string> commentsFor(LarvaeSession* s, const Luau::ModuleName& name, const Luau::Location& node)
+{
+    const Luau::SourceModule* source = s->frontend.getSourceModule(name);
+
+    if (!source)
+        return {};
+
+    const std::string* text = moduleText(s, name);
+
+    if (!text)
+        return {};
+
+    AttachComments walk(node, source->commentLocations);
+    walk.visit(source->root);
+
+    std::vector<Luau::Comment> found = walk.attached();
+
+    if (found.empty())
+        return {};
+
+    LineIndex lines(*text);
+    std::vector<std::string> comments;
+
+    for (const Luau::Comment& comment : found)
+    {
+        // A comment the lexer could not close carries no prose.
+        if (comment.type == Luau::Lexeme::Type::BrokenComment)
+            continue;
+
+        const uint32_t from = lines.byteOf(comment.location.begin, *text);
+        const uint32_t to = lines.byteOf(comment.location.end, *text);
+
+        if (to <= from)
+            continue;
+
+        const std::string whole = trimmed(text->substr(from, to - from));
+
+        if (comment.type == Luau::Lexeme::Type::Comment)
+        {
+            if (beginsWith(whole, "--- "))
+                comments.push_back(whole.substr(4));
+            else if (whole == "---")
+                comments.push_back("\n");
+
+            continue;
+        }
+
+        if (comment.type != Luau::Lexeme::Type::BlockComment)
+            continue;
+
+        // The fence is `--[`, any number of `=`, then `[`.
+        if (!beginsWith(whole, "--["))
+            continue;
+
+        size_t equals = 0;
+
+        while (3 + equals < whole.size() && whole[3 + equals] == '=')
+            ++equals;
+
+        if (3 + equals >= whole.size() || whole[3 + equals] != '[')
+            continue;
+
+        const std::string opening = "--[" + std::string(equals, '=') + "[";
+        const std::string closing = "]" + std::string(equals, '=') + "]";
+
+        for (const std::string& line : splitLines(whole))
+        {
+            const std::string bare = trimmed(line);
+
+            if (bare == opening || bare == closing)
+                continue;
+
+            comments.push_back(trimmedEnd(line));
+        }
+
+        /*
+        The indentation the lines share comes off. A block written inside a
+        function is indented in the file, and four of those spaces would
+        make markdown read the whole block as a code fence.
+        */
+        size_t indent = std::string::npos;
+
+        for (const std::string& line : comments)
+        {
+            if (line.empty())
+                continue;
+
+            indent = std::min(indent, line.find_first_not_of(" \n\r\t"));
+        }
+
+        for (std::string& line : comments)
+        {
+            if (line.empty())
+                continue;
+
+            line.erase(0, indent);
+        }
+    }
+
+    return comments;
+}
+
+/*
+The comments of one node as markdown, with the moonwave tags read.
+
+A tag that names a section is gathered and printed under a heading, a tag
+that is a flag becomes bold text of its own, and a line with no tag is
+prose. The tags that describe the page rather than the thing, ex: `@within`,
+say nothing to a reader hovering a name, so they are dropped.
+*/
+static std::string printMoonwave(const std::vector<std::string>& comments)
+{
+    if (comments.empty())
+        return {};
+
+    std::string result;
+    std::vector<std::string> fields;
+    std::vector<std::string> params;
+    std::vector<std::string> returns;
+    std::vector<std::string> throws;
+
+    for (const std::string& comment : comments)
+    {
+        if (beginsWith(comment, "@param "))
+            params.push_back(comment);
+        else if (beginsWith(comment, "@return "))
+            returns.push_back(comment);
+        else if (beginsWith(comment, "@error "))
+            throws.push_back(comment);
+        else if (beginsWith(comment, "@field "))
+            fields.push_back(comment);
+        else if (comment == "@private")
+            result += "**Private**\n";
+        else if (comment == "@yields")
+            result += "**Yields**\n";
+        else if (comment == "@unreleased")
+            result += "**Unreleased**\n";
+        else if (comment == "@server")
+            result += "**Server**\n";
+        else if (comment == "@client")
+            result += "**Client**\n";
+        else if (comment == "@plugin")
+            result += "**Plugin**\n";
+        else if (comment == "@readonly")
+            result += "**Read Only**\n";
+        else if (beginsWith(comment, "@deprecated "))
+        {
+            result += "**Deprecated** ";
+
+            std::string description = comment.substr(12);
+            std::string version = description;
+
+            if (const size_t space = description.find(' '); space != std::string::npos)
+            {
+                version = description.substr(0, space);
+                description = description.substr(space);
+            }
+
+            if (version == description)
+                result += "`" + version + "`\n";
+            else
+                result += "`" + version + "`" + description + "\n";
+        }
+        else if (beginsWith(comment, "@since "))
+        {
+            result += "**Since** `" + comment.substr(7) + "`\n";
+        }
+        else if (comment == "@ignore" || beginsWith(comment, "@tag ") || beginsWith(comment, "@within ")
+                 || beginsWith(comment, "@class ") || beginsWith(comment, "@function ")
+                 || beginsWith(comment, "@method ") || beginsWith(comment, "@prop ")
+                 || beginsWith(comment, "@interface ") || beginsWith(comment, "@type ")
+                 || beginsWith(comment, "@__index ") || beginsWith(comment, "@external "))
+        {
+            continue;
+        }
+        else
+        {
+            result += comment + "\n";
+        }
+    }
+
+    /// One entry of a section: the name in code, then whatever followed it.
+    auto named = [](const std::string& entry, size_t skip, const char* split) -> std::string
+    {
+        std::string tail = entry.substr(skip);
+        std::string head = tail;
+
+        if (const size_t at = split ? tail.find(split) : tail.find(' '); at != std::string::npos)
+        {
+            head = tail.substr(0, at);
+            tail = tail.substr(at);
+        }
+
+        if (split)
+            return (!head.empty() && head != tail) ? "\n- `" + head + "`" + tail : "\n- " + tail;
+
+        return head == tail ? "\n- `" + head + "`" : "\n- `" + head + "`" + tail;
+    };
+
+    if (!fields.empty())
+    {
+        result += "\n\n**Fields**\n";
+
+        for (const std::string& field : fields)
+            result += named(field, 7, nullptr);
+    }
+
+    if (!params.empty())
+    {
+        result += "\n\n**Parameters**\n";
+
+        for (const std::string& param : params)
+            result += named(param, 7, nullptr);
+    }
+
+    if (!returns.empty())
+    {
+        result += "\n\n**Returns**\n";
+
+        for (const std::string& one : returns)
+            result += named(one, 8, " --");
+    }
+
+    if (!throws.empty())
+    {
+        result += "\n\n**Throws**\n";
+
+        for (const std::string& one : throws)
+            result += named(one, 7, " --");
+    }
+
+    return result;
+}
+
+/// The comments above one location, rendered.
+static std::string documentationAt(LarvaeSession* s, const Luau::ModuleName& name, const Luau::Location& at)
+{
+    return printMoonwave(commentsFor(s, name, at));
+}
+
+/*
+The documentation of a type, read where the type was declared.
+
+A function carries the module and the line of its own declaration, a table
+and a class carry theirs, and everything else carries none. That is the
+whole of luau-lsp's `getDocumentationForType`.
+*/
+static std::string documentationOfType(LarvaeSession* s, Luau::TypeId ty)
+{
+    const Luau::TypeId followed = Luau::follow(ty);
+
+    if (const Luau::FunctionType* ftv = Luau::get<Luau::FunctionType>(followed))
+    {
+        if (ftv->definition && ftv->definition->definitionModuleName)
+            return documentationAt(s, *ftv->definition->definitionModuleName, ftv->definition->definitionLocation);
+
+        return {};
+    }
+
+    if (const Luau::TableType* ttv = Luau::get<Luau::TableType>(followed))
+    {
+        if (!ttv->definitionModuleName.empty())
+            return documentationAt(s, ttv->definitionModuleName, ttv->definitionLocation);
+
+        return {};
+    }
+
+    if (const Luau::ExternType* etv = Luau::get<Luau::ExternType>(followed))
+    {
+        if (!etv->definitionModuleName.empty() && etv->definitionLocation)
+            return documentationAt(s, etv->definitionModuleName, *etv->definitionLocation);
+    }
+
+    return {};
+}
+
+/*
+The documentation of the node a cursor sits on.
+
+A type reference reads the comment above the alias it names, whether that
+alias sits in this module or in one it required. An alias declaration reads
+the comment above itself. Nothing else answers here, which is the whole of
+luau-lsp's `getDocumentationForAstNode`.
+*/
+static std::string documentationOfNode(
+    LarvaeSession* s, const Luau::ModuleName& name, Luau::AstNode* node, const Luau::ScopePtr& scope)
+{
+    if (auto alias = node->as<Luau::AstStatTypeAlias>())
+        return documentationAt(s, name, alias->location);
+
+    auto ref = node->as<Luau::AstTypeReference>();
+
+    if (!ref || !scope)
+        return {};
+
+    if (!ref->prefix)
+    {
+        // The scope chain holds where every alias in reach was declared.
+        for (const Luau::Scope* walk = scope.get(); walk; walk = walk->parent.get())
+        {
+            auto found = walk->typeAliasLocations.find(ref->name.value);
+
+            if (found != walk->typeAliasLocations.end())
+                return documentationAt(s, name, found->second);
+        }
+
+        return {};
+    }
+
+    /*
+    A prefixed name lives in another module, and the alias it points at is
+    exported from there. The scope remembers which module the prefix stands
+    for, which is the only way back to the file the comment is in.
+    */
+    for (const Luau::Scope* walk = scope.get(); walk; walk = walk->parent.get())
+    {
+        auto imported = walk->importedModules.find(ref->prefix->value);
+
+        if (imported == walk->importedModules.end())
+            continue;
+
+        Luau::ModulePtr other = s->frontend.moduleResolverForAutocomplete.getModule(imported->second);
+
+        if (!other)
+            return {};
+
+        auto binding = other->exportedTypeBindings.find(ref->name.value);
+
+        if (binding == other->exportedTypeBindings.end() || !binding->second.definitionLocation)
+            return {};
+
+        return documentationAt(s, imported->second, *binding->second.definitionLocation);
+    }
+
+    return {};
 }
 
 /*
@@ -1080,6 +1702,14 @@ const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int 
     if (it == s->open.end())
         return nullptr;
 
+    /*
+    The comments of the last hover are the last hover's. A card that answers
+    nothing must not leave the previous card's prose behind it, and one call
+    reads one view of every module it touches.
+    */
+    s->sourceDocumentationStorage.clear();
+    s->commentText.clear();
+
     Luau::ModulePtr module = strictCheck(s, path);
     const Luau::SourceModule* source = s->frontend.getSourceModule(path);
     if (!module || !source)
@@ -1107,6 +1737,13 @@ const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int 
     std::string aliasName;
     // The parameters of the alias, so the card reads `type Entity<T = nil>`.
     std::optional<Luau::TypeFun> aliasParameters;
+
+    /*
+    Where the comment block that documents the answer sits, when the type
+    itself does not say. A property of a table knows its own line, a local
+    knows where it was declared, and neither is reachable from the type.
+    */
+    std::optional<std::pair<Luau::ModuleName, Luau::Location>> documentationLocation;
 
     /*
     A type name answers with what it stands for.
@@ -1162,6 +1799,8 @@ const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int 
     {
         if (scope)
             type = scope->lookup(local);
+
+        documentationLocation = {path, local->location};
     }
 
     /*
@@ -1178,6 +1817,19 @@ const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int 
         {
             if (auto local = expr->as<Luau::AstExprLocal>())
                 type = scope->lookup(local->local);
+        }
+    }
+
+    /*
+    A local read as an expression carries the line it was declared on, so a
+    reader hovering a use sees the comment written above the declaration.
+    */
+    if (!documentationLocation)
+    {
+        if (Luau::AstExpr* expr = found.getExpr())
+        {
+            if (auto local = expr->as<Luau::AstExprLocal>(); local && local->local)
+                documentationLocation = {path, local->local->location};
         }
     }
 
@@ -1251,10 +1903,31 @@ const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int 
         `M.Init`, and the type of `M` carries the property. luau-lsp reads
         both from here.
         */
-        if (!type)
+        if (Luau::TypeId* parent = module->astTypes.find(index->expr))
         {
-            if (Luau::TypeId* parent = module->astTypes.find(index->expr))
-                type = propertyOf(*parent, index->index.value);
+            std::vector<PropertyOfType> properties
+                = propertiesOf(Luau::follow(*parent), index->index.value);
+
+            if (!properties.empty())
+            {
+                const PropertyOfType& first = properties.front();
+
+                if (!type && properties.size() == 1 && first.property.readTy)
+                    type = *first.property.readTy;
+
+                /*
+                Where the property was written, which is the only handle a
+                card has on the comment above it. The inferred line comes
+                first and the annotated line second, as luau-lsp reads them.
+                */
+                if (std::optional<Luau::ModuleName> where = Luau::getDefinitionModuleName(first.base))
+                {
+                    if (first.property.location)
+                        documentationLocation = {*where, *first.property.location};
+                    else if (first.property.typeLocation)
+                        documentationLocation = {*where, *first.property.typeLocation};
+                }
+            }
         }
 
         if (!type)
@@ -1309,8 +1982,12 @@ const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int 
                         if (!prop.location.containsClosed(position))
                             continue;
 
-                        if (std::optional<Luau::TypeId> held
-                            = propertyOf(Luau::follow(*resolved), prop.name.value))
+                        const Luau::TypeId whole = Luau::follow(*resolved);
+
+                        if (std::optional<Luau::ModuleName> where = Luau::getDefinitionModuleName(whole))
+                            documentationLocation = {*where, prop.location};
+
+                        if (std::optional<Luau::TypeId> held = propertyOf(whole, prop.name.value))
                             type = *held;
 
                         break;
@@ -1357,6 +2034,27 @@ const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int 
 
     if (!type)
         return nullptr;
+
+    /*
+    The comments that document the answer, in the order luau-lsp reads them.
+
+    The reference page comes first and Rust looks that up, so this is the
+    rest of the chain: where the type itself was declared, then the alias
+    the cursor names, then the line the walk above found. The first one that
+    says anything wins, and the answer waits in the session for the call
+    that asks for it.
+    */
+    {
+        std::string documentation = documentationOfType(s, *type);
+
+        if (documentation.empty() && at.best)
+            documentation = documentationOfNode(s, path, at.best, scope);
+
+        if (documentation.empty() && documentationLocation)
+            documentation = documentationAt(s, documentationLocation->first, documentationLocation->second);
+
+        s->sourceDocumentationStorage = documentation;
+    }
 
     Luau::ToStringOptions opts;
     opts.exhaustive = true;
@@ -1622,6 +2320,19 @@ const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int 
     s->hoverStorage = text;
 
     return s->hoverStorage.c_str();
+}
+
+/*
+The comments that document the last hover, as markdown.
+
+The hover computes it, because it already knows which node the cursor is on
+and what type answered, and a second walk would have to find both again. The
+answer belongs to the session until the next hover on that session, which is
+the same rule every other string here follows.
+*/
+const char* larvae_source_documentation(LarvaeSession* s)
+{
+    return s->sourceDocumentationStorage.empty() ? nullptr : s->sourceDocumentationStorage.c_str();
 }
 
 /*
@@ -2079,160 +2790,6 @@ size_t larvae_inlay_hints(LarvaeSession* s, const char* path, LarvaeHint* out, s
 }
 
 /*
-Where a type was declared, when the type says so.
-
-A function carries the module and the location it was written at, and that
-is the one handle a completion entry gives onto the source a reader wants to
-read. A type that carries none answers nothing, and the entry then shows its
-type alone.
-*/
-static std::optional<std::pair<Luau::ModuleName, Luau::Location>> declaredAt(Luau::TypeId ty)
-{
-    ty = Luau::follow(ty);
-
-    if (const Luau::FunctionType* fn = Luau::get<Luau::FunctionType>(ty))
-    {
-        // A function declared in a definitions file names no module of its own.
-        if (fn->definition && fn->definition->definitionModuleName)
-            return std::make_pair(*fn->definition->definitionModuleName, fn->definition->definitionLocation);
-    }
-
-    return std::nullopt;
-}
-
-/*
-The comment block that stands above one line, as the reader wrote it.
-
-A doc comment in Luau is `--` lines or one `--[[ ]]` block, directly above
-the declaration and with no blank line between. The markers come off and the
-text goes through as markdown, which is what luau-lsp does and what every
-editor renders.
-
-The walk is upward from the declaration and stops at the first line that is
-not a comment. So a comment that belongs to the statement above does not
-travel down onto this one.
-*/
-static std::string commentAbove(const std::string& text, uint32_t line)
-{
-    std::vector<std::string> source;
-    std::string current;
-
-    for (char c : text)
-    {
-        if (c == '\n')
-        {
-            source.push_back(current);
-            current.clear();
-        }
-        else if (c != '\r')
-        {
-            current += c;
-        }
-    }
-
-    source.push_back(current);
-
-    if (line >= source.size())
-        return {};
-
-    auto trim = [](const std::string& in) -> std::string
-    {
-        size_t start = in.find_first_not_of(" \t");
-        if (start == std::string::npos)
-            return {};
-
-        size_t end = in.find_last_not_of(" \t");
-        return in.substr(start, end - start + 1);
-    };
-
-    std::vector<std::string> block;
-    size_t at = line;
-
-    while (at > 0)
-    {
-        std::string above = trim(source[at - 1]);
-
-        if (above.rfind("--", 0) != 0)
-            break;
-
-        /*
-        A block comment is read whole, from its opening line down to the
-        line above the declaration. Anything above the opening belongs to
-        something else.
-        */
-        if (above.rfind("--[[", 0) == 0 || above.rfind("--[=[", 0) == 0)
-        {
-            std::vector<std::string> whole;
-
-            for (size_t i = at - 1; i < line; ++i)
-                whole.push_back(trim(source[i]));
-
-            block.insert(block.begin(), whole.begin(), whole.end());
-            break;
-        }
-
-        block.insert(block.begin(), above);
-        --at;
-    }
-
-    std::string out;
-
-    for (std::string& raw : block)
-    {
-        std::string kept = raw;
-
-        for (const char* marker : {"--[=[", "--[[", "---", "--"})
-        {
-            if (kept.rfind(marker, 0) == 0)
-            {
-                kept = kept.substr(strlen(marker));
-                break;
-            }
-        }
-
-        // The closing of a block comment is a marker and not prose.
-        for (const char* close : {"]=]", "]]"})
-        {
-            size_t end = kept.find(close);
-            if (end != std::string::npos)
-                kept = kept.substr(0, end);
-        }
-
-        kept = trim(kept);
-
-        if (kept.empty() && out.empty())
-            continue;
-
-        out += kept;
-        out += "\n";
-    }
-
-    while (!out.empty() && (out.back() == '\n' || out.back() == ' '))
-        out.pop_back();
-
-    return out;
-}
-
-/// The documentation of one entry, or empty when the session cannot read any
-static std::string documentationOf(LarvaeSession* s, const Luau::AutocompleteEntry& entry)
-{
-    if (!entry.type)
-        return {};
-
-    std::optional<std::pair<Luau::ModuleName, Luau::Location>> where = declaredAt(*entry.type);
-
-    if (!where)
-        return {};
-
-    std::optional<Luau::SourceCode> source = s->files.readSource(where->first);
-
-    if (!source)
-        return {};
-
-    return commentAbove(source->source, where->second.begin.line);
-}
-
-/*
 The documentation symbol at a position, for the database Rust holds.
 
 Luau answers this itself. The symbol names a page of the Roblox reference,
@@ -2289,6 +2846,21 @@ const char* larvae_documentation_symbol(LarvaeSession* s, const char* path, uint
                 type = scope->lookup(local);
 
             /*
+            A local on the left of an assignment records no type for the
+            name it writes to. `Reliable = RemoteEvent` therefore had no
+            page, while the same name two lines above did. The scope knows
+            what the local is, and the card is about the class either way.
+            */
+            if (!type)
+            {
+                if (Luau::AstExpr* expr = found.getExpr())
+                {
+                    if (auto local = expr->as<Luau::AstExprLocal>())
+                        type = scope->lookup(local->local);
+                }
+            }
+
+            /*
             A type reference names its own type, and the type namespace is
             asked separately from the value namespace.
             */
@@ -2335,6 +2907,9 @@ size_t larvae_completions(LarvaeSession* s, const char* path, uint32_t byte, Lar
     auto it = s->open.find(path);
     if (it == s->open.end())
         return 0;
+
+    // One list reads one view of every module its entries were declared in.
+    s->commentText.clear();
 
     LineIndex lines(it->second);
     Luau::Position position = lines.positionOf(byte);
@@ -2510,7 +3085,7 @@ size_t larvae_completions(LarvaeSession* s, const char* path, uint32_t byte, Lar
                 }
             }
 
-            std::string docs = documentationOf(s, entry);
+            std::string docs = documentationOfType(s, *entry.type);
 
             if (!docs.empty())
             {
