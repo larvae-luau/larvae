@@ -1326,13 +1326,43 @@ mod luau_lsp_parity {
         assert_eq!(card(src, "Players"), "local Players: Players");
     }
 
-    /// A method is named for the type it hangs off, with no `self` in the list.
+    /*
+    A method is named for the type it hangs off, with no `self` in the list.
+
+    `Part` and not `Instance`, because `Instance.new` reads the name the
+    author wrote. The declaration can only promise an `Instance`, and the
+    reader knows better than the declaration does.
+    */
     #[test]
     fn a_method_reads_as_the_type_that_has_it() {
         let _luau = super::luau_globals::shared();
         let src = "local p = Instance.new(\"Part\")\np:Destroy()\n";
 
-        assert_eq!(card(src, "Destroy"), "function Instance:Destroy(): nil");
+        assert_eq!(card(src, "Destroy"), "function Part:Destroy(): nil");
+    }
+
+    /// `Instance.new` answers with the class the string names.
+    #[test]
+    fn instance_new_answers_with_the_class() {
+        let _luau = super::luau_globals::shared();
+        let src = "local p = Instance.new(\"Part\")\nreturn p\n";
+
+        assert_eq!(card(src, "p ="), "local p: Part");
+    }
+
+    /*
+    A name that is no class keeps the declared type.
+
+    `Instance.new("number")` names a type, and it is not an instance, so the
+    signature stands. Answering `number` would be worse than answering the
+    declaration: the call cannot return one.
+    */
+    #[test]
+    fn a_name_that_is_no_class_keeps_the_declaration() {
+        let _luau = super::luau_globals::shared();
+        let src = "local p = Instance.new(\"number\")\nreturn p\n";
+
+        assert_eq!(card(src, "p ="), "local p: Instance");
     }
 
     /// A field keeps the path the author wrote, so the card says where it came from.

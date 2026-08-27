@@ -369,25 +369,31 @@ void larvae_set_resolver(LarvaeSession* s, void* userdata, larvae_resolve_fn res
 }
 
 /*
-`game:GetService("Players")` answers with `Players`, not with `Instance`.
+A call whose first argument names a type answers with that type.
 
-The declaration says the method takes a string and gives an `Instance`,
-because that is all a declaration can say. So every service a project binds
+The declaration says `GetService` takes a string and gives an `Instance`,
+because that is all a declaration can say. So every service a project bound
 read as `Instance`, and a reader lost the whole type of the thing they had
-just fetched.
+just fetched. `Instance.new("Part")` had the same hole.
 
 Luau lets a function carry a magic handler that reads the call rather than
 the signature. This one takes the string the author wrote, looks it up in
 the type namespace, and answers with that type. luau-lsp attaches the same
-thing to the same method for the same reason.
+thing to the same two functions for the same reason.
 
-A name that is not a type is left alone, and the declared `Instance` stands.
+A name that is not a type is left alone, and the declared type stands.
 Reporting it as an error belongs to the checker, not to a hover: a project
 that fetches a service this build has no type for still deserves to run.
 */
-struct MagicServiceLookup final : Luau::MagicFunction
+struct MagicNamedType : Luau::MagicFunction
 {
-    static std::optional<Luau::TypeId> named(Luau::Scope* scope, const Luau::AstExprCall& call)
+    /// Whether the type the name stands for is the kind this call answers with
+    virtual bool accepts(Luau::TypeId) const
+    {
+        return true;
+    }
+
+    std::optional<Luau::TypeId> named(Luau::Scope* scope, const Luau::AstExprCall& call) const
     {
         if (call.args.size < 1)
             return std::nullopt;
@@ -399,11 +405,16 @@ struct MagicServiceLookup final : Luau::MagicFunction
         std::string name(text->value.data, text->value.size);
         std::optional<Luau::TypeFun> found = scope->lookupType(name);
 
-        // A generic type is not a service, and substituting one needs arguments.
+        // A generic type is not one of these, and substituting one needs arguments.
         if (!found || !found->typeParams.empty() || !found->typePackParams.empty())
             return std::nullopt;
 
-        return Luau::follow(found->type);
+        Luau::TypeId followed = Luau::follow(found->type);
+
+        if (!accepts(followed))
+            return std::nullopt;
+
+        return followed;
     }
 
     std::optional<Luau::WithPredicate<Luau::TypePackId>> handleOldSolver(
@@ -412,27 +423,69 @@ struct MagicServiceLookup final : Luau::MagicFunction
         const Luau::AstExprCall& call,
         Luau::WithPredicate<Luau::TypePackId>) override
     {
-        std::optional<Luau::TypeId> service = named(typeChecker.globalScope.get(), call);
-        if (!service)
+        std::optional<Luau::TypeId> answer = named(typeChecker.globalScope.get(), call);
+        if (!answer)
             return std::nullopt;
 
         Luau::TypeArena& arena = *typeChecker.currentModule->internalTypes;
 
-        return Luau::WithPredicate<Luau::TypePackId>{arena.addTypePack({*service})};
+        return Luau::WithPredicate<Luau::TypePackId>{arena.addTypePack({*answer})};
     }
 
     bool infer(const Luau::MagicFunctionCallContext& context) override
     {
-        std::optional<Luau::TypeId> service = named(context.solver->rootScope.get(), *context.callSite);
-        if (!service)
+        std::optional<Luau::TypeId> answer = named(context.solver->rootScope.get(), *context.callSite);
+        if (!answer)
             return false;
 
-        Luau::TypePackId pack = context.solver->arena->addTypePack({*service});
+        Luau::TypePackId pack = context.solver->arena->addTypePack({*answer});
         asMutable(context.result)->ty.emplace<Luau::BoundTypePack>(pack);
 
         return true;
     }
 };
+
+/// `game:GetService("Players")`, which answers with the service.
+struct MagicServiceLookup final : MagicNamedType
+{
+};
+
+/*
+`Instance.new("Part")`, which answers with the class.
+
+Only a class is an instance. `Instance.new("number")` names a type that is
+not one, and the declared `Instance` stands, which is what the signature
+promises and what the call really returns.
+*/
+struct MagicInstanceNew final : MagicNamedType
+{
+    bool accepts(Luau::TypeId ty) const override
+    {
+        return Luau::get<Luau::ExternType>(ty) != nullptr;
+    }
+};
+
+/// Put a handler on one function that a global table holds under `name`.
+static void attachTo(std::optional<Luau::TypeId> holder, const char* name, std::shared_ptr<Luau::MagicFunction> magic)
+{
+    if (!holder)
+        return;
+
+    const Luau::TableType* ttv = Luau::get<Luau::TableType>(Luau::follow(*holder));
+
+    if (!ttv)
+        return;
+
+    auto found = ttv->props.find(name);
+
+    if (found == ttv->props.end() || !found->second.readTy)
+        return;
+
+    if (!Luau::get<Luau::FunctionType>(Luau::follow(*found->second.readTy)))
+        return;
+
+    Luau::attachMagicFunction(*found->second.readTy, std::move(magic));
+}
 
 /// Put the handler on `ServiceProvider.GetService` of one global table.
 static void attachServiceLookup(Luau::GlobalTypes& globals)
@@ -453,6 +506,23 @@ static void attachServiceLookup(Luau::GlobalTypes& globals)
         return;
 
     Luau::attachMagicFunction(*method->second.readTy, std::make_shared<MagicServiceLookup>());
+}
+
+/*
+Put the handler on `Instance.new` of one global table.
+
+`Instance` is a value and not a type, so the binding is what carries the
+table that holds `new`. The search is by text, because the name table of
+the declaration file is not the one this call can reach.
+*/
+static void attachInstanceNew(Luau::GlobalTypes& globals)
+{
+    std::optional<Luau::Binding> binding = globals.globalScope->linearSearchForBinding("Instance", true);
+
+    if (!binding)
+        return;
+
+    attachTo(binding->typeId, "new", std::make_shared<MagicInstanceNew>());
 }
 
 /*
@@ -484,6 +554,8 @@ int larvae_set_definitions(LarvaeSession* s, const char* name, const char* sourc
     */
     attachServiceLookup(s->frontend.globals);
     attachServiceLookup(s->frontend.globalsForAutocomplete);
+    attachInstanceNew(s->frontend.globals);
+    attachInstanceNew(s->frontend.globalsForAutocomplete);
 
     Luau::freeze(s->frontend.globals.globalTypes);
     Luau::freeze(s->frontend.globalsForAutocomplete.globalTypes);
