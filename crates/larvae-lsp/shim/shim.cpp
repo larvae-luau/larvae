@@ -2879,6 +2879,28 @@ const char* larvae_documentation_symbol(LarvaeSession* s, const char* path, uint
                         type = fun->type;
                 }
             }
+
+            /*
+            The name of an alias stands for whatever the alias holds.
+
+            `type testing2 = NumberRange` is a class under another name, and
+            hovering the name it was given showed no page while hovering the
+            class showed one. The card says the same thing either way.
+            */
+            if (!type)
+            {
+                NodeAtPosition at(position);
+                source->root->visit(&at);
+
+                if (at.best)
+                {
+                    if (auto alias = at.best->as<Luau::AstStatTypeAlias>())
+                    {
+                        if (std::optional<Luau::TypeFun> fun = scope->lookupType(alias->name.value))
+                            type = fun->type;
+                    }
+                }
+            }
         }
 
         if (!type)
