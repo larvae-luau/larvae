@@ -70,6 +70,17 @@ Notable changes land here. Format follows
 - Luau's own error number on a type diagnostic. The editor shows it as
   `Luau(1061)` and links it to the page that explains the checker, which is
   what luau-lsp shows
+- `R15Character` and `R6Character`, larvae's own types beside the Roblox
+  globals, in a definitions file the nightly refresh never touches. Each
+  carries the parts of its rig, typed as their real classes, and stays a
+  `Model` through the intersection. `[lsp] character_type` picks what
+  `Player.Character` types to: `r15` by default, `r6`, or `not_set` for
+  the union, so `local character: R15Character = player.Character` needs
+  no cast and `player.Character.` offers the body parts
+- `[lsp] analyzer`, the switch back to the classic server. Off serves what
+  larvae always served: the lints, the format, the code actions, and the
+  outline, on claimed and plain files alike, while the Luau parity goes
+  quiet and the session is never built. On mid-session builds it then
 - The comment an author wrote reaches the card. A `--- ` line or a
   `--[[ ]]` block above a declaration renders under the type, on the
   definition and on every use, across a require, with moonwave tags
@@ -180,6 +191,13 @@ Notable changes land here. Format follows
   working worm went back to being read as Luau, and its requires reported as
   unknown. The message names the reason. It repeats only when the reason
   changes
+- The analyzer builds on Windows and macOS. Four of the six release legs
+  could not have produced a working library: the seal step was GNU only.
+  The archiver and the driver now come from the build's own toolchain, and
+  each platform names and links the library its own way
+- A hover on an unchanged file reads the cached check. Every hover marked
+  the module dirty through its open, so the next check rebuilt it from
+  nothing, which read as the types reloading for no reason
 - A completion never reads a type whose arena is gone. Luau's autocomplete
   frees its local arena before it returns, so an entry's type can point into
   freed memory; the documentation path followed one into a crash. The
