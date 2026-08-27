@@ -217,7 +217,7 @@ line the author did not write, and a reader who did not ask for that reads
 it as the file changing under them. luau-lsp defaults them off for the same
 reason.
 */
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct InlayHintsConfig {
     /// The inferred type of a local the author left unannotated
@@ -237,6 +237,19 @@ pub struct InlayHintsConfig {
     */
     #[serde(default = "fifty")]
     pub type_hint_max_length: usize,
+}
+
+/*
+Parsed from nothing, like the others, so the field defaults hold.
+
+A derived Default zeroes the length, because serde's field defaults apply
+only while parsing. The zero then cut every hint down to `...` the moment a
+project left the setting out.
+*/
+impl Default for InlayHintsConfig {
+    fn default() -> Self {
+        toml::from_str("").expect("every field has a default")
+    }
 }
 
 fn fifty() -> usize {
@@ -381,6 +394,25 @@ mod tests {
 
         assert!(c.enabled);
         assert!(!c.claim_only);
+    }
+
+    /*
+    The defaults of a left-out subtable are the parsed defaults.
+
+    A derived Default gave the hints a maximum length of zero, so every
+    hint rendered as `...` for a project that never touched the setting.
+    */
+    #[test]
+    fn a_left_out_subtable_keeps_its_field_defaults() {
+        assert_eq!(LspConfig::default().inlay_hints.type_hint_max_length, 50);
+        assert_eq!(InlayHintsConfig::default().type_hint_max_length, 50);
+        assert_eq!(
+            toml::from_str::<LspConfig>("enabled = true")
+                .expect("parses")
+                .inlay_hints
+                .type_hint_max_length,
+            50
+        );
     }
 
     #[test]
