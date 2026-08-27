@@ -652,6 +652,19 @@ int larvae_set_definitions(LarvaeSession* s, const char* name, const char* sourc
 
 void larvae_open(LarvaeSession* s, const char* path, const char* text)
 {
+    /*
+    The same text is not a change.
+
+    Every hover and completion opens the document before it asks, and a
+    dirty mark forces the next check to rebuild the module and everything
+    the answer reads. So a hover on an unchanged file re-checked it from
+    nothing each time, which read as the types reloading for no reason. A
+    real edit differs from the stored text and marks as before.
+    */
+    auto it = s->open.find(path);
+    if (it != s->open.end() && it->second == text)
+        return;
+
     s->open[path] = text;
     s->frontend.markDirty(path);
 }
