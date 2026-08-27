@@ -59,7 +59,8 @@ pub fn spec_at(src: &str, at: u32) -> Option<&str> {
 
             Some(_) => {}
 
-            None if byte == b'"' || byte == b'\'' => {
+            // All three of Luau's string marks open a spec, backtick included.
+            None if byte == b'"' || byte == b'\'' || byte == b'`' => {
                 quote = Some(byte);
                 opened = i + 1;
             }
@@ -385,6 +386,18 @@ mod cursor {
     }
 
     /// A require with no parentheses is the same call, and Luau allows it.
+    /// Every string mark of Luau opens a spec, and a project picks one.
+    #[test]
+    fn each_quote_opens_a_spec() {
+        assert_eq!(spec("require('./a|"), Some("./a".to_owned()));
+        assert_eq!(spec("require(\"./a|"), Some("./a".to_owned()));
+        assert_eq!(spec("require(`./a|"), Some("./a".to_owned()));
+
+        // The editor closes the mark as the author types it, so the cursor
+        // sits inside a string that is already whole.
+        assert_eq!(spec("require(`./a|`)"), Some("./a".to_owned()));
+    }
+
     #[test]
     fn the_form_without_parentheses_counts() {
         assert_eq!(spec("local a = require \"./x|\""), Some("./x".to_owned()));
