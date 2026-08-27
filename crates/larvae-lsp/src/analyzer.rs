@@ -2164,6 +2164,34 @@ mod larvae_definitions {
 }
 
 #[cfg(test)]
+mod library_name {
+    /*
+    The name the build produced, and the name the installer looks for.
+
+    `larvae self install` finds the analyzer through
+    `std::env::consts::DLL_PREFIX` and `DLL_SUFFIX`, which the platform
+    fills in at runtime. The build script derives the same name from the
+    target it was told to build. A platform where the two disagree ships an
+    archive the installer walks past, and the server then refuses to start.
+
+    Three platforms have to agree, and this runs on whichever one is
+    building. Nothing here is a guess about the other two: it is the same
+    comparison wherever it runs.
+    */
+    #[test]
+    fn the_build_spells_the_library_the_way_the_installer_reads_it() {
+        assert_eq!(
+            env!("LARVAE_ANALYZER_LIBRARY"),
+            format!(
+                "{}eclipse_analysis{}",
+                std::env::consts::DLL_PREFIX,
+                std::env::consts::DLL_SUFFIX
+            )
+        );
+    }
+}
+
+#[cfg(test)]
 mod startup_cost {
     use super::*;
     use larvae::lsp::analysis::Analysis;
