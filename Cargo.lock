@@ -472,6 +472,7 @@ version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
+ "crc32fast",
  "miniz_oxide",
  "zlib-rs",
 ]
@@ -834,7 +835,7 @@ dependencies = [
 
 [[package]]
 name = "larvae"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -865,18 +866,21 @@ dependencies = [
 
 [[package]]
 name = "larvae-lsp"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "cc",
+ "flate2",
  "json5",
  "larvae",
+ "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
 name = "larvae-worm"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "serde",
  "serde_json",

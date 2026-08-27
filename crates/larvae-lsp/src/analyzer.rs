@@ -28,12 +28,88 @@ text, so the two cannot disagree.
 */
 const GLOBAL_TYPES: &str = include_str!("../types/globalTypes.d.luau");
 
+/*
+The Roblox reference, trimmed to what a card shows and deflated.
+
+Luau names a page per type and per member, ex: `@roblox/globaltype/Player`,
+and the frontend hands that name back for a hover or a completion. This is
+the other half: the name, to the prose and the link.
+
+It ships compressed, because the trimmed database is 3.7MB of JSON and 438KB
+deflated. It inflates on the thread that builds the session, next to the
+fourteen thousand lines of type definitions, so it costs the editor nothing.
+Only the entries that carry prose or a link are kept; the parameter entries
+of the full file say nothing a reader needs.
+*/
+const API_DOCS: &[u8] = include_bytes!("../types/api-docs.deflate");
+
+/// One page of the Roblox reference, as the trimmed database spells it
+#[derive(serde::Deserialize)]
+struct DocEntry {
+    #[serde(default, rename = "d")]
+    documentation: String,
+    #[serde(default, rename = "l")]
+    link: String,
+    /// The example the reference prints under the page
+    #[serde(default, rename = "c")]
+    code_sample: String,
+}
+
+impl DocEntry {
+    /// The page as markdown, in the shape luau-lsp writes one
+    fn markdown(&self) -> Option<String> {
+        let mut out = self.documentation.clone();
+
+        if !self.link.is_empty() {
+            if !out.is_empty() {
+                out.push_str("\n\n");
+            }
+
+            out.push_str(&format!("[Learn More]({})", self.link));
+        }
+
+        if !self.code_sample.is_empty() {
+            if !out.is_empty() {
+                out.push_str("\n\n");
+            }
+
+            out.push_str(&format!("```luau\n{}\n```", self.code_sample));
+        }
+
+        (!out.is_empty()).then_some(out)
+    }
+}
+
+/*
+Inflate the reference into a map, once.
+
+A failure here is not worth a message. The database ships with the binary,
+so a failure means the binary is damaged, and every other answer still holds
+without it.
+*/
+fn read_api_docs() -> HashMap<String, DocEntry> {
+    use std::io::Read;
+
+    let mut text = String::new();
+
+    if flate2::read::ZlibDecoder::new(API_DOCS)
+        .read_to_string(&mut text)
+        .is_err()
+    {
+        return HashMap::new();
+    }
+
+    serde_json::from_str(&text).unwrap_or_default()
+}
+
 use larvae::lsp::analysis::{Analysis, AnalysisCompletion, AnalysisDiag, ModuleHooks};
 
 #[repr(C)]
 struct RawDiag {
     start: u32,
     end: u32,
+    /// Luau's own error number; 0 where the finding carries none
+    code: i32,
     severity: u8,
     message: *const c_char,
 }
@@ -70,7 +146,22 @@ struct RawLocation {
 #[repr(C)]
 struct RawCompletion {
     label: *const c_char,
+    /// The type of the entry, rendered; null for a keyword
+    detail: *const c_char,
+    /// The argument names of a function, ex: `(self, className)`
+    label_detail: *const c_char,
+    /// What the editor writes, when it differs from the label
+    insert_text: *const c_char,
+    /// The comment block above the declaration, as markdown; null when none
+    documentation: *const c_char,
+    /// The entry's page in the Roblox reference; null when it names none
+    documentation_symbol: *const c_char,
     kind: u8,
+    deprecated: u8,
+    /// 0 no, 1 the entry fits the expected type, 2 its result does
+    type_correct: u8,
+    /// 1 when the entry comes through an index the type does not take
+    wrong_index_type: u8,
 }
 
 #[allow(non_camel_case_types)]
@@ -82,6 +173,7 @@ unsafe extern "C" {
     fn larvae_enable_all_flags();
     fn larvae_set_flag(name: *const c_char, value: *const c_char) -> i32;
     fn larvae_apply_required_flags();
+    fn larvae_reset_flags();
     fn larvae_signature_help(
         s: *mut c_void,
         path: *const c_char,
@@ -119,6 +211,8 @@ unsafe extern "C" {
     );
     fn larvae_open(s: *mut c_void, path: *const c_char, text: *const c_char);
     fn larvae_invalidate(s: *mut c_void, path: *const c_char);
+    fn larvae_clear_script_types(s: *mut c_void);
+    fn larvae_set_script_type(s: *mut c_void, path: *const c_char, type_name: *const c_char);
     fn larvae_check(s: *mut c_void, path: *const c_char, out: *mut RawDiag, cap: usize) -> usize;
     fn larvae_hover(
         s: *mut c_void,
@@ -127,6 +221,8 @@ unsafe extern "C" {
         show_table_kinds: i32,
         include_string_length: i32,
     ) -> *const c_char;
+    fn larvae_documentation_symbol(s: *mut c_void, path: *const c_char, byte: u32)
+    -> *const c_char;
     fn larvae_completions(
         s: *mut c_void,
         path: *const c_char,
@@ -155,6 +251,27 @@ struct ResolverState {
     `@game` then resolves to nothing, which is the true answer.
     */
     mounts: Option<larvae::requires::datamodel::MountTable>,
+    /*
+    The extensions of the worms that resolve, without the dot.
+
+    They come with the hooks and travel with them, because the two answer
+    one question together: the worm resolves the spec, and this says which
+    files it is able to.
+    */
+    claims: Vec<String>,
+}
+
+/// One string the shim handed back, or None where it handed back null
+fn text(raw: *const c_char) -> Option<String> {
+    match raw.is_null() {
+        true => None,
+
+        false => Some(
+            unsafe { CStr::from_ptr(raw) }
+                .to_string_lossy()
+                .into_owned(),
+        ),
+    }
 }
 
 extern "C" fn resolve_cb(
@@ -195,7 +312,12 @@ extern "C" fn resolve_cb(
             .map_or(std::ptr::null(), |c| c.as_ptr());
     }
 
-    let answer = resolve_spec(Path::new(from.as_ref()), &spec, state.mounts.as_ref());
+    let answer = resolve_spec(
+        Path::new(from.as_ref()),
+        &spec,
+        state.mounts.as_ref(),
+        &state.claims,
+    );
 
     if std::env::var_os("LARVAE_RESOLVE_DEBUG").is_some() {
         eprintln!(
@@ -230,12 +352,36 @@ extern "C" fn load_cb(userdata: *mut c_void, path: *const c_char) -> *const c_ch
     if let Some(hooks) = &state.hooks
         && let Some(text) = (hooks.load)(path.as_ref())
     {
+        if std::env::var_os("LARVAE_RESOLVE_DEBUG").is_some() {
+            eprintln!(
+                "load {:?} -> {} bytes:\n{}",
+                path.as_ref(),
+                text.len(),
+                &text[..text.len().min(400)]
+            );
+        }
+
         state.load_buffer = CString::new(text).ok();
 
         return state
             .load_buffer
             .as_ref()
             .map_or(std::ptr::null(), |c| c.as_ptr());
+    }
+
+    /*
+    Only Luau is read from disk. A claimed file reaches the frontend through
+    the worm above, and a worm that declined has nothing to say about it, so
+    the raw text would be read as Luau and report its first brace as a
+    syntax error inside a file the author cannot see.
+    */
+    let luau = Path::new(path.as_ref())
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| ext == "luau" || ext == "lua");
+
+    if !luau {
+        return std::ptr::null();
     }
 
     match std::fs::read_to_string(path.as_ref()) {
@@ -254,6 +400,55 @@ extern "C" fn load_cb(userdata: *mut c_void, path: *const c_char) -> *const c_ch
         Err(_) => std::ptr::null(),
     }
 }
+/*
+Luau's own flags, applied to this process.
+
+The flags are global to the process and not to a session, and some of them
+decide what a session is: `LuauSolverV2` picks the type solver, and the
+globals are registered under whichever one was on when the session was
+built. So this runs before `LuauAnalysis::new`, on the thread that builds
+it, and a project that asks for the new solver gets one.
+
+The order is luau-lsp's: every flag on, then the project's overrides, then
+the values larvae cannot work without. A later step wins. The names Luau did
+not recognise come back, because a flag Luau renamed is a setting that
+quietly stopped working and only the user can fix it.
+*/
+pub fn apply_flags(flags: &larvae::config::lsp::FFlagsConfig) -> Vec<String> {
+    if flags.enable_by_default {
+        unsafe { larvae_enable_all_flags() };
+    }
+
+    if flags.enable_new_solver
+        && let Ok(name) = CString::new("LuauSolverV2")
+        && let Ok(on) = CString::new("true")
+    {
+        unsafe { larvae_set_flag(name.as_ptr(), on.as_ptr()) };
+    }
+
+    let mut unknown = Vec::new();
+
+    for (name, value) in &flags.over {
+        let (Ok(key), Ok(text)) = (CString::new(name.as_str()), CString::new(value.as_str()))
+        else {
+            continue;
+        };
+
+        match unsafe { larvae_set_flag(key.as_ptr(), text.as_ptr()) } {
+            0 => {}
+
+            1 => unknown.push(format!("{name} is not a Luau flag")),
+
+            _ => unknown.push(format!("{name} does not take the value {value:?}")),
+        }
+    }
+
+    // Last, so an override cannot take away what larvae needs to work.
+    unsafe { larvae_apply_required_flags() };
+
+    unknown
+}
+
 pub struct LuauAnalysis {
     session: *mut c_void,
     /// Owned by the session for its lifetime; the shim only borrows it
@@ -262,6 +457,8 @@ pub struct LuauAnalysis {
     keys: HashMap<PathBuf, CString>,
     /// The service names, extracted from the definitions once
     services: Vec<String>,
+    /// The Roblox reference, by documentation symbol
+    docs: HashMap<String, DocEntry>,
 }
 
 // One session, used from the one server thread; the raw pointer is why
@@ -275,6 +472,7 @@ impl LuauAnalysis {
             load_buffer: None,
             hooks: None,
             mounts: None,
+            claims: Vec::new(),
         });
 
         let session = unsafe { larvae_session_new() };
@@ -293,6 +491,7 @@ impl LuauAnalysis {
             resolver,
             keys: HashMap::new(),
             services: Vec::new(),
+            docs: read_api_docs(),
         };
 
         /*
@@ -474,38 +673,7 @@ impl Analysis for LuauAnalysis {
     }
 
     fn set_flags(&mut self, flags: &larvae::config::lsp::FFlagsConfig) -> Vec<String> {
-        if flags.enable_by_default {
-            unsafe { larvae_enable_all_flags() };
-        }
-
-        if flags.enable_new_solver
-            && let Ok(name) = CString::new("LuauSolverV2")
-            && let Ok(on) = CString::new("true")
-        {
-            unsafe { larvae_set_flag(name.as_ptr(), on.as_ptr()) };
-        }
-
-        let mut unknown = Vec::new();
-
-        for (name, value) in &flags.over {
-            let (Ok(key), Ok(text)) = (CString::new(name.as_str()), CString::new(value.as_str()))
-            else {
-                continue;
-            };
-
-            match unsafe { larvae_set_flag(key.as_ptr(), text.as_ptr()) } {
-                0 => {}
-
-                1 => unknown.push(format!("{name} is not a Luau flag")),
-
-                _ => unknown.push(format!("{name} does not take the value {value:?}")),
-            }
-        }
-
-        // Last, so an override cannot take away what larvae needs to work.
-        unsafe { larvae_apply_required_flags() };
-
-        unknown
+        apply_flags(flags)
     }
 
     fn set_mounts(&mut self, mounts: larvae::requires::datamodel::MountTable) {
@@ -541,6 +709,7 @@ impl Analysis for LuauAnalysis {
     }
 
     fn set_module_hooks(&mut self, hooks: ModuleHooks) {
+        self.resolver.claims = hooks.claims.clone();
         self.resolver.hooks = Some(hooks);
     }
 
@@ -550,6 +719,20 @@ impl Analysis for LuauAnalysis {
         };
 
         unsafe { larvae_set_definitions(self.session, name.as_ptr(), source.as_ptr()) == 0 }
+    }
+
+    fn set_script_types(&mut self, types: &HashMap<PathBuf, String>) {
+        unsafe { larvae_clear_script_types(self.session) };
+
+        for (path, name) in types {
+            let Ok(name) = CString::new(name.as_str()) else {
+                continue;
+            };
+
+            let key = self.key(path);
+
+            unsafe { larvae_set_script_type(self.session, key, name.as_ptr()) };
+        }
     }
 
     fn open(&mut self, path: &Path, text: &str) {
@@ -576,7 +759,7 @@ impl Analysis for LuauAnalysis {
                 message: unsafe { CStr::from_ptr(d.message) }
                     .to_string_lossy()
                     .into_owned(),
-                code: None,
+                code: (d.code != 0).then(|| d.code.to_string()),
             })
             .collect()
     }
@@ -618,15 +801,46 @@ impl Analysis for LuauAnalysis {
 
         unsafe { raw.set_len(n) };
 
+        // The borrow of the map ends before the closure takes `self` again.
+        let docs = &self.docs;
+
         raw.iter()
             .map(|c| AnalysisCompletion {
                 label: unsafe { CStr::from_ptr(c.label) }
                     .to_string_lossy()
                     .into_owned(),
                 kind: c.kind,
-                detail: None,
+                detail: text(c.detail),
+                label_detail: text(c.label_detail),
+                insert_text: text(c.insert_text),
+                /*
+                The comment the author wrote wins over the reference. A
+                project that documents its own wrapper of a Roblox call
+                means the wrapper, and the reference means the call.
+                */
+                documentation: text(c.documentation).or_else(|| {
+                    text(c.documentation_symbol)
+                        .and_then(|symbol| docs.get(&symbol))
+                        .and_then(DocEntry::markdown)
+                }),
+                deprecated: c.deprecated == 1,
+                type_correct: c.type_correct,
+                wrong_index_type: c.wrong_index_type == 1,
             })
             .collect()
+    }
+
+    /*
+    The Roblox reference page for the name at a position, as markdown.
+
+    The frontend names the page and this reads it. A name the reference does
+    not cover answers nothing, which is every name a project wrote itself.
+    */
+    fn hover_documentation(&mut self, path: &Path, at: u32) -> Option<String> {
+        let key = self.key(path);
+        let symbol = text(unsafe { larvae_documentation_symbol(self.session, key, at) })?;
+
+        self.docs.get(&symbol).and_then(DocEntry::markdown)
     }
 
     fn invalidate(&mut self, path: &Path) {
@@ -746,9 +960,26 @@ mod flags {
     use larvae::config::lsp::FFlagsConfig;
     use larvae::lsp::analysis::Analysis;
 
+    /*
+    A flag put back when the test that changed it ends.
+
+    Luau keeps its flags in the process and not in a session, so a test that
+    turns them on decides what every later test in the same binary infers.
+    Every hover test failed for that reason, and only when the whole suite
+    ran. The guard puts them back however the test leaves.
+    */
+    struct Flags;
+
+    impl Drop for Flags {
+        fn drop(&mut self) {
+            unsafe { larvae_reset_flags() };
+        }
+    }
+
     /// An override reaches Luau, and a bad name comes back rather than vanishing.
     #[test]
     fn an_override_reaches_luau_and_a_typo_is_reported() {
+        let _flags = Flags;
         let mut analysis = LuauAnalysis::new();
 
         let mut flags = FFlagsConfig::default();
@@ -786,6 +1017,7 @@ mod flags {
     */
     #[test]
     fn a_required_value_wins_over_an_override() {
+        let _flags = Flags;
         let mut analysis = LuauAnalysis::new();
 
         let mut flags = FFlagsConfig::default();
@@ -808,6 +1040,7 @@ mod flags {
     /// Turning every flag on must not stop the types loading.
     #[test]
     fn every_flag_on_still_loads_the_types() {
+        let _flags = Flags;
         let mut analysis = LuauAnalysis::new();
 
         let flags = FFlagsConfig {

@@ -251,6 +251,24 @@ mod lowering_tests {
     }
 }
 
+/*
+One hover card: the type, then the reference page under it.
+
+The rule is the shape luau-lsp writes, so a reader who moves between the two
+servers reads one card. The type goes in a Luau fence, a rule of ten dashes
+separates it, and the prose follows as markdown.
+*/
+fn card(text: &str, documentation: Option<&str>) -> String {
+    let mut out = format!("```luau\n{text}\n```");
+
+    if let Some(docs) = documentation.filter(|d| !d.trim().is_empty()) {
+        out.push_str("\n----------\n");
+        out.push_str(docs);
+    }
+
+    out
+}
+
 /// The byte offset of the position in a request's params
 fn position_byte(src: &str, params: &Value) -> u32 {
     let line = params["position"]["line"].as_u64().unwrap_or(0) as u32;
@@ -259,7 +277,130 @@ fn position_byte(src: &str, params: &Value) -> u32 {
     rpc::Lines::new(src).byte_of(src, line, character)
 }
 
+/*
+One completion, as the protocol wants it.
+
+Both routes render through here: the plain Luau file and the file a worm
+claims. They used to differ, and the claimed one ranked every entry the
+same, so the props of a component sat in the alphabet with the whole global
+scope. One list cannot have two orders.
+
+The tiers are luau-lsp's, with one addition of larvae's own. A keyword that
+fits the position outranks everything, because the bug that answers is real:
+an author types `end` to close a guard clause and the list hands them
+EncodingService. Under that, the order is the answer Luau gives and not a
+guess from the kind: an entry that fits the type the position expects comes
+first, which is what puts a component's props above the alphabet.
+*/
+fn completion_item(c: &crate::lsp::analysis::AnalysisCompletion) -> Value {
+    let tier = match (c.kind, c.type_correct, c.wrong_index_type, c.deprecated) {
+        (14, ..) => '0',
+
+        // A name the type does not take reads last of the real answers.
+        (_, _, true, _) => '7',
+
+        // Deprecated is offered and never preferred.
+        (.., true) => '8',
+
+        (_, 1, ..) => '1',
+
+        (_, 2, ..) => '2',
+
+        (5 | 10, ..) => '3',
+
+        (3 | 12, ..) => '4',
+
+        _ => '5',
+    };
+
+    let mut item = json!({
+        "label": c.label,
+        "kind": c.kind,
+        "detail": c.detail,
+        "sortText": format!("{tier}{}", c.label),
+        // 1 is PlainText: an insertion is text here and never a snippet.
+        "insertTextFormat": 1,
+        "deprecated": c.deprecated,
+        "preselect": false,
+    });
+
+    /*
+    The argument names go against the label, and the editor writes the
+    parentheses of a call itself.
+    */
+    if let Some(names) = &c.label_detail {
+        item["labelDetails"] = json!({ "detail": names });
+    }
+
+    if let Some(insert) = &c.insert_text {
+        item["insertText"] = json!(insert);
+    }
+
+    /*
+    The comment above the declaration, as markdown. An editor draws it in
+    the panel beside the list, which is where a reader looks while they
+    scroll it.
+    */
+    if let Some(docs) = &c.documentation {
+        item["documentation"] = json!({ "kind": "markdown", "value": docs });
+    }
+
+    // 1 is Deprecated, the one tag the protocol defines.
+    if c.deprecated {
+        item["tags"] = json!([1]);
+    }
+
+    item
+}
+
 impl Server {
+    /*
+    What the half-written require at the cursor can become.
+
+    Every offer carries its own insertion, because a directory ends in a
+    slash that the label shows and the filter would otherwise fight. The
+    list is complete for the directory it names, so the editor filters it
+    on the next keystroke rather than asking again.
+    */
+    fn require_completions(&self, partial: &str, path: &std::path::Path) -> Value {
+        let root = match &self.root {
+            Some(root) => root.as_path(),
+
+            // With no project root, a relative spec still reads against the file.
+            None => path.parent().unwrap_or(path),
+        };
+
+        let luaurc = super::decorate::luaurc_upward(path, root);
+
+        let items: Vec<Value> = super::requires::candidates(
+            partial,
+            path,
+            root,
+            &self.aliases,
+            &luaurc,
+            &self.mounts,
+            &self.worms.lsp_resolved_claims(),
+        )
+        .into_iter()
+        .map(|c| {
+            json!({
+                "label": c.label,
+                "kind": c.kind,
+                "detail": c.detail,
+                "insertText": c.insert,
+                // A directory sorts after the files that sit beside it.
+                "sortText": match c.kind {
+                    19 => format!("1{}", c.label),
+
+                    _ => format!("0{}", c.label),
+                },
+            })
+        })
+        .collect();
+
+        json!({ "isIncomplete": false, "items": items })
+    }
+
     /*
     The type at the cursor, from the analyzer behind the seam.
 
@@ -278,11 +419,12 @@ impl Server {
         /*
         A card that says it is loading, while the session is still being
         built. Nothing at all reads as "this has no type", which is wrong
-        and which the reader cannot tell from the truth.
+        and which the reader cannot tell from the truth. The card said
+        `...` before, which says nothing to the person reading it.
         */
         if self.analysis_loading() {
             return json!({
-                "contents": { "kind": "markdown", "value": "```luau\n...\n```" },
+                "contents": { "kind": "markdown", "value": "```luau\nLoading...\n```" },
             });
         }
 
@@ -336,22 +478,27 @@ impl Server {
             };
 
             return json!({
-                "contents": { "kind": "markdown", "value": format!("```luau\n{text}\n```") }
+                "contents": {
+                    "kind": "markdown",
+                    "value": card(&self.instances.readable(&text), None),
+                }
             });
         }
 
         let view = super::analysis::plain_view(src);
         let mut analysis = self.analysis.borrow_mut();
 
-        let Some(text) = analysis.as_mut().and_then(|a| {
+        let Some((text, docs)) = analysis.as_mut().and_then(|a| {
             a.open(&path, &view);
 
-            a.hover(
+            let text = a.hover(
                 &path,
                 at,
                 self.lsp.hover.show_table_kinds,
                 self.lsp.hover.include_string_length,
-            )
+            )?;
+
+            Some((text, a.hover_documentation(&path, at)))
         }) else {
             return Value::Null;
         };
@@ -359,7 +506,10 @@ impl Server {
         drop(analysis);
 
         let hover = json!({
-            "contents": { "kind": "markdown", "value": format!("```luau\n{text}\n```") }
+            "contents": {
+                "kind": "markdown",
+                "value": card(&self.instances.readable(&text), docs.as_deref()),
+            }
         });
 
         // Tier 3: the worms that transform hovers see it before the editor.
@@ -374,14 +524,6 @@ impl Server {
             return json!([]);
         }
 
-        /*
-        An incomplete list, so the editor asks again on the next keystroke
-        rather than caching an empty one for the rest of the session.
-        */
-        if self.analysis_loading() {
-            return json!({ "isIncomplete": true, "items": [] });
-        }
-
         let Some(src) = self.documents.get(&uri) else {
             return json!([]);
         };
@@ -391,6 +533,28 @@ impl Server {
         };
 
         let at = position_byte(src, params);
+
+        /*
+        A require spec is answered first, and by the filesystem.
+
+        The analyzer has nothing to say about the text between the quotes:
+        it names a file, and the list of files is what the author needs. So
+        this answers while the session is still loading, and it answers
+        before the worm route too, because a require of a claimed file is
+        written in a plain Luau file just as often.
+        */
+        if let Some(partial) = super::requires::spec_at(src, at) {
+            return self.require_completions(partial, &path);
+        }
+
+        /*
+        An incomplete list, so the editor asks again on the next keystroke
+        rather than caching an empty one for the rest of the session.
+        */
+        if self.analysis_loading() {
+            return json!({ "isIncomplete": true, "items": [] });
+        }
+
         let context = json!({ "path": path, "text": src, "offset": at });
 
         /*
@@ -416,17 +580,7 @@ impl Server {
                 _ => Vec::new(),
             };
 
-            let base: Vec<Value> = items
-                .drain(..)
-                .map(|c| {
-                    json!({
-                        "label": c.label,
-                        "kind": c.kind,
-                        "detail": c.detail,
-                        "sortText": format!("5{}", c.label),
-                    })
-                })
-                .collect();
+            let base: Vec<Value> = items.drain(..).map(|c| completion_item(&c)).collect();
 
             return self.worms.lsp_respond("completions", &context, json!(base));
         }
@@ -441,13 +595,9 @@ impl Server {
         analysis.open(&path, &view);
 
         /*
-        The order the editor shows is the order these tiers spell. A
-        keyword that fits the position outranks everything, because the
-        bug this design answers is real: an author types `end` to close a
-        guard clause and the list hands them EncodingService. An exactly
-        typed keyword also preselects, so enter confirms what the author
-        wrote. Auto-imports rank last: they are the most speculative
-        offer in the list, and they must never win a race against syntax.
+        [`completion_item`] spells the order. Auto-imports rank last, below
+        every tier it writes: they are the most speculative offer in the
+        list, and they must never win a race against syntax.
         */
         let prefix = word_before(src, at);
 
@@ -457,23 +607,12 @@ impl Server {
             // 14 is Keyword. A project that finds them noisy turns them off.
             .filter(|c| self.lsp.completion.show_keywords || c.kind != 14)
             .map(|c| {
-                let tier = match c.kind {
-                    14 => '0',
+                let mut item = completion_item(&c);
 
-                    5 | 10 => '1',
-
-                    3 | 12 => '2',
-
-                    _ => '5',
-                };
-
-                let mut item = json!({
-                    "label": c.label,
-                    "kind": c.kind,
-                    "detail": c.detail,
-                    "sortText": format!("{tier}{}", c.label),
-                });
-
+                /*
+                An exactly typed keyword preselects, so enter confirms what
+                the author wrote rather than the first name in the list.
+                */
                 if c.kind == 14 && !prefix.is_empty() && c.label == prefix {
                     item["preselect"] = json!(true);
                 }

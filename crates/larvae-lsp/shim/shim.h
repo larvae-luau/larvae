@@ -48,16 +48,35 @@ int larvae_set_flag(const char* name, const char* value);
 /* Put back the values larvae cannot work without. Call after any override. */
 void larvae_apply_required_flags(void);
 
+/* Put every boolean flag back to the value it had at startup. The flags are
+   global to the process, so a caller that changed them owes this to whoever
+   builds the next session. */
+void larvae_reset_flags(void);
+
 /* The text of one open module; replaces what the session held. */
 void larvae_open(LarvaeSession* s, const char* path, const char* text);
 
 /* Drop the cached state of one module and everything that depends on it. */
 void larvae_invalidate(LarvaeSession* s, const char* path);
 
-/* One diagnostic, byte addressed against the module's text. */
+/* The type that `script` takes inside one module.
+
+   `script` names a different instance in every file, so a global declaration
+   cannot say what it is. The sourcemap can, and these two carry the answer:
+   clear drops the whole map, set names the declared type of one file. Both
+   mark the modules they touch dirty, so the next check reads the new type. */
+void larvae_clear_script_types(LarvaeSession* s);
+void larvae_set_script_type(LarvaeSession* s, const char* path, const char* type_name);
+
+/* One diagnostic, byte addressed against the module's text.
+
+   `code` is Luau's own error number, which starts at 1000 and names the
+   kind of the error. It is 0 for a finding that carries no number, ex: a
+   syntax error. An editor shows it beside the message and links it. */
 typedef struct {
     uint32_t start;
     uint32_t end;
+    int32_t code;
     uint8_t severity; /* 1 error, 2 warning */
     const char* message;
 } LarvaeDiag;
@@ -73,9 +92,43 @@ size_t larvae_check(LarvaeSession* s, const char* path, LarvaeDiag* out, size_t 
 const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int show_table_kinds,
                          int include_string_length);
 
+/* The documentation symbol at a byte offset, or null.
+
+   It names an entry of the Roblox documentation database, which Rust holds
+   and looks up. The two are split because the database is 19000 entries of
+   JSON, and a JSON parser does not belong in this shim. */
+const char* larvae_documentation_symbol(LarvaeSession* s, const char* path, uint32_t byte);
+
 typedef struct {
     const char* label;
+    /* The type of the entry, rendered. Null for a keyword, which has none.
+       An editor shows it beside the label, which is how a reader tells a
+       function from a field without accepting either. */
+    const char* detail;
+    /* The parameter names of a function, ex: `(self, className)`. An editor
+       draws it against the label itself, before the detail. Null for
+       anything that is not a function. */
+    const char* label_detail;
+    /* What the editor writes when the entry is accepted, when that differs
+       from the label: a function takes its parentheses. */
+    const char* insert_text;
+    /* The comment block above the declaration, as markdown. Null when the
+       entry has no declaration this session can read. */
+    const char* documentation;
+    /* The documentation symbol of the entry, ex: `@roblox/globaltype/Player`.
+       Rust holds the documentation database and looks this up. Null when the
+       entry names nothing the database can answer. */
+    const char* documentation_symbol;
     uint8_t kind; /* CompletionItemKind of the protocol */
+    uint8_t deprecated; /* 1 when the declaration carries @deprecated */
+    /* Whether the entry fits the type the position expects: 0 no, 1 yes,
+       2 a function whose result fits. It is what ranks a table key above
+       every global in scope, which is the difference between a useful list
+       and an alphabet. */
+    uint8_t type_correct;
+    /* 1 when the entry is reached through an index the type does not take,
+       ex: a property read off a metatable index. It ranks last. */
+    uint8_t wrong_index_type;
 } LarvaeCompletion;
 
 /* Completions at a byte offset. Returns how many, writes at most cap. */

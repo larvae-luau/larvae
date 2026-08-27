@@ -1018,11 +1018,23 @@ impl crate::lsp::analysis::Analysis for Issue1503Analysis {
                 label: "end".into(),
                 kind: 14,
                 detail: None,
+                label_detail: None,
+                insert_text: None,
+                documentation: None,
+                deprecated: false,
+                type_correct: 0,
+                wrong_index_type: false,
             },
             crate::lsp::analysis::AnalysisCompletion {
                 label: "elapsedTime".into(),
                 kind: 3,
-                detail: None,
+                detail: Some("() -> number".into()),
+                label_detail: Some("()".into()),
+                insert_text: Some("elapsedTime()".into()),
+                documentation: Some("The seconds since the process started.".into()),
+                deprecated: false,
+                type_correct: 0,
+                wrong_index_type: false,
             },
         ]
     }
@@ -1711,6 +1723,60 @@ fn an_editor_setting_reaches_the_server() {
     );
 }
 
+/*
+A project wins the settings it spells, and only those.
+
+`[lsp]` used to be copied over the whole table, so any `larvae.toml` threw
+away every editor setting, including the ones it says nothing about. A user
+who turned the new solver on in the editor got the old one and no reason.
+*/
+#[test]
+fn the_project_wins_only_where_it_names_a_setting() {
+    let mut server = Server {
+        editor: json!({
+            "larvae-lsp": {
+                "claimOnly": true,
+                "fflags": { "enableNewSolver": true },
+                "hover": { "showTableKinds": true },
+            }
+        }),
+        ..Default::default()
+    };
+
+    let project = toml::from_str::<toml::Value>("[lsp]\nclaim_only = false\n").expect("parses");
+
+    server.apply_editor_settings(Some(&project));
+
+    // The project spelled this one, so it wins.
+    assert!(!server.lsp.claim_only);
+
+    // It said nothing about these, so the editor keeps them.
+    assert!(
+        server.lsp.fflags.enable_new_solver,
+        "the editor's enableNewSolver was thrown away"
+    );
+    assert!(server.lsp.hover.show_table_kinds);
+}
+
+/// A nested name is matched by its own path, and not by the table above it.
+#[test]
+fn a_project_that_names_one_flag_leaves_the_others_to_the_editor() {
+    let mut server = Server {
+        editor: json!({
+            "larvae-lsp": { "fflags": { "enableNewSolver": true, "enableByDefault": true } }
+        }),
+        ..Default::default()
+    };
+
+    let project =
+        toml::from_str::<toml::Value>("[lsp.fflags]\nenable_new_solver = false\n").expect("parses");
+
+    server.apply_editor_settings(Some(&project));
+
+    assert!(!server.lsp.fflags.enable_new_solver);
+    assert!(server.lsp.fflags.enable_by_default);
+}
+
 /// A later change replaces what the editor said before.
 #[test]
 fn a_configuration_change_replaces_the_blob() {
@@ -1719,7 +1785,7 @@ fn a_configuration_change_replaces_the_blob() {
 
     server.editor = json!({ "larvae-lsp": { "claimOnly": true } });
 
-    server.apply_editor_settings();
+    server.apply_editor_settings(None);
 
     assert!(server.lsp.claim_only);
 
@@ -1756,7 +1822,7 @@ fn an_unknown_setting_is_ignored() {
         ..Default::default()
     };
 
-    server.apply_editor_settings();
+    server.apply_editor_settings(None);
 
     // The one it knows still lands.
     assert!(!server.lsp.completion.imports.use_const);
@@ -1768,7 +1834,7 @@ fn no_editor_settings_changes_nothing() {
     let mut server = Server::default();
     let before = (server.lsp.enabled, server.lsp.claim_only);
 
-    server.apply_editor_settings();
+    server.apply_editor_settings(None);
 
     assert_eq!((server.lsp.enabled, server.lsp.claim_only), before);
 }
@@ -1791,7 +1857,7 @@ fn the_feature_knobs_reach_the_server() {
         ..Default::default()
     };
 
-    server.apply_editor_settings();
+    server.apply_editor_settings(None);
 
     assert!(!server.lsp.signature_help.enabled);
     assert!(!server.lsp.hover.enabled);
@@ -1902,7 +1968,7 @@ fn the_completion_and_index_knobs_reach_the_server() {
         ..Default::default()
     };
 
-    server.apply_editor_settings();
+    server.apply_editor_settings(None);
 
     assert!(!server.lsp.completion.enabled);
     assert!(!server.lsp.completion.show_keywords);
@@ -1984,7 +2050,7 @@ fn the_flag_and_bytecode_settings_reach_the_server() {
         ..Default::default()
     };
 
-    server.apply_editor_settings();
+    server.apply_editor_settings(None);
 
     assert!(server.lsp.fflags.enable_by_default);
     assert!(server.lsp.fflags.enable_new_solver);
@@ -2032,7 +2098,7 @@ fn an_override_of_any_json_type_becomes_text() {
         ..Default::default()
     };
 
-    server.apply_editor_settings();
+    server.apply_editor_settings(None);
 
     let over = &server.lsp.fflags.over;
 
