@@ -1172,6 +1172,67 @@
             }
           }
         },
+        "sort_table_types": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Sorts the properties of a table type by the length of their names, in a type position only. A value table keeps the order the author wrote. A table type that holds a comment stays as written, because a token replay has no position to put a comment back, and a sort reads the fields the table type layout finds, so table_types.enabled = false leaves every order alone.\n\n[sort_table_types →](https://larvae-luau.github.io/docs/reference/formatting#sort-table-types)",
+          "properties": {
+            "order": {
+              "enum": [
+                "none",
+                "ascending",
+                "descending"
+              ],
+              "default": "none",
+              "description": "The order of the properties. \"none\" keeps the order the author wrote, which is the default: a formatter that reorders code nobody asked it to reorder loses the order the author chose. \"ascending\" puts the shortest name first and \"descending\" the longest. Two names of one length sort alphabetically, so the output does not depend on the order of the input.\n\n[sort_table_types.order →](https://larvae-luau.github.io/docs/reference/formatting#sort-table-types-order)"
+            },
+            "indexer_first": {
+              "type": "boolean",
+              "enum": [
+                true,
+                false
+              ],
+              "default": true,
+              "description": "An indexer such as [number]: any goes above the named properties, because it states the shape of every key instead of one key. Off puts it in its sorted position: an indexer names nothing, so it measures zero and lands first under \"ascending\" anyway, and last under \"descending\". This does nothing until \"order\" asks for a sort.\n\n[sort_table_types.indexer_first →](https://larvae-luau.github.io/docs/reference/formatting#sort-table-types-indexer-first)"
+            }
+          }
+        },
+        "final_newline": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": true,
+          "description": "Whether the file ends with a newline. On by default. POSIX defines a line as text up to a newline, so a file without a final one ends in something that is not a line. This covers the single trailing newline only. Larvae removes whitespace at the end of every line whatever this says.\n\n[final_newline →](https://larvae-luau.github.io/docs/reference/formatting#final-newline)"
+        },
+        "magic_trailing_comma": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": true,
+          "description": "A trailing comma the author left in a table means \"keep this expanded\", so line breaking becomes something an author decides per table rather than something width alone decides. Tables only: Luau rejects `f(a, b,)`, so a call has no trailing comma to read.\n\n[magic_trailing_comma →](https://larvae-luau.github.io/docs/reference/formatting#magic-trailing-comma)"
+        },
+        "space_inside_parens": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": false,
+          "description": "`f( a )` rather than `f(a)`.\n\n[space_inside_parens →](https://larvae-luau.github.io/docs/reference/formatting#space-inside-parens)"
+        },
+        "space_inside_brackets": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": false,
+          "description": "`t[ k ]` rather than `t[k]`.\n\n[space_inside_brackets →](https://larvae-luau.github.io/docs/reference/formatting#space-inside-brackets)"
+        },
         "trailing_comma": {
           "type": "boolean",
           "enum": [

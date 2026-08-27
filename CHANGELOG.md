@@ -251,6 +251,17 @@ Notable changes land here. Format follows
   them ends. They are global to the process, so the flag tests decided what
   every later test in the same binary inferred, and every hover test failed
   when the whole suite ran
+- `[fmt.sort_table_types]`, which orders the properties of a table type by the
+  length of their names. `order` takes `none`, `ascending` or `descending`, and
+  `none` is the default: a formatter must not reorder code nobody asked it to
+  reorder. Two names of one length sort alphabetically, so the output does not
+  depend on the order of the input. `indexer_first` puts an indexer such as
+  `[number]: any` above the named properties, because it states the shape of
+  every key instead of one key. This reaches a type position only, so a value
+  table keeps the order the author wrote. Two limits: a table type that holds a
+  comment stays as written, because a token replay has no position to put a
+  comment back, and the sort reads the fields the table type layout finds, so
+  `table_types.enabled = false` leaves every order alone
 
 ## 0.6.0 - 2026-08-21
 

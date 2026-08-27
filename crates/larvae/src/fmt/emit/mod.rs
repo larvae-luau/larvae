@@ -21,7 +21,7 @@ use crate::syntax::lexer::{Tok, TokKind};
 
 use super::config::{
     BlockNewlineGaps, CallParens, CallStyle, CollapseSimpleStatement, FmtConfig, IfExpansion,
-    IfPlacement, IfStyle, ListExpansion, QuoteStyle, RequireGrouping, Semicolons,
+    IfPlacement, IfStyle, ListExpansion, PropertyOrder, QuoteStyle, RequireGrouping, Semicolons,
 };
 use super::doc::Doc;
 use super::trivia::{Attached, Comment, Trivia};
@@ -300,7 +300,7 @@ impl<'a> Emitter<'a> {
     fn table_type(&self, open: u32, close: u32) -> Doc<'a> {
         let cfg = &self.cfg.table_types;
 
-        let mut fields: Vec<Doc<'a>> = Vec::new();
+        let mut spans: Vec<(u32, u32)> = Vec::new();
         let mut depth = 0i32;
         let mut start = open + 1;
 
@@ -314,7 +314,7 @@ impl<'a> Emitter<'a> {
 
                 "," | ";" if depth == 0 => {
                     if start < i {
-                        fields.push(self.type_region(start, i));
+                        spans.push((start, i));
                     }
 
                     start = i + 1;
@@ -329,12 +329,19 @@ impl<'a> Emitter<'a> {
         }
 
         if start < close {
-            fields.push(self.type_region(start, close));
+            spans.push((start, close));
         }
 
-        if fields.is_empty() {
+        if spans.is_empty() {
             return Doc::text("{}");
         }
+
+        self.sort_properties(&mut spans);
+
+        let fields: Vec<Doc<'a>> = spans
+            .into_iter()
+            .map(|(from, to)| self.type_region(from, to))
+            .collect();
 
         let sep = cfg.separator.text();
 
@@ -367,6 +374,121 @@ impl<'a> Emitter<'a> {
             Doc::Hard,
             Doc::text("}"),
         ])
+    }
+
+    /*
+    Puts the properties of one table type in the order `sort_table_types`
+    asks for.
+
+    The sort reads the name of each property from its first tokens. A field
+    that names nothing leaves the whole table in the order the author wrote:
+    a table the sort cannot read in full is a table it must not touch. The
+    element type of `{ string }` is that case, and so is a key written as a
+    string, because neither has a name to measure.
+
+    A comment never reaches this point. `type_doc` prints a type that holds
+    one exactly as the author wrote it, because a token replay has no
+    position to put a comment back. So the sort cannot separate a comment
+    from the property it sits on: a table with a comment in it stays as
+    written, whatever `order` says. A moved comment that now describes
+    another property is worse than a table this option skipped.
+    */
+    fn sort_properties(&self, spans: &mut [(u32, u32)]) {
+        let cfg = &self.cfg.sort_table_types;
+
+        if cfg.order == PropertyOrder::None || spans.len() < 2 {
+            return;
+        }
+
+        let mut named = Vec::with_capacity(spans.len());
+
+        for &(from, to) in spans.iter() {
+            match self.property_name(from, to) {
+                Some(name) => named.push((name, (from, to))),
+
+                None => return,
+            }
+        }
+
+        /*
+        The sort is stable, so two properties that measure the same and
+        carry the same name keep the order the author gave them.
+        */
+        named.sort_by(|(a, _), (b, _)| {
+            let rank = |name: &Property<'_>| match cfg.indexer_first && name.indexer {
+                true => 0u8,
+
+                false => 1,
+            };
+
+            let (a_len, b_len) = (a.text.chars().count(), b.text.chars().count());
+
+            rank(a)
+                .cmp(&rank(b))
+                .then_with(|| match cfg.order {
+                    PropertyOrder::Descending => b_len.cmp(&a_len),
+
+                    _ => a_len.cmp(&b_len),
+                })
+                .then_with(|| a.text.cmp(b.text))
+        });
+
+        for (slot, (_, span)) in spans.iter_mut().zip(named) {
+            *slot = span;
+        }
+    }
+
+    /*
+    The name of one property of a table type, or None where it has none.
+
+    `read` and `write` sit before the name, and either one is also a name a
+    property can carry, so the `:` after it decides which of the two this is.
+    */
+    fn property_name(&self, from: u32, to: u32) -> Option<Property<'a>> {
+        if from + 1 >= to {
+            return None;
+        }
+
+        /*
+        An indexer states the shape of every key instead of one key, so it
+        measures as an empty name. A key written as a string is not an
+        indexer, and it carries quotes that no length of a name can compare
+        against, so the table keeps the order it has.
+        */
+        if self.tok(from) == "[" {
+            let inner = self.tok(from + 1);
+
+            if inner.starts_with(['"', '\'', '[', '`']) {
+                return None;
+            }
+
+            return Some(Property {
+                text: "",
+                indexer: true,
+            });
+        }
+
+        let at = match matches!(self.tok(from), "read" | "write") && self.tok(from + 1) != ":" {
+            true => from + 1,
+
+            false => from,
+        };
+
+        let text = self.tok(at);
+
+        if !is_atom(text) || text.starts_with(|c: char| c.is_ascii_digit()) {
+            return None;
+        }
+
+        // A field without a `:` is the element type of an array, which names nothing.
+        if at + 1 >= to || self.tok(at + 1) != ":" {
+            return None;
+        }
+
+        Some(Property {
+            text,
+            indexer: false,
+        })
     }
 
     /// Reports if the author left a newline between two adjacent tokens.
@@ -531,6 +653,13 @@ pub(super) fn is_simple(stmt: &Stmt) -> bool {
 pub(super) enum Single {
     Str,
     Table,
+}
+
+/// The name of one property of a table type, as `sort_table_types` reads it.
+struct Property<'a> {
+    text: &'a str,
+    /// An indexer names the shape of a key, so it carries no name of its own.
+    indexer: bool,
 }
 
 /*

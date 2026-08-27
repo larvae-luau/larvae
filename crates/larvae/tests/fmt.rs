@@ -11,7 +11,7 @@ whitespace, and every comment must stay.
 use larvae::fmt::config::{
     CallParens, CallStyle, CollapseSimpleStatement, FunctionCall, FunctionDeclaration, IfExpansion,
     IfExpression, IfPlacement, IfStyle, IndentType, LineEndings, ListExpansion, PreferConst,
-    QuoteStyle, SpaceAfterFunctionNames, TableTypes, TypeSeparator, UnusedImports,
+    PropertyOrder, QuoteStyle, SortTableTypes, SpaceAfterFunctionNames, TableTypes, TypeSeparator, UnusedImports,
 };
 use larvae::fmt::{FmtConfig, format};
 
@@ -1992,6 +1992,220 @@ fn an_author_wrapped_short_alias_collapses() {
         fmt("type T = {\n\tx: number,\n\ty: number,\n}\n"),
         "type T = { x: number, y: number }\n"
     );
+}
+
+// --- the order of the properties of a table type -------------------------
+
+fn sorted(order: PropertyOrder, indexer_first: bool) -> FmtConfig {
+    FmtConfig {
+        sort_table_types: SortTableTypes {
+            order,
+            indexer_first,
+        },
+        ..Default::default()
+    }
+}
+
+/// Mixed name lengths, two ties, and an indexer that the author left in the middle.
+const ROW: &str = "type Row = { id: string, [number]: any, description: string, hp: number, mana: number, name: string }\n";
+
+/// The default reorders nothing. A formatter must not move code nobody asked it to move.
+#[test]
+fn the_property_order_of_the_author_is_the_default() {
+    assert_eq!(
+        fmt(ROW),
+        "type Row = {\n\tid: string,\n\t[number]: any,\n\tdescription: string,\n\thp: number,\n\tmana: number,\n\tname: string,\n}\n"
+    );
+}
+
+/// The shortest name first, and two of one length in alphabetical order.
+#[test]
+fn ascending_sorts_the_shortest_name_first() {
+    assert_eq!(
+        fmt_with(ROW, sorted(PropertyOrder::Ascending, true)),
+        "type Row = {\n\t[number]: any,\n\thp: number,\n\tid: string,\n\tmana: number,\n\tname: string,\n\tdescription: string,\n}\n"
+    );
+}
+
+/// The longest name first, and a tie still breaks alphabetically.
+#[test]
+fn descending_sorts_the_longest_name_first() {
+    assert_eq!(
+        fmt_with(ROW, sorted(PropertyOrder::Descending, true)),
+        "type Row = {\n\t[number]: any,\n\tdescription: string,\n\tmana: number,\n\tname: string,\n\thp: number,\n\tid: string,\n}\n"
+    );
+}
+
+/*
+The toggle decides where an indexer lands, and it only shows under
+`descending`. An indexer names nothing, so it measures zero and `ascending`
+puts it first either way.
+*/
+#[test]
+fn the_indexer_toggle_decides_where_an_indexer_lands() {
+    let ascending = fmt_with(ROW, sorted(PropertyOrder::Ascending, true));
+
+    assert_eq!(
+        fmt_with(ROW, sorted(PropertyOrder::Ascending, false)),
+        ascending
+    );
+
+    assert_eq!(
+        fmt_with(ROW, sorted(PropertyOrder::Descending, false)),
+        "type Row = {\n\tdescription: string,\n\tmana: number,\n\tname: string,\n\thp: number,\n\tid: string,\n\t[number]: any,\n}\n"
+    );
+}
+
+/// A short table sorts on its one line too.
+#[test]
+fn a_flat_table_type_sorts_as_well() {
+    assert_eq!(
+        fmt_with(
+            "type S = { name: string, id: number }\n",
+            sorted(PropertyOrder::Ascending, true)
+        ),
+        "type S = { id: number, name: string }\n"
+    );
+}
+
+/*
+A comment holds its table still.
+
+The emitter prints a type that holds a comment exactly as the author wrote
+it, because a token replay has no position to put a comment back. So the
+sort cannot separate a comment from the property it sits on, and it leaves
+the table alone instead.
+*/
+#[test]
+fn a_comment_holds_the_properties_of_its_table_where_they_are() {
+    let src = "type C = {\n\t-- the id of the row\n\tidentifier: string,\n\tx: number,\n}\n";
+
+    assert_eq!(fmt_with(src, sorted(PropertyOrder::Ascending, true)), src);
+    assert_eq!(fmt_with(src, sorted(PropertyOrder::Descending, true)), src);
+}
+
+/*
+A field the sort cannot read leaves the whole table as written. The element
+type of `{ string }` names nothing, and a key written as a string carries
+quotes that no name length compares against.
+*/
+#[test]
+fn a_field_with_no_name_leaves_its_table_as_written() {
+    let cfg = sorted(PropertyOrder::Ascending, true);
+
+    assert_eq!(
+        fmt_with("type A = { string }\n", cfg.clone()),
+        "type A = { string }\n"
+    );
+
+    let quoted = "type Q = { [\"a b\"]: number, zz: string }\n";
+
+    assert_eq!(fmt_with(quoted, cfg), quoted);
+}
+
+/// `read` and `write` qualify a name, so they travel with the property.
+#[test]
+fn a_read_or_write_modifier_travels_with_its_property() {
+    assert_eq!(
+        fmt_with(
+            "type M = { read identifier: string, write hp: number, [string]: any }\n",
+            sorted(PropertyOrder::Ascending, true)
+        ),
+        "type M = { [string]: any, write hp: number, read identifier: string }\n"
+    );
+}
+
+/// A property named `read` is a name and not a modifier. The `:` after it says which.
+#[test]
+fn a_property_named_read_sorts_under_that_name() {
+    assert_eq!(
+        fmt_with(
+            "type K = { abcdef: boolean, write: string, read: number }\n",
+            sorted(PropertyOrder::Ascending, true)
+        ),
+        "type K = { read: number, write: string, abcdef: boolean }\n"
+    );
+}
+
+/// The sort reads the fields the table type layout finds, so `enabled = false` stops it.
+#[test]
+fn the_sort_needs_the_table_type_layout() {
+    let cfg = FmtConfig {
+        table_types: TableTypes {
+            enabled: false,
+            ..Default::default()
+        },
+        sort_table_types: SortTableTypes {
+            order: PropertyOrder::Ascending,
+            indexer_first: true,
+        },
+        ..Default::default()
+    };
+
+    let src = "type O = { description: string, id: number }\n";
+
+    assert_eq!(fmt_with(src, cfg), src);
+}
+
+/*
+Every setting must format its own output to itself, and the output must be in
+the same language as the input. A sort that is not a fixed point would move a
+property on every run.
+*/
+#[test]
+fn every_property_order_is_idempotent_and_parses() {
+    let sources = [
+        ROW,
+        "type S = { name: string, id: number }\n",
+        "type A = { string }\n",
+        "type Q = { [\"a b\"]: number, zz: string }\n",
+        "type C = {\n\t-- a note\n\tid: string,\n\tx: number,\n}\n",
+        "type M = { read identifier: string, write hp: number, [string]: any }\n",
+        "type N = { inner: { deep: boolean, a: number }, other: Gamma }\n",
+        "local x: { name: string, id: number } = t\n",
+        "local function f(a: { name: string, id: number })\nend\n",
+        "local x = y :: { name: string, id: number }\n",
+    ];
+
+    let mut configs = Vec::new();
+
+    for order in [
+        PropertyOrder::None,
+        PropertyOrder::Ascending,
+        PropertyOrder::Descending,
+    ] {
+        for indexer_first in [true, false] {
+            for column_width in [40, 120] {
+                configs.push(FmtConfig {
+                    column_width,
+                    sort_table_types: SortTableTypes {
+                        order,
+                        indexer_first,
+                    },
+                    ..Default::default()
+                });
+            }
+        }
+    }
+
+    for src in sources {
+        for cfg in &configs {
+            let once = fmt_with(src, cfg.clone());
+            let twice = fmt_with(&once, cfg.clone());
+
+            assert_eq!(once, twice, "unstable for {src:?}");
+
+            let lexed = larvae::syntax::lexer::lex(&once)
+                .unwrap_or_else(|e| panic!("{src:?} gave unlexable output, {}", e.message));
+
+            larvae::syntax::parser::parse(&once, &lexed.toks)
+                .unwrap_or_else(|e| panic!("{src:?} gave unparsable output, {}", e.message));
+
+            for line in once.lines() {
+                assert_eq!(line, line.trim_end(), "trailing whitespace from {src:?}");
+            }
+        }
+    }
 }
 
 // --- classes and export by value -----------------------------------------
