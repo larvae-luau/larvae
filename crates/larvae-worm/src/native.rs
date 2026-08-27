@@ -73,7 +73,7 @@ serve. One bad file must not stop a watch session.
 use std::io::{Read, Write};
 
 pub use crate::wire::{DOC_VERSION, Doc, Finding, Format, HostParse, Lint};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 /**
 The reply to `lsp_load`: the lowered Luau of one module the worm owns.
