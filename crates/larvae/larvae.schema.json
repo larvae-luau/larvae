@@ -2180,6 +2180,12 @@
           "default": false,
           "description": "On serves only the files that a worm claims, so stock luau-lsp can own the plain Luau. Off serves every Luau file, which is what larvae always did."
         },
+        "character_type": {
+          "type": "string",
+          "enum": ["r15", "r6", "not_set"],
+          "default": "r15",
+          "description": "What Player.Character types to. r15 and r6 carry the body parts of their rig, so player.Character.Humanoid resolves with no cast. not_set types it as the union of the two, for a place that allows both."
+        },
         "sourcemap": {
           "type": "string",
           "default": "sourcemap.json",

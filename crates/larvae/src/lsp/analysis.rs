@@ -248,6 +248,17 @@ pub trait Analysis: Send {
         let _ = types;
     }
 
+    /*
+    Say which rig `Player.Character` types to.
+
+    The platform types it as `Model?`, which knows no body parts. The
+    analyzer swaps the property for the rig type the project chose, so
+    `player.Character.Humanoid` resolves with no cast.
+    */
+    fn set_character_type(&mut self, kind: crate::config::lsp::CharacterType) {
+        let _ = kind;
+    }
+
     /// Give the analyzer the text of one open document
     fn open(&mut self, path: &Path, text: &str);
 

@@ -54,6 +54,17 @@ pub struct LspConfig {
     pub bytecode: BytecodeConfig,
 
     /*
+    What `Player.Character` types to.
+
+    Roblox types it as `Model?`, which knows no body parts, so every rig
+    access needs a cast. A project knows which rig it uses, and the types
+    `R15Character` and `R6Character` carry the parts. `not_set` types it as
+    the union of the two, for a place that allows both.
+    */
+    #[serde(default)]
+    pub character_type: CharacterType,
+
+    /*
     The rojo sourcemap, read for the instance tree of the project.
 
     The path is relative to the root of the project. The file rojo writes
@@ -67,6 +78,17 @@ pub struct LspConfig {
 
 fn sourcemap() -> String {
     "sourcemap.json".to_owned()
+}
+
+/// The rig `Player.Character` types to
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CharacterType {
+    #[default]
+    R15,
+    R6,
+    /// The union of the two rigs, for a place that allows both
+    NotSet,
 }
 
 /*

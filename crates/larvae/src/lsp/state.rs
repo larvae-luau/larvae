@@ -191,6 +191,25 @@ impl Server {
         if let Some(text) = editor(&["sourcemap"]).as_str() {
             self.lsp.sourcemap = text.to_owned();
         }
+
+        /*
+        Both spellings of each value are read, because the editor writes
+        camelCase and the project file writes snake_case, and a value is
+        not a key that [`snake`] converts.
+        */
+        if let Some(text) = editor(&["characterType"]).as_str() {
+            use crate::config::lsp::CharacterType;
+
+            match text.to_lowercase().replace('_', "").as_str() {
+                "r15" => self.lsp.character_type = CharacterType::R15,
+
+                "r6" => self.lsp.character_type = CharacterType::R6,
+
+                "notset" => self.lsp.character_type = CharacterType::NotSet,
+
+                _ => {}
+            }
+        }
     }
 
     /*
@@ -339,6 +358,14 @@ impl Server {
         }
 
         mark("mounts");
+
+        /*
+        The rig follows the setting. The call re-applies on every load,
+        because the setting can change while the session lives.
+        */
+        if let Some(analysis) = self.analysis.borrow_mut().as_mut() {
+            analysis.set_character_type(self.lsp.character_type);
+        }
 
         /*
         A new sourcemap path is a new tree; the same path is checked by its
