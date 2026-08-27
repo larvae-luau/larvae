@@ -59,6 +59,15 @@ void larvae_open(LarvaeSession* s, const char* path, const char* text);
 /* Drop the cached state of one module and everything that depends on it. */
 void larvae_invalidate(LarvaeSession* s, const char* path);
 
+/* Which rig `Player.Character` types to: 0 r15, 1 r6, 2 the union of both.
+
+   The platform types the property as `Model?`, which knows no body part, so
+   every rig access needs a cast. This puts the rig larvae declares on the
+   property instead, in both globals tables. It re-applies, because the
+   setting changes while the session lives, and it marks every open module
+   dirty so the next check reads the new type. */
+void larvae_set_character_type(LarvaeSession* s, int kind);
+
 /* The type that `script` takes inside one module.
 
    `script` names a different instance in every file, so a global declaration

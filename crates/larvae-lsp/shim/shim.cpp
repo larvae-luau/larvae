@@ -583,6 +583,66 @@ static void attachInstanceNew(Luau::GlobalTypes& globals)
 }
 
 /*
+The rig `Player.Character` carries, from the type larvae declares.
+
+Roblox types the property as `Model?`, which knows no body part, so every
+rig access in a project needs a cast. The project knows which rig it spawns,
+and `larvaeTypes.d.luau` carries the two shapes. This swaps one in.
+
+The property is not optional, and that is the decision this exists for.
+`Model?` is the truthful type of a character that may not have spawned, and
+it is also the reason nobody writes `player.Character.Humanoid`: the cast
+that removes the question mark removes the parts with it. A project that
+picks a rig has said what it wants, which is `local c: R15Character =
+player.Character` and no cast. A character that is not there is a runtime
+question, and the guard a reader writes for it reads the same either way.
+
+Both the read type and the write type move, so an assignment to the
+property takes the rig as well.
+*/
+static void applyCharacterType(Luau::GlobalTypes& globals, int kind)
+{
+    std::optional<Luau::TypeFun> r15 = globals.globalScope->lookupType("R15Character");
+    std::optional<Luau::TypeFun> r6 = globals.globalScope->lookupType("R6Character");
+
+    if (!r15 || !r6)
+        return;
+
+    std::optional<Luau::TypeId> rig;
+
+    if (kind == 0)
+        rig = Luau::follow(r15->type);
+    else if (kind == 1)
+        rig = Luau::follow(r6->type);
+    else
+        /*
+        A place that allows both rigs gets the union, and the reader narrows
+        it. `not_set` is the honest answer there: a name that only one rig
+        has is an error until the code says which rig it holds.
+        */
+        rig = globals.globalTypes.addType(
+            Luau::UnionType{{Luau::follow(r15->type), Luau::follow(r6->type)}});
+
+    std::optional<Luau::TypeFun> player = globals.globalScope->lookupType("Player");
+
+    if (!player)
+        return;
+
+    auto* ctv = Luau::getMutable<Luau::ExternType>(player->type);
+
+    if (!ctv)
+        return;
+
+    auto character = ctv->props.find("Character");
+
+    if (character == ctv->props.end())
+        return;
+
+    character->second.readTy = rig;
+    character->second.writeTy = rig;
+}
+
+/*
 Load one declaration file into the global scope.
 
 The globals are frozen after the built in load, so they are thawed for this
@@ -685,6 +745,34 @@ Each module that held one is marked dirty, because the type it was checked
 against is about to be gone. A reload of the sourcemap is a change of what
 every file's neighbours are.
 */
+/*
+Which rig `Player.Character` types to. 0 r15, 1 r6, 2 the union of both.
+
+The setting changes while the session lives, so this re-applies: the
+property is written again, over whatever the last call left. Every module
+the session holds is marked dirty, because a module checked against the old
+rig keeps the old answer until something asks it to check again.
+*/
+void larvae_set_character_type(LarvaeSession* s, int kind)
+{
+    Luau::unfreeze(s->frontend.globals.globalTypes);
+    Luau::unfreeze(s->frontend.globalsForAutocomplete.globalTypes);
+
+    applyCharacterType(s->frontend.globals, kind);
+    applyCharacterType(s->frontend.globalsForAutocomplete, kind);
+
+    Luau::freeze(s->frontend.globals.globalTypes);
+    Luau::freeze(s->frontend.globalsForAutocomplete.globalTypes);
+
+    /*
+    A module that was already checked holds the answer the old rig gave. The
+    caller may or may not republish a document after a config change, so the
+    dirt is marked here and the next check reads the new type either way.
+    */
+    for (const auto& open : s->open)
+        s->frontend.markDirty(open.first);
+}
+
 void larvae_clear_script_types(LarvaeSession* s)
 {
     for (const auto& entry : s->scriptTypes)

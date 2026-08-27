@@ -29,6 +29,15 @@ text, so the two cannot disagree.
 const GLOBAL_TYPES: &str = include_str!("../types/globalTypes.d.luau");
 
 /*
+larvae's own definitions, layered over the Roblox globals.
+
+The nightly that refreshes globalTypes.d.luau names that one file, so this
+one is larvae's to keep. It holds the character rigs, which the platform
+types as `Model?` and which `[lsp] character_type` swaps in.
+*/
+const LARVAE_TYPES: &str = include_str!("../types/larvaeTypes.d.luau");
+
+/*
 The Roblox reference, trimmed to what a card shows and deflated.
 
 Luau names a page per type and per member, ex: `@roblox/globaltype/Player`,
@@ -235,6 +244,7 @@ unsafe extern "C" {
     fn larvae_invalidate(s: *mut c_void, path: *const c_char);
     fn larvae_clear_script_types(s: *mut c_void);
     fn larvae_set_script_type(s: *mut c_void, path: *const c_char, type_name: *const c_char);
+    fn larvae_set_character_type(s: *mut c_void, kind: i32);
     fn larvae_check(s: *mut c_void, path: *const c_char, out: *mut RawDiag, cap: usize) -> usize;
     fn larvae_hover(
         s: *mut c_void,
@@ -544,6 +554,15 @@ impl LuauAnalysis {
             );
         }
 
+        /*
+        larvae's own types come second, because they name Roblox classes.
+        `R15Character` is a `Model` with `MeshPart` children, and neither
+        word exists until the file above has loaded.
+        */
+        if !larvae::lsp::analysis::Analysis::definitions(&mut new, "@larvae", LARVAE_TYPES) {
+            eprintln!("larvae-lsp: larvae's own type definitions did not load");
+        }
+
         new
     }
 
@@ -781,6 +800,25 @@ impl Analysis for LuauAnalysis {
 
             unsafe { larvae_set_script_type(self.session, key, name.as_ptr()) };
         }
+    }
+
+    /*
+    Which rig `Player.Character` types to.
+
+    The shim numbers the rigs, because a C surface carries no enum. The
+    order is the order the config declares them, and the two sides are
+    pinned together by the test below.
+    */
+    fn set_character_type(&mut self, kind: larvae::config::lsp::CharacterType) {
+        use larvae::config::lsp::CharacterType;
+
+        let kind = match kind {
+            CharacterType::R15 => 0,
+            CharacterType::R6 => 1,
+            CharacterType::NotSet => 2,
+        };
+
+        unsafe { larvae_set_character_type(self.session, kind) };
     }
 
     fn open(&mut self, path: &Path, text: &str) {
@@ -1915,6 +1953,213 @@ mod ffi_layout {
         assert_eq!(std::mem::align_of::<RawParameter>(), 8);
         assert_eq!(std::mem::align_of::<RawSignature>(), 8);
         assert_eq!(std::mem::align_of::<RawHint>(), 8);
+    }
+}
+
+#[cfg(test)]
+mod larvae_definitions {
+    use super::*;
+    use larvae::config::lsp::CharacterType;
+    use larvae::lsp::analysis::Analysis;
+
+    /*
+    larvae's own definitions have to load through the real loader.
+
+    A definition file is not a Luau module: it takes `declare` and a
+    restricted grammar, and whether `export type` is part of that grammar
+    is the loader's answer to give, not a guess. The session builds with
+    the file in it, so a syntax the loader refuses fails here.
+    */
+    #[test]
+    fn the_rig_definitions_load() {
+        let _luau = super::luau_globals::shared();
+        let mut analysis = LuauAnalysis::new();
+
+        assert!(
+            analysis.definitions("@larvae-probe", LARVAE_TYPES),
+            "Luau refused larvaeTypes.d.luau"
+        );
+    }
+
+    /// A session with the rig applied, and the errors one source reports.
+    fn errors(kind: CharacterType, src: &str) -> Vec<String> {
+        let mut analysis = LuauAnalysis::new();
+        let path = std::path::Path::new("/t.luau");
+
+        analysis.set_character_type(kind);
+        analysis.open(path, src);
+
+        analysis
+            .check(path)
+            .into_iter()
+            .map(|d| d.message)
+            .collect()
+    }
+
+    /// What a completion at the end of `src` offers.
+    fn offered(kind: CharacterType, src: &str) -> Vec<String> {
+        let mut analysis = LuauAnalysis::new();
+        let path = std::path::Path::new("/t.luau");
+
+        analysis.set_character_type(kind);
+        analysis.open(path, src);
+
+        analysis
+            .completions(path, src.len() as u32)
+            .into_iter()
+            .map(|c| c.label)
+            .collect()
+    }
+
+    const CHARACTER: &str =
+        "--!strict\nlocal c: R15Character = game:GetService(\"Players\").LocalPlayer.Character\n";
+
+    /*
+    The rig reaches the property, so the annotation holds with no cast.
+
+    That is the whole point of the setting: `Model?` is why nobody writes
+    `player.Character.Humanoid`, because the cast that removes the question
+    mark removes the parts with it.
+    */
+    #[test]
+    fn r15_types_the_character_with_no_cast() {
+        let _luau = super::luau_globals::shared();
+
+        let src = format!("{CHARACTER}local a = c.Humanoid.Animator\nreturn a\n");
+
+        assert_eq!(errors(CharacterType::R15, &src), Vec::<String>::new());
+    }
+
+    /// A completion after the property lists the parts the rig has.
+    #[test]
+    fn r15_offers_its_parts() {
+        let _luau = super::luau_globals::shared();
+
+        let src =
+            "--!strict\nlocal p = game:GetService(\"Players\").LocalPlayer\nlocal x = p.Character.";
+        let offered = offered(CharacterType::R15, src);
+
+        for want in ["UpperTorso", "Humanoid", "LeftHand", "HumanoidRootPart"] {
+            assert!(offered.iter().any(|l| l == want), "{want} is not offered");
+        }
+    }
+
+    /// The R6 names carry spaces, so they are reached through a quoted key.
+    #[test]
+    fn r6_types_its_own_parts() {
+        let _luau = super::luau_globals::shared();
+
+        let src = "--!strict\nlocal c: R6Character = game:GetService(\"Players\").LocalPlayer.Character\n\
+                   local arm = c[\"Left Arm\"]\nlocal t = c.Torso\nreturn arm, t\n";
+
+        assert_eq!(errors(CharacterType::R6, src), Vec::<String>::new());
+    }
+
+    /*
+    A place that allows both rigs gets the union, and the reader narrows it.
+
+    A name only one rig has is an error until the code says which rig it
+    holds, which is the honest answer for a place that spawns either.
+    */
+    #[test]
+    fn not_set_is_the_union_of_both_rigs() {
+        let _luau = super::luau_globals::shared();
+
+        let src = "--!strict\nlocal p = game:GetService(\"Players\").LocalPlayer\n\
+                   local h = p.Character.Humanoid\nreturn h\n";
+
+        // `Humanoid` is on both rigs, so it reads off the union.
+        assert_eq!(errors(CharacterType::NotSet, src), Vec::<String>::new());
+
+        let only_r15 = "--!strict\nlocal p = game:GetService(\"Players\").LocalPlayer\n\
+                        local t = p.Character.UpperTorso\nreturn t\n";
+
+        assert!(
+            !errors(CharacterType::NotSet, only_r15).is_empty(),
+            "a name only one rig has read off the union"
+        );
+
+        let narrowed = "--!strict\nlocal p = game:GetService(\"Players\").LocalPlayer\n\
+                        local c = p.Character :: R15Character\nlocal t = c.UpperTorso\nreturn t\n";
+
+        assert_eq!(
+            errors(CharacterType::NotSet, narrowed),
+            Vec::<String>::new()
+        );
+    }
+
+    /// The rig is still a `Model`, because the type is an intersection with one.
+    #[test]
+    fn a_character_is_still_a_model() {
+        let _luau = super::luau_globals::shared();
+
+        let src = "--!strict\nlocal p = game:GetService(\"Players\").LocalPlayer\n\
+                   local n = p.Character:GetPivot()\nlocal s = p.Character.Name\nreturn n, s\n";
+
+        assert_eq!(errors(CharacterType::R15, src), Vec::<String>::new());
+    }
+
+    /*
+    The setting changes while the session lives, so the swap re-applies.
+
+    A module checked under the old rig held the old answer, and the check
+    below is the one that would have kept it.
+    */
+    #[test]
+    fn the_rig_can_change_under_a_checked_module() {
+        let _luau = super::luau_globals::shared();
+
+        let mut analysis = LuauAnalysis::new();
+        let path = std::path::Path::new("/t.luau");
+
+        let src = "--!strict\nlocal p = game:GetService(\"Players\").LocalPlayer\n\
+                   local a = p.Character[\"Left Arm\"]\nreturn a\n";
+
+        analysis.set_character_type(CharacterType::R15);
+        analysis.open(path, src);
+
+        assert!(
+            !analysis.check(path).is_empty(),
+            "R15 has no `Left Arm`, and the check said it did"
+        );
+
+        analysis.set_character_type(CharacterType::R6);
+
+        let after: Vec<String> = analysis
+            .check(path)
+            .into_iter()
+            .map(|d| d.message)
+            .collect();
+
+        assert_eq!(
+            after,
+            Vec::<String>::new(),
+            "the check kept the answer the old rig gave"
+        );
+    }
+
+    /// The numbers the shim takes are the order the config declares.
+    #[test]
+    fn every_rig_has_a_number_the_shim_knows() {
+        let _luau = super::luau_globals::shared();
+
+        let mut analysis = LuauAnalysis::new();
+
+        // A kind the shim does not know would leave the property untouched.
+        for kind in [CharacterType::R15, CharacterType::R6, CharacterType::NotSet] {
+            analysis.set_character_type(kind);
+
+            let path = std::path::Path::new("/t.luau");
+            let src = "--!strict\nlocal p = game:GetService(\"Players\").LocalPlayer\n\
+                       local h = p.Character.Humanoid\nreturn h\n";
+
+            analysis.open(path, src);
+
+            assert!(
+                analysis.check(path).is_empty(),
+                "{kind:?} did not reach the property"
+            );
+        }
     }
 }
 
