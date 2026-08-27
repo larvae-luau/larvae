@@ -111,7 +111,7 @@ fn must_separate(prev: &Tok, next: &Tok, src: &str) -> bool {
         underscore whole, whatever it ends with, and a rename hands out
         names like that.
         */
-        ('0'..='9', '.') if prev.kind == crate::syntax::lexer::TokKind::Number => true,
+        ('0'..='9', '.') if prev.kind == crate::lexer::TokKind::Number => true,
 
         // `- -x`: two minus signs in a row open a comment.
         ('-', '-') => true,

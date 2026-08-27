@@ -877,5 +877,4 @@ impl Server {
     pub(super) fn analysis_loading(&self) -> bool {
         self.lsp.analyzer && self.analysis.borrow().is_none() && self.analysis_pending
     }
-
 }

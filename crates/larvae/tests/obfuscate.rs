@@ -88,7 +88,8 @@ fn the_readable_text_of_a_string_is_gone() {
 fn every_conformance_file_parses_after_obfuscation() {
     let dir = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/parser/luau-conformance"
+        // The corpus lives with the syntax crate, which owns the parser.
+        "/../eclipse_luau/tests/fixtures/luau-conformance"
     );
 
     let mut checked = 0usize;

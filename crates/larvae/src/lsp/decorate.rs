@@ -130,6 +130,8 @@ pub fn links_with_aliases(
         quote: '"',
         strict: false,
         claimed: &[],
+        // Links only resolve; the relative rewrite changes what a build emits.
+        client_relative_requires: false,
     };
 
     let file = FileCtx::new(path, &mounts, Target::Path, IndexingStyle::default());

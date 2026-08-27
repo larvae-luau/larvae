@@ -11,7 +11,8 @@ whitespace, and every comment must stay.
 use larvae::fmt::config::{
     CallParens, CallStyle, CollapseSimpleStatement, FunctionCall, FunctionDeclaration, IfExpansion,
     IfExpression, IfPlacement, IfStyle, IndentType, LineEndings, ListExpansion, PreferConst,
-    PropertyOrder, QuoteStyle, SortTableTypes, SpaceAfterFunctionNames, TableTypes, TypeExpansion, TypeOperators, TypeSeparator, UnusedImports,
+    PropertyOrder, QuoteStyle, SortTableTypes, SpaceAfterFunctionNames, TableTypes, TypeExpansion,
+    TypeOperators, TypeSeparator, UnusedImports,
 };
 use larvae::fmt::{FmtConfig, format};
 
