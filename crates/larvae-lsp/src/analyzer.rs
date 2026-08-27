@@ -223,6 +223,17 @@ unsafe extern "C" {
     ) -> *const c_char;
     fn larvae_documentation_symbol(s: *mut c_void, path: *const c_char, byte: u32)
     -> *const c_char;
+    fn larvae_bytecode(
+        s: *mut c_void,
+        source: *const c_char,
+        optimization: i32,
+        remarks: i32,
+        debug_level: i32,
+        type_info_level: i32,
+        vector_lib: *const c_char,
+        vector_ctor: *const c_char,
+        vector_type: *const c_char,
+    ) -> *const c_char;
     fn larvae_completions(
         s: *mut c_void,
         path: *const c_char,
@@ -843,6 +854,45 @@ impl Analysis for LuauAnalysis {
         self.docs.get(&symbol).and_then(DocEntry::markdown)
     }
 
+    /*
+    The compiled form of one source text, as the editor shows it.
+
+    The compiler is self-contained, so nothing here touches the module graph
+    or the open documents: the text arrives already lowered and leaves as a
+    listing. Source that does not compile answers with the error text, which
+    is what luau-lsp puts in the same panel.
+    */
+    fn bytecode(
+        &mut self,
+        source: &str,
+        optimization: u8,
+        remarks: bool,
+        config: &larvae::config::lsp::BytecodeConfig,
+    ) -> Option<String> {
+        let text_of = |value: &str| CString::new(value).unwrap_or_default();
+
+        let source = text_of(source);
+        let lib = text_of(&config.vector_lib);
+        let ctor = text_of(&config.vector_ctor);
+        let vector = text_of(&config.vector_type);
+
+        let listing = unsafe {
+            larvae_bytecode(
+                self.session,
+                source.as_ptr(),
+                optimization as i32,
+                remarks as i32,
+                config.debug_level as i32,
+                config.type_info_level as i32,
+                lib.as_ptr(),
+                ctor.as_ptr(),
+                vector.as_ptr(),
+            )
+        };
+
+        text(listing).filter(|listing| !listing.is_empty())
+    }
+
     fn invalidate(&mut self, path: &Path) {
         let key = self.key(path);
 
@@ -1232,6 +1282,195 @@ mod luau_lsp_parity {
             "{}",
             card(src, "Color3")
         );
+    }
+}
+
+#[cfg(test)]
+mod bytecode_listing {
+    use super::*;
+    use larvae::config::lsp::BytecodeConfig;
+    use larvae::lsp::analysis::Analysis;
+
+    /*
+    The listing of one source, at one optimization level.
+
+    The session is the caller's, because building one loads the Roblox
+    types and a test that builds four waits four times for nothing: the
+    compiler reads the text and no session state takes part.
+    */
+    fn listing(analysis: &mut LuauAnalysis, src: &str, optimization: u8) -> String {
+        analysis
+            .bytecode(src, optimization, false, &BytecodeConfig::default())
+            .expect("a listing")
+    }
+
+    /*
+    A function lists its opcodes, under the name the compiler gave it.
+
+    The header, the source line, and the instruction are the three things
+    luau-lsp's panel shows, and all three come from one dump.
+    */
+    #[test]
+    fn a_function_lists_its_opcodes() {
+        let mut analysis = LuauAnalysis::new();
+        let text = listing(
+            &mut analysis,
+            "local function add(a, b)\n\treturn a + b\nend\nreturn add\n",
+            1,
+        );
+
+        assert!(text.contains("Function 0 (add):"), "{text}");
+        assert!(text.contains("ADD R2 R0 R1"), "{text}");
+        assert!(
+            text.contains("\t return a + b") || text.contains("return a + b"),
+            "{text}"
+        );
+    }
+
+    /*
+    The optimization level reaches the compiler, so the listing changes.
+
+    `1 + 2 * 3` is three instructions at O0 and the number 7 at O1, which is
+    the difference a reader opens the panel to see.
+    */
+    #[test]
+    fn the_optimization_level_changes_the_listing() {
+        let mut analysis = LuauAnalysis::new();
+        let src = "local x = 1 + 2 * 3\nreturn x\n";
+
+        let none = listing(&mut analysis, src, 0);
+        let full = listing(&mut analysis, src, 2);
+
+        assert!(none.contains("MUL"), "{none}");
+        assert!(!full.contains("MUL"), "{full}");
+        assert!(full.contains("LOADN R0 7"), "{full}");
+    }
+
+    /*
+    The remarks view is the source, with what the compiler decided above the
+    line it decided it on. It is a different answer from the same compile.
+    */
+    #[test]
+    fn the_remarks_view_annotates_the_source() {
+        let src = "local t = {}\nfor i = 1, 10 do\n\tt[i] = i * i\nend\nreturn t\n";
+
+        let remarks = LuauAnalysis::new()
+            .bytecode(src, 2, true, &BytecodeConfig::default())
+            .expect("a view");
+
+        assert!(
+            remarks.contains("-- remark: loop unroll succeeded"),
+            "{remarks}"
+        );
+        assert!(remarks.contains("for i = 1, 10 do"), "{remarks}");
+        assert!(!remarks.contains("RETURN"), "{remarks}");
+    }
+
+    /*
+    Source that does not compile says why, in the line luau-lsp writes: the
+    kind, the one based position, then what the parser wanted.
+    */
+    #[test]
+    fn a_source_that_does_not_compile_says_why() {
+        let mut analysis = LuauAnalysis::new();
+        let text = listing(&mut analysis, "local x =\n", 2);
+
+        assert!(text.starts_with("SyntaxError(2,1): "), "{text}");
+        assert!(text.contains("Expected identifier"), "{text}");
+    }
+
+    /*
+    The vector configuration reaches the compiler.
+
+    `Vector3.new(1, 2, 3)` folds to one constant only because the project
+    named `Vector3` as its vector library. A project that names none keeps
+    the call, and the two listings prove the setting travelled.
+    */
+    #[test]
+    fn the_vector_configuration_reaches_the_compiler() {
+        let mut analysis = LuauAnalysis::new();
+        let src = "local v = Vector3.new(1, 2, 3)\nreturn v\n";
+
+        let folded = listing(&mut analysis, src, 2);
+
+        let plain = analysis
+            .bytecode(
+                src,
+                2,
+                false,
+                &BytecodeConfig {
+                    vector_lib: String::new(),
+                    vector_ctor: String::new(),
+                    vector_type: String::new(),
+                    ..BytecodeConfig::default()
+                },
+            )
+            .expect("a listing");
+
+        assert!(folded.contains("[1, 2, 3]"), "{folded}");
+        assert!(!plain.contains("[1, 2, 3]"), "{plain}");
+    }
+}
+
+#[cfg(test)]
+mod statement_names {
+    use super::*;
+    use larvae::lsp::analysis::Analysis;
+
+    /*
+    The shapes below are what luau-lsp answers for the same source, read off
+    the real server. A function statement writes its name through the type
+    it hangs off, which is the alias in a module written this way.
+    */
+    const MODULE: &str = "--!strict\nlocal M = {}\n\nfunction M.Init(self: Self, n: number)\n\treturn n\nend\n\nfunction M:Bump(by: number): number\n\treturn by\nend\n\ntype Self = typeof(M)\ntype Entry = { value: any, next: Entry? }\ntype Stat = \"Strength\" | \"Walkspeed\"\n\nreturn M\n";
+
+    fn card(src: &str, word: &str) -> String {
+        let mut analysis = LuauAnalysis::new();
+        let path = std::path::Path::new("/t.luau");
+
+        analysis.open(path, src);
+        analysis
+            .hover(path, src.find(word).expect("the word") as u32, false, true)
+            .unwrap_or_default()
+    }
+
+    /// The dot form names the type the function hangs off, and keeps `self`.
+    #[test]
+    fn a_function_statement_names_the_type_it_hangs_off() {
+        assert_eq!(
+            card(MODULE, "Init"),
+            "function Self.Init(self: Self, n: number): number"
+        );
+    }
+
+    /// The colon form keeps its colon and drops the receiver from the list.
+    #[test]
+    fn a_method_statement_hides_the_receiver() {
+        assert_eq!(
+            card(MODULE, "Bump"),
+            "function Self:Bump<a>(by: number): number"
+        );
+    }
+
+    /// The `type` keyword hovers the alias it opens, and not nothing.
+    #[test]
+    fn the_type_keyword_hovers_its_alias() {
+        assert_eq!(
+            card(MODULE, "type Stat"),
+            "type Stat = \"Strength\" | \"Walkspeed\""
+        );
+    }
+
+    /// A property name inside a table type answers with what the property holds.
+    #[test]
+    fn a_property_name_in_a_table_type_answers() {
+        assert_eq!(card(MODULE, "value: any"), "any");
+    }
+
+    /// A literal inside a type answers with itself, and not with the union.
+    #[test]
+    fn a_literal_inside_a_type_answers_with_itself() {
+        assert_eq!(card(MODULE, "\"Strength\""), "\"Strength\"");
     }
 }
 

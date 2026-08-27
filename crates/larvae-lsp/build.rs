@@ -82,6 +82,8 @@ fn build_analyzer() {
         .include(luau.join("Common/include"))
         .include(luau.join("Ast/include"))
         .include(luau.join("Config/include"))
+        .include(luau.join("Bytecode/include"))
+        .include(luau.join("Compiler/include"))
         .include(luau.join("Analysis/include"))
         .file("shim/shim.cpp")
         .warnings(false)

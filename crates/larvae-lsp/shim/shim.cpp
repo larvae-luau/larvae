@@ -28,7 +28,11 @@ session is used from one thread, which the Rust side guarantees.
 #include "Luau/Common.h"
 #include "Luau/ExperimentalFlags.h"
 
-/* The AST printer, for the path an author wrote in front of a member. */
+/* The compiler, for the bytecode listing. It shares Ast and Common with the
+   analysis half and needs nothing else from the vendored build. */
+#include "Luau/BytecodeBuilder.h"
+#include "Luau/Compiler.h"
+#include "Luau/ParseResult.h"
 #include "Luau/PrettyPrinter.h"
 
 #include <algorithm>
@@ -227,6 +231,7 @@ struct LarvaeSession
     std::string signatureStorage;
     std::vector<std::string> parameterStorage;
     std::vector<std::string> hintStorage;
+    std::string bytecodeStorage;
 
     /* The declared type of `script`, per module. See larvae_set_script_type. */
     std::map<std::string, std::string> scriptTypes;
@@ -2425,6 +2430,95 @@ size_t larvae_completions(LarvaeSession* s, const char* path, uint32_t byte, Lar
     }
 
     return n;
+}
+
+/*
+One compile error, in the line luau-lsp writes for it.
+
+The kind, the one based line and column, then the message. luau-lsp shows
+this text in the same panel the listing goes to, so a file that does not
+compile still says why rather than opening empty.
+*/
+static std::string compileFailure(const char* kind, const Luau::Location& at, const char* message)
+{
+    return std::string(kind) + "(" + std::to_string(at.begin.line + 1) + ","
+        + std::to_string(at.begin.column + 1) + "): " + message + "\n";
+}
+
+/*
+The compiled form of one source text.
+
+The dump flags are the four luau-lsp asks for. `Dump_Types` prints the
+`R0: number [argument]` lines that `typeInfoLevel` exists to produce;
+`Dump_Locals` prints the raw debug table instead, which luau-lsp does not
+show, so it stays off. `Dump_Constants` is off for the same reason.
+
+The vector strings decide whether the compiler folds a project's own vector
+constructor. An empty one means Luau's default, so a project that says
+nothing keeps `vector.create` and nothing else.
+*/
+const char* larvae_bytecode(LarvaeSession* s, const char* source, int optimization, int remarks,
+                            int debug_level, int type_info_level, const char* vector_lib,
+                            const char* vector_ctor, const char* vector_type)
+{
+    const std::string text(source ? source : "");
+
+    /*
+    The options hold pointers, so the strings live until the compile ends.
+    */
+    const std::string lib(vector_lib ? vector_lib : "");
+    const std::string ctor(vector_ctor ? vector_ctor : "");
+    const std::string type(vector_type ? vector_type : "");
+
+    Luau::CompileOptions options;
+    options.optimizationLevel = optimization;
+    options.debugLevel = debug_level;
+    options.typeInfoLevel = type_info_level;
+    options.vectorLib = lib.empty() ? nullptr : lib.c_str();
+    options.vectorCtor = ctor.empty() ? nullptr : ctor.c_str();
+    options.vectorType = type.empty() ? nullptr : type.c_str();
+
+    Luau::BytecodeBuilder builder;
+
+    builder.setDumpFlags(
+        Luau::BytecodeBuilder::Dump_Code | Luau::BytecodeBuilder::Dump_Source
+        | Luau::BytecodeBuilder::Dump_Types | Luau::BytecodeBuilder::Dump_Remarks);
+    builder.setDumpSource(text);
+
+    try
+    {
+        Luau::compileOrThrow(builder, text, options);
+    }
+    catch (Luau::ParseErrors& errors)
+    {
+        s->bytecodeStorage.clear();
+
+        for (const Luau::ParseError& error : errors.getErrors())
+            s->bytecodeStorage += compileFailure("SyntaxError", error.getLocation(), error.what());
+
+        return s->bytecodeStorage.c_str();
+    }
+    catch (Luau::CompileError& error)
+    {
+        s->bytecodeStorage = compileFailure("CompileError", error.getLocation(), error.what());
+
+        return s->bytecodeStorage.c_str();
+    }
+    catch (const std::exception& error)
+    {
+        s->bytecodeStorage = std::string(error.what()) + "\n";
+
+        return s->bytecodeStorage.c_str();
+    }
+
+    /*
+    The remarks view is the source with the compiler's decisions written
+    above the lines they belong to, which is what luau-lsp serves under
+    `compilerRemarks`. The other view is the listing.
+    */
+    s->bytecodeStorage = remarks ? builder.dumpSourceRemarks() : builder.dumpEverything();
+
+    return s->bytecodeStorage.c_str();
 }
 
 } // extern "C"

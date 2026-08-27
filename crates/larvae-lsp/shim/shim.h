@@ -1,10 +1,10 @@
 /*
 The C surface between Rust and Luau's analysis frontend.
 
-Eight functions, byte offsets in both directions, and two callbacks that
-hand require resolution and source loading to Rust. Strings that the shim
-returns belong to the session and stay valid until the next call on the
-same session; Rust copies what it keeps.
+Byte offsets in both directions, and two callbacks that hand require
+resolution and source loading to Rust. Strings that the shim returns
+belong to the session and stay valid until the next call on the same
+session; Rust copies what it keeps.
 */
 
 #pragma once
@@ -187,6 +187,22 @@ typedef struct {
 
 /* The hints for a whole module. Returns how many, writes at most cap. */
 size_t larvae_inlay_hints(LarvaeSession* s, const char* path, LarvaeHint* out, size_t cap);
+
+/* One source text, compiled, in the listing an editor shows.
+
+   The text travels rather than a path, because the compiler reads one file
+   and no module graph takes part: a claimed file passes its own lowering
+   before it arrives.
+
+   `remarks` picks the view. 0 is the bytecode listing, 1 is the source with
+   the compiler's remarks written above the lines they belong to.
+
+   The three vector strings may be empty, which means the compiler's own
+   default. Source that does not compile answers with the error text, in the
+   shape luau-lsp writes one: `SyntaxError(line,column): message`. */
+const char* larvae_bytecode(LarvaeSession* s, const char* source, int optimization, int remarks,
+                            int debug_level, int type_info_level, const char* vector_lib,
+                            const char* vector_ctor, const char* vector_type);
 
 #ifdef __cplusplus
 }
