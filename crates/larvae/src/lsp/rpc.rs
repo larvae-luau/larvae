@@ -58,49 +58,78 @@ An editor that shuts down closes its end of the stream. So a closed stream
 is a normal end and not an error.
 */
 pub fn read(input: &mut impl BufRead) -> Result<Option<Message>> {
-    let mut length: Option<usize> = None;
-
     loop {
-        let mut line = String::new();
+        let mut length: Option<usize> = None;
 
-        if input.read_line(&mut line).context("reading a header")? == 0 {
-            return Ok(None);
+        loop {
+            let mut line = String::new();
+
+            if input.read_line(&mut line).context("reading a header")? == 0 {
+                return Ok(None);
+            }
+
+            let line = line.trim_end();
+
+            if line.is_empty() {
+                break;
+            }
+
+            if let Some(value) = line
+                .strip_prefix("Content-Length:")
+                .or_else(|| line.strip_prefix("content-length:"))
+            {
+                length = Some(
+                    value
+                        .trim()
+                        .parse()
+                        .context("Content-Length is not a number")?,
+                );
+            }
         }
 
-        let line = line.trim_end();
+        let Some(length) = length else {
+            bail!("a message arrived with no Content-Length");
+        };
 
-        if line.is_empty() {
-            break;
-        }
+        let mut body = vec![0u8; length];
+        input
+            .read_exact(&mut body)
+            .context("reading a message body")?;
 
-        if let Some(value) = line
-            .strip_prefix("Content-Length:")
-            .or_else(|| line.strip_prefix("content-length:"))
-        {
-            length = Some(
-                value
-                    .trim()
-                    .parse()
-                    .context("Content-Length is not a number")?,
-            );
+        /*
+        The server skips a message it cannot read as a request, and does not
+        stop. `None` used to mean both "the stream ended" and "this body did
+        not parse", and the loop above read the second as the first: one
+        response from the editor was a clean shutdown. A response has no
+        `method`, and the server sends requests now, so responses arrive.
+        */
+        if let Ok(message) = serde_json::from_slice(&body) {
+            return Ok(Some(message));
         }
     }
+}
 
-    let Some(length) = length else {
-        bail!("a message arrived with no Content-Length");
-    };
+/*
+Ask the editor for something, ex: `workspace/inlayHint/refresh`.
 
-    let mut body = vec![0u8; length];
-    input
-        .read_exact(&mut body)
-        .context("reading a message body")?;
+The id only has to be unique among the requests this server sends, and the
+reply is skipped by [`read`], because every request the server makes is
+fire-and-forget: a refresh either happens or the editor does not support it,
+and neither answer changes what the server does next.
+*/
+pub fn request(out: &mut impl Write, method: &str, params: Value) -> Result<()> {
+    use std::sync::atomic::{AtomicI64, Ordering};
 
-    /*
-    The server skips a message that it cannot parse, and does not stop. An
-    editor that sends unexpected data must not stop the server in the middle
-    of a session, and the next message is very likely good.
-    */
-    Ok(serde_json::from_slice(&body).ok())
+    static NEXT: AtomicI64 = AtomicI64::new(1);
+
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": format!("larvae:{}", NEXT.fetch_add(1, Ordering::Relaxed)),
+        "method": method,
+        "params": params,
+    });
+
+    send(out, body)
 }
 
 pub fn respond(out: &mut impl Write, id: &Value, result: Value) -> Result<()> {
@@ -329,7 +358,13 @@ mod tests {
         assert_eq!(read(&mut input).unwrap().unwrap().method, "x");
     }
 
-    /// One bad message must not end the session
+    /*
+    One bad message must not end the session.
+
+    The skip happens inside the read, because `None` means the stream ended
+    and nothing else. It used to mean both, and the loop above read a bad
+    body as a clean shutdown.
+    */
     #[test]
     fn an_unparsable_body_is_skipped_rather_than_fatal() {
         let text = format!(
@@ -339,7 +374,26 @@ mod tests {
         );
         let mut input = BufReader::new(text.as_bytes());
 
-        assert!(read(&mut input).unwrap().is_none(), "the bad one");
+        assert_eq!(read(&mut input).unwrap().unwrap().method, "ok");
+        assert!(read(&mut input).unwrap().is_none(), "then the stream ends");
+    }
+
+    /*
+    A reply to a request the server sent is skipped the same way.
+
+    A response carries no `method`, and the server sends
+    `workspace/inlayHint/refresh`, so responses arrive in the middle of a
+    session and must not read as the end of one.
+    */
+    #[test]
+    fn a_response_from_the_editor_is_skipped() {
+        let text = format!(
+            "{}{}",
+            framed(r#"{"jsonrpc":"2.0","id":"larvae:1","result":null}"#),
+            framed(r#"{"method":"ok"}"#)
+        );
+        let mut input = BufReader::new(text.as_bytes());
+
         assert_eq!(read(&mut input).unwrap().unwrap().method, "ok");
     }
 
