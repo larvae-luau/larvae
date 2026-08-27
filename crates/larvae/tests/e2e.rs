@@ -136,6 +136,39 @@ fn client_requiring_server_is_error() {
     );
 }
 
+/*
+Shared code that requires the server fails the build.
+
+ReplicatedStorage replicates and ServerScriptService does not, so the module
+is missing on every client that runs the file. larvae warned about this and
+built the output. It now stops, under the name a reader can look up.
+*/
+#[test]
+fn shared_requiring_server_is_error() {
+    let tmp = fixture();
+    let root = tmp.path();
+
+    write(root, "src/server/keys.luau", "return {}\n");
+    write(
+        root,
+        "src/shared/leak.luau",
+        "return require(\"../server/keys\")\n",
+    );
+
+    let config = Config::load_or_default(root).unwrap();
+    let outcome = pipeline::run(root, &config, false).unwrap();
+
+    assert!(outcome.has_errors());
+    assert!(
+        outcome.diags.iter().any(|d| d.severity == Severity::Error
+            && d.message
+                .contains("shared code cannot require from ServerScriptService")
+            && d.message.ends_with("(cross_realm_require)")),
+        "{:?}",
+        outcome.diags
+    );
+}
+
 #[test]
 fn absolute_into_starter_container_is_error() {
     let tmp = fixture();
