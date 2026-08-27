@@ -106,7 +106,7 @@ impl<'a> Emitter<'a> {
                 let type_function = self.tok(s + 1) == "function"
                     || (self.tok(s) == "export" && self.tok(s + 2) == "function");
 
-                if !type_function && self.cfg.table_types.enabled {
+                if !type_function && self.cfg.lays_out_types() {
                     // `type_doc` keeps the author's text when a comment sits inside.
                     return self.type_doc(n.span);
                 }

@@ -599,6 +599,49 @@ impl Default for SortTableTypes {
     }
 }
 
+/// Selects when the formatter opens a union or an intersection over several lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TypeExpansion {
+    /*
+    Leave the chain to the replay, which is the layout larvae always had.
+
+    The operator breaks no line here, so a chain wider than `column_width`
+    runs past it.
+    */
+    #[default]
+    Auto,
+    /// Every member on a line of its own, whatever its width.
+    Always,
+    /*
+    One line, whatever `table_types.width` says about a table type inside it.
+
+    `column_width` outranks this. A chain that does not fit the line opens one
+    member per line, because a line that runs off the screen is not the one
+    line the option asked for. So the order is `column_width` first, then
+    `type_operators`, then `table_types.width`.
+    */
+    Never,
+}
+
+/*
+How the formatter lays out a union and an intersection.
+
+`|` and `&` share one option, because they share one shape: members with an
+operator between them. A project that opens the one and closes the other has
+two styles for one construct.
+
+An opened chain takes the leading operator, which is the position the
+formatter already gives the operator of a long binary chain. The reader finds
+each member at one column instead of at the uneven right edge.
+*/
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct TypeOperators {
+    #[serde(default)]
+    pub expand: TypeExpansion,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct FmtConfig {
@@ -699,6 +742,10 @@ pub struct FmtConfig {
     /// Sorts the properties of a table type by the length of their names.
     #[serde(default)]
     pub sort_table_types: SortTableTypes,
+
+    /// Selects how a union and an intersection open over several lines.
+    #[serde(default)]
+    pub type_operators: TypeOperators,
 
     /*
     Whether the file ends with a newline.
@@ -871,6 +918,16 @@ impl FmtConfig {
                 LineEndings::Windows => "\r\n",
             },
         }
+    }
+
+    /*
+    Reports if an option gives a type a layout past the one line replay.
+
+    Two options do, and either one on is enough. With both off the emitter
+    replays the tokens of a type and writes the bytes it always wrote.
+    */
+    pub fn lays_out_types(&self) -> bool {
+        self.table_types.enabled || self.type_operators.expand != TypeExpansion::Auto
     }
 
     /// Reports if a definition puts a space before its parentheses.

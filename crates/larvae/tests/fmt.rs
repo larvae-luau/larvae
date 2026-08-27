@@ -11,7 +11,7 @@ whitespace, and every comment must stay.
 use larvae::fmt::config::{
     CallParens, CallStyle, CollapseSimpleStatement, FunctionCall, FunctionDeclaration, IfExpansion,
     IfExpression, IfPlacement, IfStyle, IndentType, LineEndings, ListExpansion, PreferConst,
-    PropertyOrder, QuoteStyle, SortTableTypes, SpaceAfterFunctionNames, TableTypes, TypeSeparator, UnusedImports,
+    PropertyOrder, QuoteStyle, SortTableTypes, SpaceAfterFunctionNames, TableTypes, TypeExpansion, TypeOperators, TypeSeparator, UnusedImports,
 };
 use larvae::fmt::{FmtConfig, format};
 
@@ -2184,6 +2184,230 @@ fn every_property_order_is_idempotent_and_parses() {
                     },
                     ..Default::default()
                 });
+            }
+        }
+    }
+
+    for src in sources {
+        for cfg in &configs {
+            let once = fmt_with(src, cfg.clone());
+            let twice = fmt_with(&once, cfg.clone());
+
+            assert_eq!(once, twice, "unstable for {src:?}");
+
+            let lexed = larvae::syntax::lexer::lex(&once)
+                .unwrap_or_else(|e| panic!("{src:?} gave unlexable output, {}", e.message));
+
+            larvae::syntax::parser::parse(&once, &lexed.toks)
+                .unwrap_or_else(|e| panic!("{src:?} gave unparsable output, {}", e.message));
+
+            for line in once.lines() {
+                assert_eq!(line, line.trim_end(), "trailing whitespace from {src:?}");
+            }
+        }
+    }
+}
+
+// --- unions and intersections --------------------------------------------
+
+fn operators(expand: TypeExpansion) -> FmtConfig {
+    FmtConfig {
+        type_operators: TypeOperators { expand },
+        ..Default::default()
+    }
+}
+
+const LONG_UNION: &str =
+    "type Long = AlphaAlphaAlpha | BetaBetaBetaBeta | GammaGammaGamma | DeltaDeltaDelta\n";
+
+/// `auto` is the layout larvae always had: one line, past the column and all.
+#[test]
+fn auto_replays_a_chain_on_one_line() {
+    assert_eq!(fmt(LONG_UNION), LONG_UNION);
+
+    let narrow = FmtConfig {
+        column_width: 40,
+        ..Default::default()
+    };
+
+    assert_eq!(fmt_with(LONG_UNION, narrow), LONG_UNION);
+}
+
+/// `always` gives every member a line, with the operator leading it.
+#[test]
+fn always_opens_every_member_under_its_operator() {
+    assert_eq!(
+        fmt_with(
+            "type U = Alpha | Beta | Gamma\n",
+            operators(TypeExpansion::Always)
+        ),
+        "type U =\n\t| Alpha\n\t| Beta\n\t| Gamma\n"
+    );
+}
+
+/// The same option covers an intersection. One shape takes one setting.
+#[test]
+fn always_opens_an_intersection_too() {
+    assert_eq!(
+        fmt_with(
+            "type I = { a: number } & { b: string }\n",
+            operators(TypeExpansion::Always)
+        ),
+        "type I =\n\t& { a: number }\n\t& { b: string }\n"
+    );
+}
+
+/// Every position a type takes gets the same layout.
+#[test]
+fn always_reaches_every_type_position() {
+    let cfg = operators(TypeExpansion::Always);
+
+    for src in [
+        "local x: Alpha | Beta = nil\n",
+        "local function f(a: Alpha | Beta)\nend\n",
+        "local function f(): Alpha | Beta\n\treturn nil\nend\n",
+        "local x = y :: Alpha | Beta\n",
+    ] {
+        let out = fmt_with(src, cfg.clone());
+
+        assert!(out.contains("| Alpha\n"), "{src} gave {out}");
+        assert!(out.contains("| Beta"), "{src} gave {out}");
+    }
+}
+
+/// A chain inside a member follows the option at that level as well.
+#[test]
+fn a_nested_chain_opens_with_its_parent() {
+    assert_eq!(
+        fmt_with(
+            "type N = { inner: Alpha | Beta } | nil\n",
+            operators(TypeExpansion::Always)
+        ),
+        "type N =\n\t| {\n\t\tinner:\n\t\t\t| Alpha\n\t\t\t| Beta,\n\t}\n\t| nil\n"
+    );
+}
+
+/*
+`never` holds the line over `table_types.width`. The same source opens the
+table under the default, which is what the option overrides.
+*/
+#[test]
+fn never_holds_one_line_over_the_table_type_width() {
+    let src = "type W = { alpha: number, beta: string, gamma: boolean, delta: Vector3 } | nil\n";
+
+    assert_eq!(fmt_with(src, operators(TypeExpansion::Never)), src);
+
+    assert_eq!(
+        fmt(src),
+        "type W = {\n\talpha: number,\n\tbeta: string,\n\tgamma: boolean,\n\tdelta: Vector3,\n} | nil\n"
+    );
+}
+
+/// `column_width` outranks `never`, so a line that cannot fit opens anyway.
+#[test]
+fn column_width_outranks_never() {
+    let cfg = FmtConfig {
+        column_width: 40,
+        type_operators: TypeOperators {
+            expand: TypeExpansion::Never,
+        },
+        ..Default::default()
+    };
+
+    assert_eq!(
+        fmt_with(LONG_UNION, cfg),
+        "type Long =\n\t| AlphaAlphaAlpha\n\t| BetaBetaBetaBeta\n\t| GammaGammaGamma\n\t| DeltaDeltaDelta\n"
+    );
+}
+
+/// A chain that fits keeps its line under `never`, and the members join with one space.
+#[test]
+fn never_keeps_a_chain_that_fits_on_its_line() {
+    let src = "type U = Alpha | Beta | Gamma\n";
+
+    assert_eq!(fmt_with(src, operators(TypeExpansion::Never)), src);
+}
+
+/*
+Luau allows a leading `|`, and an opened chain writes one. So the second
+pass reads a chain the first pass wrote and reaches the same members.
+*/
+#[test]
+fn a_leading_operator_reads_as_the_chain_it_opens() {
+    let src = "type L = | Alpha | Beta\n";
+
+    assert_eq!(
+        fmt_with(src, operators(TypeExpansion::Always)),
+        "type L =\n\t| Alpha\n\t| Beta\n"
+    );
+
+    assert_eq!(
+        fmt_with(src, operators(TypeExpansion::Never)),
+        "type L = Alpha | Beta\n"
+    );
+}
+
+/// An operator inside `<>` or `()` belongs to no chain of this level.
+#[test]
+fn an_operator_inside_brackets_opens_nothing() {
+    let cfg = operators(TypeExpansion::Always);
+
+    for src in [
+        "type G = Map<Alpha | Beta, Gamma>\n",
+        "type P = (Alpha | Beta)?\n",
+    ] {
+        assert_eq!(fmt_with(src, cfg.clone()), src, "{src}");
+    }
+}
+
+/*
+Every setting of both options must format its own output to itself, and the
+output must be in the same language as the input.
+*/
+#[test]
+fn every_type_layout_is_idempotent_and_parses() {
+    let sources = [
+        ROW,
+        LONG_UNION,
+        "type U = Alpha | Beta | Gamma\n",
+        "type L = | Alpha | Beta\n",
+        "type I = { a: number } & { b: string }\n",
+        "type N = { inner: Alpha | Beta, other: Gamma } | nil\n",
+        "type W = { alpha: number, beta: string, gamma: boolean, delta: Vector3 } | nil\n",
+        "type A = { string }\n",
+        "type C = {\n\t-- a note\n\tid: string,\n\tx: number,\n}\n",
+        "type M = { read identifier: string, write hp: number, [string]: any }\n",
+        "local x: Alpha | Beta = nil\n",
+        "local function f(a: Alpha | Beta): Gamma | Delta\n\treturn a\nend\n",
+        "local x = y :: Alpha | Beta\n",
+        "type Fn = (a: number) -> string | nil\n",
+        "type G = Map<string, Set<number>> | Alpha\n",
+    ];
+
+    let mut configs = Vec::new();
+
+    for order in [
+        PropertyOrder::None,
+        PropertyOrder::Ascending,
+        PropertyOrder::Descending,
+    ] {
+        for indexer_first in [true, false] {
+            for expand in [
+                TypeExpansion::Auto,
+                TypeExpansion::Always,
+                TypeExpansion::Never,
+            ] {
+                for column_width in [40, 120] {
+                    configs.push(FmtConfig {
+                        column_width,
+                        sort_table_types: SortTableTypes {
+                            order,
+                            indexer_first,
+                        },
+                        type_operators: TypeOperators { expand },
+                        ..Default::default()
+                    });
+                }
             }
         }
     }

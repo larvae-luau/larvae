@@ -1197,6 +1197,22 @@
             }
           }
         },
+        "type_operators": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "How a union and an intersection are laid out, in every position a type takes. One option covers | and &, because they share one shape: members with an operator between them.\n\n[type_operators →](https://larvae-luau.github.io/docs/reference/formatting#type-operators)",
+          "properties": {
+            "expand": {
+              "enum": [
+                "auto",
+                "always",
+                "never"
+              ],
+              "default": "auto",
+              "description": "When the chain is opened over several lines. \"auto\" leaves it to the replay, which is the layout larvae always had, so a chain wider than \"column_width\" runs past it. \"always\" puts every member on a line of its own, with the operator leading the line. \"never\" holds one line whatever table_types.width says about a table inside it, and opens one member per line only where the line passes \"column_width\": the order is column_width first, then type_operators, then table_types.width.\n\n[type_operators.expand →](https://larvae-luau.github.io/docs/reference/formatting#type-operators-expand)"
+            }
+          }
+        },
         "final_newline": {
           "type": "boolean",
           "enum": [

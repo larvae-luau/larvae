@@ -262,6 +262,16 @@ Notable changes land here. Format follows
   comment stays as written, because a token replay has no position to put a
   comment back, and the sort reads the fields the table type layout finds, so
   `table_types.enabled = false` leaves every order alone
+- `[fmt.type_operators] expand`, which lays out a union and an intersection in
+  every position a type takes. One option covers `|` and `&`, because they
+  share one shape. `auto` is the default and it is the layout larvae always
+  had, byte for byte: the operator breaks no line, so a long chain runs past
+  `column_width`. `always` puts every member on a line of its own, with the
+  operator leading the line, which is the position a long binary chain already
+  gives its operator. `never` holds one line whatever `table_types.width` says
+  about a table inside the chain, and opens one member per line only where the
+  line passes `column_width`. So the order is `column_width` first, then
+  `type_operators`, then `table_types.width`
 
 ## 0.6.0 - 2026-08-21
 
