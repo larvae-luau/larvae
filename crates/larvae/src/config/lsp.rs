@@ -52,6 +52,21 @@ pub struct LspConfig {
     /// How the analyzer would compile, for a build that reads bytecode
     #[serde(default)]
     pub bytecode: BytecodeConfig,
+
+    /*
+    The rojo sourcemap, read for the instance tree of the project.
+
+    The path is relative to the root of the project. The file rojo writes
+    by default is the default here, and a project that keeps it elsewhere
+    names it. The server reads it when it is there and says nothing when it
+    is not, because a project without rojo has no sourcemap and wants none.
+    */
+    #[serde(default = "sourcemap")]
+    pub sourcemap: String,
+}
+
+fn sourcemap() -> String {
+    "sourcemap.json".to_owned()
 }
 
 /*

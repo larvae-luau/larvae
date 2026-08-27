@@ -2180,6 +2180,11 @@
           "default": false,
           "description": "On serves only the files that a worm claims, so stock luau-lsp can own the plain Luau. Off serves every Luau file, which is what larvae always did."
         },
+        "sourcemap": {
+          "type": "string",
+          "default": "sourcemap.json",
+          "description": "The rojo sourcemap to read, relative to the root of the project. It gives every script the type of its own instance, so script.Parent and its neighbours resolve. A project without the file gets no instance tree and no message."
+        },
         "completion": {
           "$ref": "#/$defs/lsp_completion"
         },

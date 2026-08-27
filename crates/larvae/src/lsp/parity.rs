@@ -446,12 +446,12 @@ impl Server {
         let parameters: Vec<Value> = sig
             .parameters
             .iter()
-            .map(|p| json!({ "label": p }))
+            .map(|p| json!({ "label": self.instances.readable(p) }))
             .collect();
 
         json!({
             "signatures": [{
-                "label": sig.label,
+                "label": self.instances.readable(&sig.label),
                 "parameters": parameters,
                 "activeParameter": sig.active,
             }],
@@ -497,15 +497,17 @@ impl Server {
             .into_iter()
             .filter(|h| from.is_none_or(|f| h.line >= f) && to.is_none_or(|t| h.line <= t))
             .map(|h| {
+                let text = self.instances.readable(&h.label);
+
                 // A hint longer than the code it annotates hides the code.
-                let label = match h.label.chars().count() > cfg.type_hint_max_length {
+                let label = match text.chars().count() > cfg.type_hint_max_length {
                     true => {
-                        let kept: String = h.label.chars().take(cfg.type_hint_max_length).collect();
+                        let kept: String = text.chars().take(cfg.type_hint_max_length).collect();
 
                         format!("{kept}...")
                     }
 
-                    false => h.label.clone(),
+                    false => text.into_owned(),
                 };
 
                 json!({
