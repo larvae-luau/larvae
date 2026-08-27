@@ -580,3 +580,36 @@ fn an_export_type_loses_its_export_inside_the_bundle() {
     assert!(text.contains("type Word"), "the alias itself stays: {text}");
     assert_eq!(run_luau(&text).expect("runs"), "typed");
 }
+
+/*
+The bundle prints through the generator of the project, so `obfuscate`
+reaches it with no key of its own. The bundle is the file most projects
+ship, so it is the one that matters most here.
+*/
+#[test]
+fn obfuscate_reaches_the_bundle_and_it_still_runs() {
+    let dir = project(
+        &[
+            (
+                "main.luau",
+                "local g = require(\"./greet\")\nreturn g.hello(\"world\")\n",
+            ),
+            (
+                "greet.luau",
+                "local prefix: string = \"hi \"\nreturn { hello = function(n: string) return prefix .. n end }\n",
+            ),
+        ],
+        &format!(
+            "{}\n[minify]\nobfuscate = true\n",
+            config_with("[bundle]\nentry = \"src/main.luau\"\noutput = \"out.luau\"\n")
+        ),
+    );
+
+    let text = run_bundle(dir.path(), &[]).expect("bundles");
+
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(!text.contains("prefix"), "{text}");
+    assert!(!text.contains("hi "), "{text}");
+    assert!(text.contains("_0x0"), "{text}");
+    assert_eq!(run_luau(&text).expect("runs"), "hi world");
+}

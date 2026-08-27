@@ -234,7 +234,7 @@ fn run_inner(
     story and the default build stays untouched.
     */
     let rules_cfg: std::borrow::Cow<crate::config::RulesConfig> =
-        match config.process.generator == "dense" && config.minify.rename_variables {
+        match config.dense_output() && config.minify.rename_variables {
             true => {
                 let mut forced = config.rules.clone();
                 forced.rename_variables = true;

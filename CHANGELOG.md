@@ -146,6 +146,20 @@ Notable changes land here. Format follows
   alone, and a statement inside a `fmt off` region is never removed. A removal
   keeps every comment around it: a formatter may rewrite code and may not
   delete prose
+- `[minify] obfuscate`, off by default. On, every emitted file prints through
+  the dense emitter whatever `generator` says, with three changes: every type
+  is gone, every local takes a name from `_0x0` upward, and every string
+  literal becomes the `\xNN` form of its own bytes. The file lands on one line,
+  because `obfuscate` sets the column span to unlimited. A project that wrote
+  its own `[minify] column_span` keeps that number, the same way an explicit
+  key beats an implied one everywhere else. Roblox has no `loadstring`, so a
+  file cannot ship as a decoded blob: it has to be Luau the compiler reads, and
+  hiding the names, the strings, and the shape is what obfuscation can be. A
+  backtick string stays whole, because splitting its static text from its holes
+  means implementing interpolation twice and a wrong split is a broken build;
+  the names inside a hole are pinned instead of renamed. With `[bundle]` set,
+  the bundle output gets the same treatment, because a bundle prints through
+  the generator like any file
 
 ### Fixed
 

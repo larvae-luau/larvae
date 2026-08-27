@@ -59,14 +59,15 @@ pub struct Names {
     /// Each name that appears anywhere. A generated name can then avoid all of them.
     pub taken: HashSet<String>,
     /*
-    Names that a type mentions where the walk cannot say what they mean.
+    Names that a rename must not touch.
 
-    A bare name in a type is a type: `type T = Entity` names an alias and
-    not the local `Entity` beside it. A rename must leave such a name in
-    place, because the token to change is unknown. A rule reads this set
-    and skips those bindings.
+    Two things land here. A bare name in a type is a type: `type T = Entity`
+    names an alias and not the local `Entity` beside it, so the token to
+    change is unknown. And a name inside the `{}` of a backtick string is
+    text to the lexer, so a rename cannot reach it and must not move the
+    binding out from under it.
     */
-    pub type_blocked: HashSet<String>,
+    pub pinned: HashSet<String>,
 }
 
 /// The token indexes of each name reference that no enclosing scope bound.
@@ -83,6 +84,7 @@ pub fn resolve(ctx: &RuleCtx) -> Names {
     };
 
     b.block(&ctx.chunk.block);
+    b.interp_names();
 
     b.out
 }
@@ -193,13 +195,82 @@ impl<'src> Binder<'_, 'src> {
         }
     }
 
+    /*
+    Pin the names that a backtick string mentions inside a `{}` hole.
+
+    The lexer keeps an interpolated string as one token, so a rename cannot
+    edit inside it, and a binding that moved would leave the hole reading a
+    global that is nil. The scan reads the token's text and pins every name
+    it finds, in both directions: the binding of that name keeps its
+    spelling, and the supply never hands the name to another binding.
+
+    A hole holds an expression, so a name in it can be a field or a method
+    as easily as a variable. Nothing in one token separates the three. So
+    the walk pins instead of renaming, and one interpolated name costs one
+    unshortened local.
+    */
+    fn interp_names(&mut self) {
+        for tok in self.ctx.toks {
+            if tok.kind != TokKind::InterpStr {
+                continue;
+            }
+
+            let text = tok.text(self.ctx.src);
+            let b = text.as_bytes();
+            let mut i = 0usize;
+            let mut depth = 0usize;
+
+            while i < b.len() {
+                match b[i] {
+                    b'\\' => i += 2,
+
+                    b'{' => {
+                        depth += 1;
+                        i += 1;
+                    }
+
+                    b'}' => {
+                        depth = depth.saturating_sub(1);
+                        i += 1;
+                    }
+
+                    // A string inside a hole can hold a brace of its own,
+                    // and the lexer skips it for the same reason.
+                    b'"' | b'\'' if depth > 0 => {
+                        let quote = b[i];
+                        i += 1;
+
+                        while i < b.len() && b[i] != quote {
+                            i += usize::from(b[i] == b'\\') + 1;
+                        }
+
+                        i += 1;
+                    }
+
+                    c if depth > 0 && (c.is_ascii_alphabetic() || c == b'_') => {
+                        let start = i;
+
+                        while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
+                            i += 1;
+                        }
+
+                        self.out.taken.insert(text[start..i].to_string());
+                        self.out.pinned.insert(text[start..i].to_string());
+                    }
+
+                    _ => i += 1,
+                }
+            }
+        }
+    }
+
     /// Every name in the span blocks a rename. `type function` bodies use this.
     fn type_names_block(&mut self, span: TokSpan) {
         for i in span.start..span.end {
             if self.ctx.toks[i as usize].kind == TokKind::Ident {
                 let name = self.ctx.tok_text(i);
                 self.out.taken.insert(name.to_string());
-                self.out.type_blocked.insert(name.to_string());
+                self.out.pinned.insert(name.to_string());
             }
         }
     }
@@ -240,7 +311,7 @@ impl<'src> Binder<'_, 'src> {
         let name = self.ctx.tok_text(index);
 
         if !reads_value {
-            self.out.type_blocked.insert(name.to_string());
+            self.out.pinned.insert(name.to_string());
             return;
         }
 
@@ -254,7 +325,7 @@ impl<'src> Binder<'_, 'src> {
             use and rename half of it.
             */
             None => {
-                self.out.type_blocked.insert(name.to_string());
+                self.out.pinned.insert(name.to_string());
             }
         }
     }

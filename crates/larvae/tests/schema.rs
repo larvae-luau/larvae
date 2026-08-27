@@ -247,14 +247,24 @@ fn minify_keys_match_the_config() {
     let schema = schema();
     let documented = keys(&schema["$defs"]["minify"]["properties"]);
 
-    let real: BTreeSet<String> =
-        toml::Value::try_from(larvae::config::minify::MinifyConfig::default())
-            .expect("the config serializes")
-            .as_table()
-            .expect("a table")
-            .keys()
-            .cloned()
-            .collect();
+    /*
+    Every field set, because toml omits a `None` on serialization. The
+    default leaves `column_span` absent, so the test would read a
+    documented key as one that does not exist.
+    */
+    let full = larvae::config::minify::MinifyConfig {
+        column_span: Some(larvae::config::minify::DEFAULT_COLUMN_SPAN),
+        rename_variables: false,
+        obfuscate: false,
+    };
+
+    let real: BTreeSet<String> = toml::Value::try_from(full)
+        .expect("the config serializes")
+        .as_table()
+        .expect("a table")
+        .keys()
+        .cloned()
+        .collect();
 
     assert_eq!(
         documented.difference(&real).collect::<Vec<_>>(),

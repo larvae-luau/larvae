@@ -23,8 +23,9 @@ pub enum Generator {
     /// The spliced text as it is; the output keeps the lines of the input
     RetainLines,
 
-    /// The minifier, tuned by `[minify]`
-    Dense { column_span: usize },
+    /// The minifier, tuned by `[minify]`. With `obfuscate`, names and
+    /// strings go through [`crate::obfuscate`] before the emitter runs.
+    Dense { column_span: usize, obfuscate: bool },
 
     /// The formatter, with the `[fmt]` style of the project
     Readable(Box<crate::fmt::FmtConfig>),
@@ -38,9 +39,22 @@ impl Generator {
     a formatted output does not thrash between two styles.
     */
     pub fn from_config(root: &Path, config: &Config) -> Result<Self> {
+        /*
+        `obfuscate` prints through the dense emitter whatever `generator`
+        says. A readable obfuscated file is a contradiction, and a project
+        that asked for one is asking for the dense one.
+        */
+        if config.minify.obfuscate {
+            return Ok(Self::Dense {
+                column_span: config.minify.span(),
+                obfuscate: true,
+            });
+        }
+
         Ok(match config.process.generator.as_str() {
             "dense" => Self::Dense {
-                column_span: config.minify.column_span,
+                column_span: config.minify.span(),
+                obfuscate: false,
             },
 
             "readable" => Self::Readable(Box::new(crate::fmt::FmtConfig::discover(
@@ -58,9 +72,21 @@ impl Generator {
         match self {
             Self::RetainLines => Ok(Cow::Borrowed(text)),
 
-            Self::Dense { column_span } => crate::syntax::dense::dense(text, *column_span)
+            Self::Dense {
+                column_span,
+                obfuscate: false,
+            } => crate::syntax::dense::dense(text, *column_span)
                 .map(Cow::Owned)
                 .map_err(|e| format!("the dense generator cannot lex the output: {e}")),
+
+            /*
+            Obfuscation needs a parse, because only a parse says which
+            names are locals. So it fails on a file the dense emitter alone
+            would have printed, and the message says which step stopped.
+            */
+            Self::Dense { column_span, .. } => crate::obfuscate::obfuscate(text, *column_span)
+                .map(Cow::Owned)
+                .map_err(|e| format!("the obfuscator cannot read the output: {e}")),
 
             Self::Readable(cfg) => crate::fmt::format(text, cfg)
                 .map(Cow::Owned)

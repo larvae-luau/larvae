@@ -2188,7 +2188,7 @@
           "type": "integer",
           "minimum": 0,
           "default": 120,
-          "description": "The column where the dense emitter breaks the line. Line numbers in crash reports stay meaningful this way. A token wider than the span stays whole."
+          "description": "The column where the dense emitter breaks the line. Line numbers in crash reports stay meaningful this way. A token wider than the span stays whole. Written here, this number also beats the unlimited span that obfuscate implies."
         },
         "rename_variables": {
           "type": "boolean",
@@ -2198,6 +2198,15 @@
           ],
           "default": false,
           "description": "Give every local a short name while minifying. The same rule as [rules] rename_variables, turned on for dense builds only."
+        },
+        "obfuscate": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": false,
+          "description": "Make the output hard to read: the dense emitter whatever generator says, no types, every local named _0x0 upward, and every string literal as the \\xNN form of its own bytes. The file lands on one line unless column_span says otherwise. Roblox has no loadstring, so this is what obfuscation can be: the file still has to be Luau the compiler reads."
         }
       }
     },

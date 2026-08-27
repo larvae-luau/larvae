@@ -85,6 +85,16 @@ impl Sweeper<'_, '_> {
     }
 }
 
+/// Where a rename takes its new names from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NameStyle {
+    /// `a`, `b`, ... the shortest names that lex. This is the smallest output.
+    #[default]
+    Short,
+    /// `_0x0`, `_0x1`, ... the shape a reader expects from an obfuscator.
+    Hex,
+}
+
 /*
 rename_variables: give each local a short name.
 
@@ -100,14 +110,19 @@ name of `jecs` with it. Where the walk cannot say what a name in a type
 means, it blocks that name and the rule leaves the binding alone.
 */
 pub fn rename_variables(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
+    rename_with(ctx, edits, NameStyle::Short);
+}
+
+/// The same rename with the names from another source, see [`NameStyle`].
+pub fn rename_with(ctx: &RuleCtx, edits: &mut Vec<Edit>, style: NameStyle) {
     let names = scope::resolve(ctx);
-    let mut supply = Supply::new(&names.taken);
+    let mut supply = Supply::new(&names.taken, style);
 
     for binding in &names.bindings {
         let old = ctx.tok_text(binding.declared_at);
 
         // A vararg has no name to take, and Luau passes self implicitly.
-        if old == "self" || names.type_blocked.contains(old) {
+        if old == "self" || names.pinned.contains(old) {
             continue;
         }
 
@@ -128,12 +143,17 @@ pub fn rename_variables(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
 /// New names in order. The supply skips each name that the file already uses.
 struct Supply<'a> {
     taken: &'a std::collections::HashSet<String>,
+    style: NameStyle,
     counter: usize,
 }
 
 impl<'a> Supply<'a> {
-    fn new(taken: &'a std::collections::HashSet<String>) -> Self {
-        Self { taken, counter: 0 }
+    fn new(taken: &'a std::collections::HashSet<String>, style: NameStyle) -> Self {
+        Self {
+            taken,
+            style,
+            counter: 0,
+        }
     }
 
     fn next_name(&mut self) -> Option<String> {
@@ -141,7 +161,11 @@ impl<'a> Supply<'a> {
         while self.counter < 5_000_000 {
             let n = self.counter;
             self.counter += 1;
-            let name = short_name(n);
+
+            let name = match self.style {
+                NameStyle::Short => short_name(n),
+                NameStyle::Hex => format!("_0x{n:x}"),
+            };
 
             // is_ident rejects the keywords, so the supply never emits `do` or `end`.
             if !self.taken.contains(&name) && crate::rules::native::is_ident(&name) {

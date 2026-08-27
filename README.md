@@ -232,7 +232,9 @@ Luau with JSX syntax.
 Bundling and minification work today too: `larvae bundle` writes the
 project as one tree-shaken file with a documented module init order, and
 `generator = "dense"` minifies what larvae writes, with optional local
-renaming under `[minify]`.
+renaming under `[minify]`. `[minify] obfuscate` goes further: no types,
+`_0x` names, every string as the bytes it holds, and the whole file on one
+line.
 
 ## License
 
