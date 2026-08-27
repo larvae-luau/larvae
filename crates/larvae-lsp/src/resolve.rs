@@ -28,6 +28,7 @@ pub fn resolve_spec(
     from: &Path,
     spec: &str,
     mounts: Option<&larvae::requires::datamodel::MountTable>,
+    claimed: &[String],
 ) -> Option<PathBuf> {
     let is_init = from
         .file_stem()
@@ -59,7 +60,7 @@ pub fn resolve_spec(
         let segments = larvae::requires::datamodel::parse_game_path(spec)?;
         let base = mounts?.fs_of(&segments)?;
 
-        return as_module_file(&base);
+        return as_module_file(&base, claimed);
     }
 
     let joined = if let Some(rest) = spec.strip_prefix("@self/") {
@@ -85,7 +86,7 @@ pub fn resolve_spec(
         }
     };
 
-    as_module_file(&joined)
+    as_module_file(&joined, claimed)
 }
 
 /// The aliases of the nearest .luaurc walking up from the requiring file
@@ -121,14 +122,40 @@ fn lookup_alias(from_dir: &Path, alias: &str) -> Option<PathBuf> {
     None
 }
 
-/// A path as the module file the frontend loads: itself, or its init file
-fn as_module_file(path: &Path) -> Option<PathBuf> {
-    if path.is_file() {
+/*
+A path as the module file the frontend loads: itself, or its init file.
+
+A file the frontend cannot read is not a module. Luau is a module, and so is
+a file whose extension a resolving worm claims, because that worm hands the
+frontend a lowering of it. Everything else answers nothing, and Luau reports
+an unsupported path, which is what a require of a text file deserves.
+
+`claimed` carries the extensions of those worms, without the dot. It is
+empty for a project with no such worm, and then Luau alone is a module.
+*/
+fn as_module_file(path: &Path, claimed: &[String]) -> Option<PathBuf> {
+    let loadable = |path: &Path| {
+        path.extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|ext| ext == "luau" || ext == "lua" || claimed.iter().any(|c| c == ext))
+    };
+
+    // The spec spelled the extension itself, ex: `./config.json`.
+    if path.is_file() && loadable(path) {
         return Some(path.to_path_buf());
     }
 
-    for ext in ["luau", "lua"] {
-        let with = path.with_extension(ext);
+    /*
+    Luau comes first, then the claimed extensions in the order the project
+    installed their worms. A `data.luau` beside a `data.json` is the module
+    that `./data` names, which is the order the build resolves them in too.
+    */
+    for ext in ["luau", "lua"]
+        .iter()
+        .map(|e| (*e).to_owned())
+        .chain(claimed.iter().cloned())
+    {
+        let with = path.with_extension(&ext);
 
         if with.is_file() {
             return Some(with);
@@ -189,6 +216,7 @@ mod game_requires {
             &dir.path().join("tools/build.luau"),
             "@game/ReplicatedStorage/App/Widget",
             Some(&table),
+            &[],
         );
 
         assert_eq!(found, Some(dir.path().join("src/Shared/Widget.luau")));
@@ -204,6 +232,7 @@ mod game_requires {
             &dir.path().join("src/Shared/Other.luau"),
             "@game/ReplicatedStorage/App/Widget",
             Some(&table),
+            &[],
         );
 
         assert_eq!(found, Some(dir.path().join("src/Shared/Widget.luau")));
@@ -219,6 +248,7 @@ mod game_requires {
             &dir.path().join("tools/build.luau"),
             "@game/ReplicatedStorage/App/Pkg",
             Some(&table),
+            &[],
         );
 
         assert_eq!(found, Some(dir.path().join("src/Shared/Pkg/init.luau")));
@@ -246,6 +276,7 @@ mod game_requires {
             &dir.path().join("tools/build.luau"),
             "@game/Widget",
             Some(&table),
+            &[],
         );
 
         assert_eq!(found, Some(dir.path().join("custom/Widget.luau")));
@@ -261,6 +292,7 @@ mod game_requires {
                 &dir.path().join("tools/build.luau"),
                 "@game/ReplicatedStorage/App/Widget",
                 None,
+                &[]
             ),
             None
         );
@@ -274,12 +306,68 @@ mod game_requires {
         let from = dir.path().join("tools/build.luau");
 
         assert_eq!(
-            resolve_spec(&from, "./helper", Some(&table)),
+            resolve_spec(&from, "./helper", Some(&table), &[]),
             Some(dir.path().join("tools/helper.luau"))
         );
         assert_eq!(
-            resolve_spec(&from, "@self/helper", Some(&table)),
+            resolve_spec(&from, "@self/helper", Some(&table), &[]),
             Some(dir.path().join("tools/helper.luau"))
+        );
+    }
+}
+
+#[cfg(test)]
+mod claimed_files {
+    use super::*;
+
+    fn tree(files: &[&str]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("a temp dir");
+
+        for file in files {
+            let path = dir.path().join(file);
+            std::fs::create_dir_all(path.parent().expect("a parent")).expect("makes it");
+            std::fs::write(&path, "{}\n").expect("writes");
+        }
+
+        dir
+    }
+
+    /*
+    A data file a worm claims is a module.
+
+    The worm hands the analyzer a lowering of it, so the require has a type.
+    Without the claim there is nothing to read the file with, and Luau says
+    so rather than reading JSON as Luau and reporting the first brace.
+    */
+    #[test]
+    fn a_claimed_file_resolves_and_an_unclaimed_one_does_not() {
+        let dir = tree(&["src/a.luau", "src/data.json", "src/notes.txt"]);
+        let from = dir.path().join("src/a.luau");
+        let claims = ["json".to_owned()];
+
+        assert_eq!(
+            resolve_spec(&from, "./data", None, &claims),
+            Some(dir.path().join("src/data.json"))
+        );
+        assert_eq!(
+            resolve_spec(&from, "./data.json", None, &claims),
+            Some(dir.path().join("src/data.json"))
+        );
+
+        // No worm claims it, so nothing does, whichever way it is spelled.
+        assert_eq!(resolve_spec(&from, "./data", None, &[]), None);
+        assert_eq!(resolve_spec(&from, "./notes.txt", None, &claims), None);
+    }
+
+    /// Luau wins over a claimed file of the same stem, as it does in a build.
+    #[test]
+    fn luau_wins_the_stem() {
+        let dir = tree(&["src/a.luau", "src/data.luau", "src/data.json"]);
+        let from = dir.path().join("src/a.luau");
+
+        assert_eq!(
+            resolve_spec(&from, "./data", None, &["json".to_owned()]),
+            Some(dir.path().join("src/data.luau"))
         );
     }
 }
@@ -301,7 +389,7 @@ mod huskfall {
         }
 
         assert!(
-            resolve_spec(from, "../reactive/graph", None).is_some(),
+            resolve_spec(from, "../reactive/graph", None, &[]).is_some(),
             "the resolver did not find ../reactive/graph"
         );
     }

@@ -79,6 +79,41 @@ impl LuaurcIndex {
         }
     }
 
+    /*
+    Every alias name that covers one directory, nearest first.
+
+    A completion list needs the names and not one lookup, because the author
+    has typed nothing yet. The walk is the same as [`Self::lookup`], and a
+    name defined nearer the file hides the same name defined above it.
+    */
+    pub fn names(&self, from_dir: &Path) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let mut dir = Some(from_dir);
+
+        while let Some(current) = dir {
+            if let Some(entry) = self.dirs.get(current) {
+                for name in entry.aliases.keys() {
+                    if !out.iter().any(|seen| seen == name) {
+                        out.push(name.clone());
+                    }
+                }
+            }
+
+            if current == self.root {
+                break;
+            }
+
+            dir = current.parent().filter(|up| up.starts_with(&self.root));
+        }
+
+        out
+    }
+
+    /// The root the walk stops at
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     pub fn is_empty(&self) -> bool {
         self.dirs.is_empty()
     }

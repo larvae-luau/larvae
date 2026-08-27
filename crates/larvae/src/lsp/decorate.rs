@@ -195,7 +195,7 @@ every file. The server resolves one file per request, and a lookup only ever
 walks up from that file. So this walk stops at the root, and an editor does
 not read the whole tree on each keystroke.
 */
-fn luaurc_upward(path: &Path, root: &Path) -> LuaurcIndex {
+pub(super) fn luaurc_upward(path: &Path, root: &Path) -> LuaurcIndex {
     let mut index = LuaurcIndex::new(root);
     let mut dir = path.parent();
 

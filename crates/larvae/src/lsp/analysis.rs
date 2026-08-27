@@ -28,7 +28,40 @@ pub struct AnalysisCompletion {
     pub label: String,
     /// The protocol's CompletionItemKind, ex: 5 is Field, 3 is Function
     pub kind: u8,
+    /*
+    The type of the entry, rendered.
+
+    An editor draws it to the right of the label, and it is how a reader
+    tells a function from a field without accepting either one. A keyword
+    carries none, because a keyword has no type.
+    */
     pub detail: Option<String>,
+    /*
+    The argument names of a function, ex: `(self, className)`.
+
+    An editor draws it against the label itself, before the detail. So a
+    row reads `IsA (self, className)  (Object, string) -> boolean`, which
+    is what a reader picking from a list needs: the names to fill in and
+    the types they take.
+    */
+    pub label_detail: Option<String>,
+    /// What the editor writes on accept, when it differs from the label
+    pub insert_text: Option<String>,
+    /// The comment block above the declaration, as markdown
+    pub documentation: Option<String>,
+    /// Whether the declaration carries `@deprecated`
+    pub deprecated: bool,
+    /*
+    Whether the entry fits the type the position expects.
+
+    0 is no, 1 is yes, and 2 is a function whose result fits. It is what
+    ranks the props of a component above every global in scope, which is the
+    difference between a useful list and an alphabet. luau-lsp ranks on the
+    same answer.
+    */
+    pub type_correct: u8,
+    /// Whether the entry comes through an index the type does not take
+    pub wrong_index_type: bool,
 }
 
 /*
@@ -45,6 +78,16 @@ pub type LoadHook = Box<dyn Fn(&str) -> Option<String> + Send>;
 pub struct ModuleHooks {
     pub resolve: ResolveHook,
     pub load: LoadHook,
+    /*
+    The extensions a resolving worm claims, without the dot.
+
+    A require that lands on one of these is a module, because the worm
+    behind it hands the analyzer a lowering and a type. A require that lands
+    on any other non-Luau file is a path Luau cannot load, and it says so.
+    Both halves are needed: the worm has to claim the extension and to
+    answer resolution, or nothing is there to read the file.
+    */
+    pub claims: Vec<String>,
 }
 
 /*
@@ -189,6 +232,22 @@ pub trait Analysis: Send {
         false
     }
 
+    /*
+    Say what `script` is inside each file of the project.
+
+    `script` names a different instance in every module, so a global
+    declaration cannot answer it. The sourcemap names the instance behind
+    each file, and [`crate::lsp::instances`] turns that into one declared
+    type per node; this hands the frontend the file-to-type map.
+
+    The map replaces whatever the analyzer held. A sourcemap that rojo
+    rewrote describes a different tree, and half of the old one is worse
+    than none of it.
+    */
+    fn set_script_types(&mut self, types: &std::collections::HashMap<std::path::PathBuf, String>) {
+        let _ = types;
+    }
+
     /// Give the analyzer the text of one open document
     fn open(&mut self, path: &Path, text: &str);
 
@@ -209,6 +268,20 @@ pub trait Analysis: Send {
         show_table_kinds: bool,
         include_string_length: bool,
     ) -> Option<String>;
+
+    /*
+    The reference page for the name at a byte offset, as markdown.
+
+    A type says what a thing is and the reference says what it does. Every
+    Roblox class and member has a page, and luau-lsp puts it under the type
+    on the card, which is where a reader looks for it. A name the project
+    wrote itself has no page, and answers nothing.
+    */
+    fn hover_documentation(&mut self, path: &Path, at: u32) -> Option<String> {
+        let _ = (path, at);
+
+        None
+    }
 
     /// Completions at a byte offset
     fn completions(&mut self, path: &Path, at: u32) -> Vec<AnalysisCompletion>;

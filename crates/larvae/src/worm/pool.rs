@@ -264,6 +264,19 @@ impl Pool {
         Self::extensions(self.specs.iter().filter(|s| s.lints()))
     }
 
+    /*
+    The extensions a resolving worm claims, without the dot.
+
+    A require of one of these is answered by the worm, which vendors the
+    type of the file. A require of any other non-Luau file is a path Luau
+    cannot load, and it reports one. So this list is the difference between
+    a type and an `unsupported path`, and it takes both halves: the worm has
+    to claim the extension and to answer resolution.
+    */
+    pub fn lsp_resolved_claims(&self) -> Vec<String> {
+        Self::extensions(self.specs.iter().filter(|s| s.manifest.lsp.resolve))
+    }
+
     fn extensions<'a>(specs: impl Iterator<Item = &'a Arc<Spec>>) -> Vec<String> {
         specs
             .flat_map(|s| &s.claims)
