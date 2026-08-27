@@ -1001,3 +1001,22 @@ mod luau_lsp_parity {
         );
     }
 }
+
+#[cfg(test)]
+mod startup_cost {
+    use super::*;
+    use larvae::lsp::analysis::Analysis;
+
+    /// What a session costs to build, which is what the editor waits for.
+    #[test]
+    #[ignore = "timing, run explicitly"]
+    fn what_a_session_costs() {
+        let session = std::time::Instant::now();
+        let mut analysis = LuauAnalysis::new();
+        println!("  session with definitions: {:?}", session.elapsed());
+
+        let again = std::time::Instant::now();
+        analysis.definitions("@second", "declare _probe: number\n");
+        println!("  a tiny second load:       {:?}", again.elapsed());
+    }
+}

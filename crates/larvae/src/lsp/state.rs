@@ -185,7 +185,15 @@ impl Server {
     the zero config case and raises nothing.
     */
     pub(super) fn load_config(&mut self, out: &mut impl Write) -> Result<()> {
+        let clock = std::time::Instant::now();
+        let mut mark = |what: &str| {
+            if std::env::var_os("LARVAE_TIME").is_some() {
+                eprintln!("  {:>7.0}ms {what}", clock.elapsed().as_secs_f64() * 1000.0);
+            }
+        };
+
         self.apply_editor_settings();
+        mark("editor settings");
 
         // The load of the worms takes `&mut self`, so the root arrives as a copy.
         let Some(root) = self.root.clone() else {
@@ -244,7 +252,9 @@ impl Server {
             warn(out, &format!("[lsp.fflags] {complaint}"))?;
         }
 
+        mark("flags");
         self.link_studio(out)?;
+        mark("studio link");
 
         if let Some(analysis) = self.analysis.borrow_mut().as_mut() {
             /*
@@ -268,6 +278,8 @@ impl Server {
                 &mut ignored,
             ));
         }
+
+        mark("mounts");
 
         match FmtConfig::discover(&root, project.as_ref().and_then(|c| c.fmt.as_ref())) {
             Ok(cfg) => self.fmt = cfg,
@@ -293,6 +305,8 @@ impl Server {
         }
 
         self.load_worms(&root);
+
+        mark("config and worms");
 
         Ok(())
     }
@@ -531,5 +545,49 @@ impl Server {
         if let Some(analysis) = self.analysis.borrow_mut().as_mut() {
             analysis.definitions("@studio", &text);
         }
+    }
+}
+
+impl Server {
+    /// True when this binary answers type questions, now or once it has loaded
+    pub(super) fn will_analyse(&self) -> bool {
+        self.analysis.borrow().is_some() || self.analysis_coming.borrow().is_some()
+    }
+
+    /*
+    Take the session if the thread has finished building it.
+
+    Non blocking on purpose. A request that waited would put the fourteen
+    seconds back where they were, on whichever keystroke came first.
+    */
+    pub(super) fn claim_analysis(&self) {
+        if self.analysis.borrow().is_some() {
+            return;
+        }
+
+        let mut coming = self.analysis_coming.borrow_mut();
+
+        let Some(rx) = coming.as_ref() else {
+            return;
+        };
+
+        match rx.try_recv() {
+            Ok(built) => {
+                *self.analysis.borrow_mut() = Some(built);
+                *coming = None;
+            }
+
+            // The thread died, so nothing is coming and the server stops asking.
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => *coming = None,
+
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
+    }
+
+    /// True while the session is still being built, so a reply can say so
+    pub(super) fn analysis_loading(&self) -> bool {
+        self.claim_analysis();
+
+        self.analysis.borrow().is_none() && self.analysis_coming.borrow().is_some()
     }
 }

@@ -24,6 +24,9 @@ impl Server {
         */
         self.refresh_studio();
 
+        // A publish is a good moment to notice the session has landed.
+        self.claim_analysis();
+
         let Some(src) = self.documents.get(uri) else {
             return Ok(());
         };

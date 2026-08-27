@@ -58,31 +58,197 @@ fn import_insertion_line(src: &str) -> u32 {
 }
 
 /*
-An offset of the original, moved onto the lowering by line.
+An offset of the original, moved onto the lowering.
 
 A front-end worm preserves line numbers by contract, so the line carries
-over whole, and the column clamps to the lowered line's length. Exact for
-the Luau between markup, and close enough at a markup boundary for the
-analyzer to anchor.
+over whole. The column does not: a line the worm rewrote holds the same
+names at different places, and `<TextLabel Text={props.Title} />` becomes
+`vide.create("TextLabel")({ Text = props.Title, })`, where every column past
+the first is somewhere else.
+
+So the column moves by the name under the cursor. The name is copied into
+the lowering verbatim, because a hole holds Luau and a worm that rewrote it
+would break the type it reports. Finding the same name in the lowered line
+puts the cursor back on it, and the offset inside the name carries over
+unchanged.
+
+Where the line came through untouched, and where there is no name to follow,
+the column clamps to the lowered line, which is what it always did.
 */
 fn lowered_offset(original: &str, lowered: &str, at: u32) -> u32 {
     let head = &original[..(at as usize).min(original.len())];
     let line = head.matches('\n').count();
     let column = head.len() - head.rfind('\n').map(|n| n + 1).unwrap_or(0);
 
+    let source = original.split_inclusive('\n').nth(line).unwrap_or("");
     let mut start = 0usize;
 
     for (i, text) in lowered.split_inclusive('\n').enumerate() {
         if i == line {
-            let content = text.trim_end_matches('\n').len();
+            let generated = text.trim_end_matches('\n');
 
-            return (start + column.min(content)) as u32;
+            if let Some(column) = aligned(source.trim_end_matches('\n'), generated, column) {
+                return (start + column) as u32;
+            }
+
+            return (start + column.min(generated.len())) as u32;
         }
 
         start += text.len();
     }
 
     lowered.len() as u32
+}
+
+/*
+The column in the lowered line that holds the same name as `column` does.
+
+A name appearing more than once is answered by counting: the third `value`
+of the source line is the third `value` of the lowered line. The count is
+what makes this safe on a line the worm rewrote, since a rewrite reorders
+names and does not invent them.
+
+Nothing comes back when the line is unchanged, when the cursor is not on a
+name, or when the lowering does not hold that name. Each one is a case the
+clamp already answers, and a guess would answer worse.
+*/
+fn aligned(source: &str, generated: &str, column: usize) -> Option<usize> {
+    if source == generated || column > source.len() {
+        return None;
+    }
+
+    let (start, end) = word_at(source, column)?;
+    let word = &source[start..end];
+    let which = words(source, word).take_while(|at| *at < start).count();
+
+    words(generated, word)
+        .nth(which)
+        .map(|at| at + column - start)
+}
+
+/// Where the name under `column` starts and ends, if the cursor is on one.
+fn word_at(line: &str, column: usize) -> Option<(usize, usize)> {
+    let bytes = line.as_bytes();
+    let mut start = column;
+    let mut end = column;
+
+    while start > 0 && is_word(bytes[start - 1]) {
+        start -= 1;
+    }
+
+    while end < bytes.len() && is_word(bytes[end]) {
+        end += 1;
+    }
+
+    (start < end).then_some((start, end))
+}
+
+/// Every place `word` stands alone in the line, in order.
+fn words<'a>(line: &'a str, word: &'a str) -> impl Iterator<Item = usize> + 'a {
+    let bytes = line.as_bytes();
+
+    line.match_indices(word).filter_map(move |(at, _)| {
+        let before = at == 0 || !is_word(bytes[at - 1]);
+        let after = at + word.len() >= bytes.len() || !is_word(bytes[at + word.len()]);
+
+        (before && after).then_some(at)
+    })
+}
+
+/// A byte a name is made of. A digit counts, and the first byte of a name
+/// never is one, so this needs no second rule.
+fn is_word(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+#[cfg(test)]
+mod lowering_tests {
+    use super::lowered_offset;
+
+    /// The offset of `|` in the marked text, and the text without it.
+    fn cursor(marked: &str) -> (String, u32) {
+        let at = marked.find('|').expect("a cursor");
+
+        (marked.replace('|', ""), at as u32)
+    }
+
+    /// The lowered text from the offset out, so a failure reads as a place.
+    fn landed_on(original: &str, lowered: &str, marked: &str) -> String {
+        let (_, at) = cursor(marked);
+        let at = lowered_offset(original, lowered, at) as usize;
+
+        lowered[at..].chars().take(12).collect()
+    }
+
+    #[test]
+    fn a_line_the_worm_left_alone_keeps_its_column() {
+        let text = "local a = 1\nlocal b = 2\n";
+
+        assert_eq!(
+            landed_on(text, text, "local a = 1\nlocal |b = 2\n"),
+            "b = 2\n"
+        );
+    }
+
+    /*
+    The case the whole thing exists for: a name inside a hole, on a line
+    the worm rewrote around it.
+    */
+    #[test]
+    fn a_name_inside_a_hole_lands_on_itself() {
+        let original = "\t<TextLabel Text={props.Title} />\n";
+        let lowered = "\tcreate(\"TextLabel\")({ Text = props.Title, })\n";
+
+        assert_eq!(
+            landed_on(original, lowered, "\t<TextLabel Text={props.T|itle} />\n"),
+            "itle, })\n"
+        );
+    }
+
+    /// The same name two times is answered by which one, not by the first.
+    #[test]
+    fn the_second_of_a_name_stays_the_second() {
+        let original = "\t<Frame A={value} B={value} />\n";
+        let lowered = "\tcreate(\"Frame\")({ A = value, B = value, })\n";
+
+        let (_, at) = cursor("\t<Frame A={value} B={va|lue} />\n");
+        let landed = lowered_offset(original, lowered, at) as usize;
+
+        assert!(
+            lowered[..landed].contains("B = "),
+            "landed at {landed}, before it: {:?}",
+            &lowered[..landed]
+        );
+        assert_eq!(&lowered[landed..landed + 3], "lue");
+    }
+
+    #[test]
+    fn a_cursor_on_no_name_clamps_as_it_did() {
+        let original = "\t<Frame A={x} />\n";
+        let lowered = "\tcreate(\"Frame\")({ A = x, })\n";
+        let (_, at) = cursor("\t<Frame A={x}| />\n");
+
+        // Nothing to follow, so the column clamps and stays on the line.
+        let landed = lowered_offset(original, lowered, at) as usize;
+
+        assert!(landed <= lowered.trim_end_matches('\n').len());
+    }
+
+    #[test]
+    fn a_name_the_lowering_dropped_clamps_rather_than_guesses() {
+        let original = "\t<Frame Gone={1} />\n";
+        let lowered = "\tcreate(\"Frame\")({ })\n";
+        let (_, at) = cursor("\t<Frame Go|ne={1} />\n");
+
+        let landed = lowered_offset(original, lowered, at) as usize;
+
+        assert!(landed <= lowered.trim_end_matches('\n').len());
+    }
+
+    #[test]
+    fn a_line_past_the_end_of_the_lowering_answers_its_end() {
+        assert_eq!(lowered_offset("a\nb\nc\n", "a\n", 4), 2);
+    }
 }
 
 /// The byte offset of the position in a request's params
@@ -107,6 +273,17 @@ impl Server {
         // `[lsp.hover] enabled = false` answers with nothing, as luau-lsp does.
         if !self.lsp.hover.enabled || self.declines(&uri) {
             return Value::Null;
+        }
+
+        /*
+        A card that says it is loading, while the session is still being
+        built. Nothing at all reads as "this has no type", which is wrong
+        and which the reader cannot tell from the truth.
+        */
+        if self.analysis_loading() {
+            return json!({
+                "contents": { "kind": "markdown", "value": "```luau\n...\n```" },
+            });
         }
 
         let Some(src) = self.documents.get(&uri) else {
@@ -195,6 +372,14 @@ impl Server {
 
         if !self.lsp.completion.enabled || self.declines(&uri) {
             return json!([]);
+        }
+
+        /*
+        An incomplete list, so the editor asks again on the next keystroke
+        rather than caching an empty one for the rest of the session.
+        */
+        if self.analysis_loading() {
+            return json!({ "isIncomplete": true, "items": [] });
         }
 
         let Some(src) = self.documents.get(&uri) else {

@@ -71,13 +71,45 @@ plugged into the seam. `larvae lsp` passes None and serves lint and
 format, as it always did.
 */
 pub fn run_with(analysis: Option<Box<dyn analysis::Analysis>>) -> Result<()> {
+    run_pending(analysis.map(Pending::Ready))
+}
+
+/*
+The server, with an analyzer that is possibly still being built.
+
+Luau's type definitions take about fourteen seconds to load, and a session
+cannot answer a type question until they are in. Doing that before the first
+reply held the editor for the whole of it: a file opened, nothing happened,
+and the editor showed no reason.
+
+So the binary builds the session on a thread and hands over a receiver. The
+server advertises what it will be able to do, answers what it can from its
+own parser at once, and says "loading" to the rest until the session lands.
+That is the shape luau-lsp has, which answers `initialize` in four
+milliseconds and pays for the definitions on the first file.
+*/
+pub enum Pending {
+    Ready(Box<dyn analysis::Analysis>),
+    Building(std::sync::mpsc::Receiver<Box<dyn analysis::Analysis>>),
+}
+
+pub fn run_pending(analysis: Option<Pending>) -> Result<()> {
     let stdin = std::io::stdin();
     let mut input = BufReader::new(stdin.lock());
     let stdout = std::io::stdout();
     let mut output = stdout.lock();
 
+    let (ready, coming) = match analysis {
+        Some(Pending::Ready(a)) => (Some(a), None),
+
+        Some(Pending::Building(rx)) => (None, Some(rx)),
+
+        None => (None, None),
+    };
+
     let mut server = Server {
-        analysis: std::cell::RefCell::new(analysis),
+        analysis: std::cell::RefCell::new(ready),
+        analysis_coming: std::cell::RefCell::new(coming),
         ..Default::default()
     };
 
@@ -134,6 +166,15 @@ struct Server {
     /// The analyzer behind the seam, when the binary provides one.
     /// A cell, because a publish borrows the server shared.
     analysis: std::cell::RefCell<Option<Box<dyn analysis::Analysis>>>,
+    /*
+    The session while a thread is still building it.
+
+    Taken the first time a request needs the analyzer and finds it there.
+    Until then every type question answers that it is loading, which is a
+    truer answer than nothing and one an editor can show.
+    */
+    analysis_coming:
+        std::cell::RefCell<Option<std::sync::mpsc::Receiver<Box<dyn analysis::Analysis>>>>,
 }
 
 impl Default for Server {
@@ -153,6 +194,7 @@ impl Default for Server {
             studio: None,
             editor: Value::Null,
             analysis: std::cell::RefCell::new(None),
+            analysis_coming: std::cell::RefCell::new(None),
         }
     }
 }
@@ -172,7 +214,8 @@ impl Server {
                 crashed and the editor restarts it.
                 */
                 let caps = match self.lsp.enabled {
-                    true => capabilities(self.analysis.borrow().is_some()),
+                    // What it will do, not what it can do this instant.
+                    true => capabilities(self.will_analyse()),
 
                     false => serde_json::json!({ "capabilities": {} }),
                 };
