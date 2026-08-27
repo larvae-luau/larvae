@@ -24,9 +24,6 @@ impl Server {
         */
         self.refresh_studio();
 
-        // A publish is a good moment to notice the session has landed.
-        self.claim_analysis();
-
         let Some(src) = self.documents.get(uri) else {
             return Ok(());
         };
@@ -112,13 +109,30 @@ impl Server {
             analysis.open(path, &super::analysis::plain_view(src));
 
             for diag in analysis.check(path) {
-                diagnostics.push(json!({
+                let mut entry = json!({
                     "range": lines.range(src, (diag.span.0, diag.span.1)),
                     "severity": diag.severity,
-                    "source": "larvae-types",
-                    "code": diag.code,
-                    "message": diag.message,
-                }));
+                    /*
+                    Luau's type checker found it, so Luau is what the editor
+                    names. luau-lsp says the same, and a reader who searches
+                    the message finds answers written about Luau.
+                    */
+                    "source": "Luau",
+                    // The tree's own type names mean nothing to a reader.
+                    "message": self.instances.readable(&diag.message),
+                });
+
+                /*
+                The error number, shown as `Luau(1042)` and linked to the
+                page that explains the checker. Luau numbers its errors from
+                1000, and the number names the kind of the error.
+                */
+                if let Some(code) = diag.code.as_deref().and_then(|c| c.parse::<i64>().ok()) {
+                    entry["code"] = json!(code);
+                    entry["codeDescription"] = json!({ "href": TYPE_ERROR_DOCS });
+                }
+
+                diagnostics.push(entry);
             }
         }
 
@@ -180,6 +194,9 @@ impl Server {
         }
     }
 }
+
+/// Where the editor sends a reader who clicks a Luau error number
+const TYPE_ERROR_DOCS: &str = "https://luau.org/typecheck";
 
 /*
 One finding as a diagnostic of the protocol.

@@ -49,47 +49,69 @@ impl Server {
     An id the server does not know is ignored. luau-lsp ships about ninety
     settings and the extension mirrors the names, so a server that refused
     an unknown one would fail on every editor that is ahead of it.
-    */
-    pub(super) fn apply_editor_settings(&mut self) {
-        let settings = &self.editor["larvae-lsp"];
 
-        if let Some(on) = settings["enabled"].as_bool() {
+    The editor writes an id in camelCase and the project file writes it in
+    snake_case, and the two name the same setting. [`spelled`] converts
+    between them, so one list of names serves both.
+    */
+    pub(super) fn apply_editor_settings(&mut self, project: Option<&toml::Value>) {
+        let settings = self.editor["larvae-lsp"].clone();
+        let lsp = project.and_then(|value| value.get("lsp"));
+
+        /*
+        One setting, or nothing where the project file spelled the same
+        name. That check is what makes the rule true: `[lsp]` used to be
+        copied over the whole table, so a project with any `larvae.toml`
+        silently threw away every setting the user had made in the editor,
+        including the ones it says nothing about.
+        */
+        let editor = |path: &[&str]| -> Value {
+            if spelled(lsp, path) {
+                return Value::Null;
+            }
+
+            let mut node = &settings;
+
+            for segment in path {
+                node = &node[*segment];
+            }
+
+            node.clone()
+        };
+
+        if let Some(on) = editor(&["enabled"]).as_bool() {
             self.lsp.enabled = on;
         }
 
-        if let Some(on) = settings["claimOnly"].as_bool() {
+        if let Some(on) = editor(&["claimOnly"]).as_bool() {
             self.lsp.claim_only = on;
         }
 
-        if let Some(on) = settings["completion"]["imports"]["useConst"].as_bool() {
-            self.lsp.completion.imports.use_const = on;
-        }
-
-        let completion = &settings["completion"];
-
-        if let Some(on) = completion["enabled"].as_bool() {
+        if let Some(on) = editor(&["completion", "enabled"]).as_bool() {
             self.lsp.completion.enabled = on;
         }
 
-        if let Some(on) = completion["showKeywords"].as_bool() {
+        if let Some(on) = editor(&["completion", "showKeywords"]).as_bool() {
             self.lsp.completion.show_keywords = on;
         }
 
-        if let Some(on) = completion["imports"]["enabled"].as_bool() {
+        if let Some(on) = editor(&["completion", "imports", "enabled"]).as_bool() {
             self.lsp.completion.imports.enabled = on;
         }
 
-        if let Some(on) = settings["index"]["enabled"].as_bool() {
+        if let Some(on) = editor(&["completion", "imports", "useConst"]).as_bool() {
+            self.lsp.completion.imports.use_const = on;
+        }
+
+        if let Some(on) = editor(&["index", "enabled"]).as_bool() {
             self.lsp.index.enabled = on;
         }
 
-        let fflags = &settings["fflags"];
-
-        if let Some(on) = fflags["enableByDefault"].as_bool() {
+        if let Some(on) = editor(&["fflags", "enableByDefault"]).as_bool() {
             self.lsp.fflags.enable_by_default = on;
         }
 
-        if let Some(on) = fflags["enableNewSolver"].as_bool() {
+        if let Some(on) = editor(&["fflags", "enableNewSolver"]).as_bool() {
             self.lsp.fflags.enable_new_solver = on;
         }
 
@@ -98,7 +120,7 @@ impl Server {
         `over` here. Every value arrives as text, because Luau keeps a
         boolean list and an integer list and the name decides which is asked.
         */
-        if let Some(table) = fflags["override"].as_object() {
+        if let Some(table) = editor(&["fflags", "override"]).as_object() {
             for (name, value) in table {
                 let text = match value {
                     Value::String(s) => s.clone(),
@@ -110,66 +132,64 @@ impl Server {
             }
         }
 
-        let bytecode = &settings["bytecode"];
-
-        if let Some(n) = bytecode["debugLevel"].as_u64() {
+        if let Some(n) = editor(&["bytecode", "debugLevel"]).as_u64() {
             self.lsp.bytecode.debug_level = n as u8;
         }
 
-        if let Some(n) = bytecode["typeInfoLevel"].as_u64() {
+        if let Some(n) = editor(&["bytecode", "typeInfoLevel"]).as_u64() {
             self.lsp.bytecode.type_info_level = n as u8;
         }
 
         for (id, field) in [("vectorLib", 0usize), ("vectorCtor", 1), ("vectorType", 2)] {
-            let Some(text) = bytecode[id].as_str() else {
+            let Some(text) = editor(&["bytecode", id]).as_str().map(str::to_owned) else {
                 continue;
             };
 
             match field {
-                0 => self.lsp.bytecode.vector_lib = text.to_string(),
-                1 => self.lsp.bytecode.vector_ctor = text.to_string(),
-                _ => self.lsp.bytecode.vector_type = text.to_string(),
+                0 => self.lsp.bytecode.vector_lib = text,
+                1 => self.lsp.bytecode.vector_ctor = text,
+                _ => self.lsp.bytecode.vector_type = text,
             }
         }
 
-        let studio = &settings["studio"];
-
-        if let Some(on) = studio["enabled"].as_bool() {
+        if let Some(on) = editor(&["studio", "enabled"]).as_bool() {
             self.lsp.studio.enabled = on;
         }
 
-        if let Some(port) = studio["port"].as_u64() {
+        if let Some(port) = editor(&["studio", "port"]).as_u64() {
             self.lsp.studio.port = port as u16;
         }
 
-        if let Some(on) = settings["signatureHelp"]["enabled"].as_bool() {
+        if let Some(on) = editor(&["signatureHelp", "enabled"]).as_bool() {
             self.lsp.signature_help.enabled = on;
         }
 
-        if let Some(on) = settings["hover"]["enabled"].as_bool() {
+        if let Some(on) = editor(&["hover", "enabled"]).as_bool() {
             self.lsp.hover.enabled = on;
         }
 
-        if let Some(on) = settings["hover"]["showTableKinds"].as_bool() {
+        if let Some(on) = editor(&["hover", "showTableKinds"]).as_bool() {
             self.lsp.hover.show_table_kinds = on;
         }
 
-        if let Some(on) = settings["hover"]["includeStringLength"].as_bool() {
+        if let Some(on) = editor(&["hover", "includeStringLength"]).as_bool() {
             self.lsp.hover.include_string_length = on;
         }
 
-        let hints = &settings["inlayHints"];
-
-        if let Some(on) = hints["variableTypes"].as_bool() {
+        if let Some(on) = editor(&["inlayHints", "variableTypes"]).as_bool() {
             self.lsp.inlay_hints.variable_types = on;
         }
 
-        if let Some(on) = hints["parameterTypes"].as_bool() {
+        if let Some(on) = editor(&["inlayHints", "parameterTypes"]).as_bool() {
             self.lsp.inlay_hints.parameter_types = on;
         }
 
-        if let Some(n) = hints["typeHintMaxLength"].as_u64() {
+        if let Some(n) = editor(&["inlayHints", "typeHintMaxLength"]).as_u64() {
             self.lsp.inlay_hints.type_hint_max_length = n as usize;
+        }
+
+        if let Some(text) = editor(&["sourcemap"]).as_str() {
+            self.lsp.sourcemap = text.to_owned();
         }
     }
 
@@ -186,17 +206,17 @@ impl Server {
     */
     pub(super) fn load_config(&mut self, out: &mut impl Write) -> Result<()> {
         let clock = std::time::Instant::now();
-        let mut mark = |what: &str| {
+        let mark = |what: &str| {
             if std::env::var_os("LARVAE_TIME").is_some() {
                 eprintln!("  {:>7.0}ms {what}", clock.elapsed().as_secs_f64() * 1000.0);
             }
         };
 
-        self.apply_editor_settings();
-        mark("editor settings");
-
         // The load of the worms takes `&mut self`, so the root arrives as a copy.
         let Some(root) = self.root.clone() else {
+            self.apply_editor_settings(None);
+            self.start_analysis();
+
             return Ok(());
         };
 
@@ -223,6 +243,27 @@ impl Server {
             self.lsp = project.lsp.clone();
             self.aliases = project.alias_map();
         }
+
+        /*
+        The raw table, to ask which settings the project actually spelled.
+        A parsed `[lsp]` cannot answer that: a field the project left out
+        and a field it set to the default read the same.
+        */
+        let raw = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| toml::from_str::<toml::Value>(&text).ok());
+
+        self.apply_editor_settings(raw.as_ref());
+        mark("editor settings");
+
+        /*
+        The flags are known now, so the session can start being built. This
+        is the earliest moment it can: a flag decides which type solver the
+        globals are registered under, and the project that sets it was only
+        read a line ago.
+        */
+        self.start_analysis();
+        mark("analysis started");
 
         /*
         The analyzer receives the DataModel map, so `@game` resolves.
@@ -279,7 +320,31 @@ impl Server {
             ));
         }
 
+        /*
+        The server keeps a copy of its own, because a require completion is
+        a filesystem question and is answered without the analyzer. The two
+        are built the same way, so they cannot disagree.
+        */
+        {
+            let fallback = crate::config::Config::default();
+            let cfg = project.as_ref().unwrap_or(&fallback);
+
+            let rojo = crate::project::rojo::find_project(&root, cfg.rojo.project.as_deref())
+                .and_then(|path| crate::project::rojo::load(&path).ok());
+
+            let mut ignored = Vec::new();
+
+            self.mounts =
+                crate::pipeline::setup::mount_table(&root, cfg, rojo.as_ref(), &mut ignored);
+        }
+
         mark("mounts");
+
+        // The sourcemap is read again, against the config that names it.
+        self.sourcemap_read = false;
+        self.load_instances();
+
+        mark("sourcemap");
 
         match FmtConfig::discover(&root, project.as_ref().and_then(|c| c.fmt.as_ref())) {
             Ok(cfg) => self.fmt = cfg,
@@ -304,11 +369,105 @@ impl Server {
             Err(e) => warn(out, &format!("{e:#}"))?,
         }
 
-        self.load_worms(&root);
+        self.load_worms(&root, out)?;
 
         mark("config and worms");
 
         Ok(())
+    }
+
+    /*
+    Start the thread that builds the session, once and no more.
+
+    The build runs off the loop, so the editor gets its answer to
+    `initialize` in milliseconds and the type questions say `Loading...`
+    until the session lands as an event.
+    */
+    fn start_analysis(&mut self) {
+        let (Some(build), Some(events)) = (self.builder.take(), self.events.clone()) else {
+            return;
+        };
+
+        let flags = self.lsp.fflags.clone();
+
+        std::thread::spawn(move || {
+            // The server is gone if this fails, and there is nothing to do about it.
+            let _ = events.send(crate::lsp::Event::Analysis(build(&flags)));
+        });
+    }
+
+    /*
+    Read the rojo sourcemap, and give the analyzer the tree it describes.
+
+    The tree becomes one declared type per node, loaded under a name of its
+    own generation, and a file-to-type map that says what `script` is inside
+    each module. Both go in together, because a binding to a type that the
+    scope does not hold binds nothing.
+
+    A project with no sourcemap loads nothing and says nothing. That is the
+    common case for a project without rojo, and an editor that warned about
+    it on every config change would be wrong on most of them.
+    */
+    fn load_instances(&mut self) {
+        /*
+        The tree is types, so it needs the analyzer. A session that is still
+        being built leaves this undone, and `refresh_instances` runs it at
+        the first request after the session lands.
+        */
+        if self.analysis.borrow().is_none() {
+            return;
+        }
+
+        let Some(root) = self.root.clone() else {
+            return;
+        };
+
+        let path = root.join(&self.lsp.sourcemap);
+
+        let stamp = std::fs::metadata(&path)
+            .ok()
+            .and_then(|m| Some((m.modified().ok()?, m.len())));
+
+        // A file that did not change describes the tree the analyzer holds.
+        if self.sourcemap_read && stamp == self.sourcemap_stamp {
+            return;
+        }
+
+        self.sourcemap_stamp = stamp;
+        self.sourcemap_read = true;
+        self.sourcemap_generation += 1;
+
+        let read = crate::lsp::instances::read(
+            &path,
+            &root,
+            self.sourcemap_generation,
+            &self.worms.claimed(),
+        );
+
+        if let Some(analysis) = self.analysis.borrow_mut().as_mut() {
+            if !read.is_empty() {
+                analysis.definitions("@sourcemap", &read.definitions);
+            }
+
+            analysis.set_script_types(&read.script_types);
+        }
+
+        self.instances = read;
+    }
+
+    /*
+    Re-read the sourcemap when rojo rewrote it.
+
+    `rojo sourcemap --watch` rewrites the file whenever a script moves or a
+    folder appears, and a server that held the first read all session would
+    type a tree the project no longer has. The check costs one stat, so it
+    runs before each request that reads a type.
+
+    The analyzer has to be there for the read to land, so a session that is
+    still loading leaves the stamp alone and the next request tries again.
+    */
+    pub(super) fn refresh_instances(&mut self) {
+        self.load_instances();
     }
 
     /*
@@ -322,7 +481,7 @@ impl Server {
     worms declare, and fills each missing option. So the server takes the new
     fmt config only when the build succeeds.
     */
-    fn load_worms(&mut self, root: &Path) {
+    fn load_worms(&mut self, root: &Path, out: &mut impl Write) -> Result<()> {
         let mut fmt = self.fmt.clone();
 
         // the editor never downloads a worm, because a keystroke cannot wait
@@ -331,12 +490,39 @@ impl Server {
                 self.fmt = fmt;
                 self.worm_stamp = stamp_of(&pool);
                 self.worms = pool;
+                self.worm_error = None;
             }
 
-            Err(_) => self.worms = no_worms(),
+            /*
+            One broken worm takes the whole pool with it, so a file that a
+            working worm claims goes back to being read as Luau and every
+            require that worm answered reports as unknown. That is a big
+            change to make in silence, and the reason is one line of
+            `[worms]` that only the user can fix.
+
+            The message repeats only when the reason changes. A user who is
+            editing that table breaks it on the way to fixing it, and a
+            toast per keystroke would be its own problem.
+            */
+            Err(e) => {
+                let reason = format!("{e:#}");
+
+                if self.worm_error.as_deref() != Some(reason.as_str()) {
+                    warn(
+                        out,
+                        &format!("the worms of this project did not load: {reason}"),
+                    )?;
+
+                    self.worm_error = Some(reason);
+                }
+
+                self.worms = no_worms();
+            }
         }
 
         self.install_lsp_hooks();
+
+        Ok(())
     }
 
     /*
@@ -374,6 +560,7 @@ impl Server {
                     .lsp_load_any(path)
                     .map(|r| crate::lsp::analysis::plain_view(&r.source).into_owned())
             }),
+            claims: self.worms.lsp_resolved_claims(),
         });
 
         for decl in self.worms.lsp_declarations() {
@@ -420,18 +607,20 @@ impl Server {
     check costs one stat per worm artifact, so the server runs it before each
     request that a worm can answer.
     */
-    pub(super) fn refresh_worms(&mut self) {
+    pub(super) fn refresh_worms(&mut self, out: &mut impl Write) -> Result<()> {
         let Some(root) = self.root.clone() else {
-            return;
+            return Ok(());
         };
 
         if self.worms.is_empty() {
-            return;
+            return Ok(());
         }
 
         if stamp_of(&self.worms) != self.worm_stamp {
-            self.load_worms(&root);
+            self.load_worms(&root, out)?;
         }
+
+        Ok(())
     }
 }
 
@@ -441,6 +630,50 @@ One warning toast in the editor; `window/showMessage` type 2 is Warning.
 The protocol allows this notification before the reply to `initialize`, so
 a config that is broken at startup reports right away.
 */
+/*
+Whether the `[lsp]` table of the project spells one setting.
+
+A `serde` default and a value the project wrote read the same once the table
+is parsed, so the question is asked of the raw TOML. The path arrives in the
+editor's spelling and converts on the way down.
+*/
+fn spelled(lsp: Option<&toml::Value>, path: &[&str]) -> bool {
+    let Some(mut node) = lsp else {
+        return false;
+    };
+
+    for segment in path {
+        match node.get(snake(segment)) {
+            Some(next) => node = next,
+
+            None => return false,
+        }
+    }
+
+    true
+}
+
+/// One id, from the editor's camelCase to the project file's snake_case
+fn snake(name: &str) -> String {
+    // `override` is a Rust keyword, so the table is `over` in the config.
+    if name == "override" {
+        return "over".to_owned();
+    }
+
+    let mut out = String::with_capacity(name.len() + 4);
+
+    for c in name.chars() {
+        if c.is_ascii_uppercase() {
+            out.push('_');
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+
+    out
+}
+
 fn warn(out: &mut impl Write, message: &str) -> Result<()> {
     rpc::notify(
         out,
@@ -551,43 +784,43 @@ impl Server {
 impl Server {
     /// True when this binary answers type questions, now or once it has loaded
     pub(super) fn will_analyse(&self) -> bool {
-        self.analysis.borrow().is_some() || self.analysis_coming.borrow().is_some()
+        self.analysis.borrow().is_some() || self.analysis_pending
     }
 
     /*
-    Take the session if the thread has finished building it.
+    Take the session the builder thread finished, and put it to work.
 
-    Non blocking on purpose. A request that waited would put the fourteen
-    seconds back where they were, on whichever keystroke came first.
+    Everything the analyzer needs was decided while it did not exist: the
+    flags, the DataModel map, the worm hooks, the Studio tree, and the
+    sourcemap. `load_config` applies all of them, and it costs about two
+    milliseconds, so the session arrives configured rather than bare. This
+    is the whole reason the landing is an event and not a poll: a project
+    whose editor went quiet would otherwise hold a session that never got
+    its mounts.
+
+    Then every open document is checked again. The editor asked for its
+    diagnostics before there were types, and nothing else would make it ask
+    a second time.
     */
-    pub(super) fn claim_analysis(&self) {
-        if self.analysis.borrow().is_some() {
-            return;
+    pub(super) fn take_analysis(
+        &mut self,
+        built: Box<dyn crate::lsp::analysis::Analysis>,
+        out: &mut impl Write,
+    ) -> Result<()> {
+        *self.analysis.borrow_mut() = Some(built);
+        self.analysis_pending = false;
+
+        self.load_config(out)?;
+
+        for uri in self.documents.keys().cloned().collect::<Vec<_>>() {
+            self.publish(&uri, out)?;
         }
 
-        let mut coming = self.analysis_coming.borrow_mut();
-
-        let Some(rx) = coming.as_ref() else {
-            return;
-        };
-
-        match rx.try_recv() {
-            Ok(built) => {
-                *self.analysis.borrow_mut() = Some(built);
-                *coming = None;
-            }
-
-            // The thread died, so nothing is coming and the server stops asking.
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => *coming = None,
-
-            Err(std::sync::mpsc::TryRecvError::Empty) => {}
-        }
+        Ok(())
     }
 
     /// True while the session is still being built, so a reply can say so
     pub(super) fn analysis_loading(&self) -> bool {
-        self.claim_analysis();
-
-        self.analysis.borrow().is_none() && self.analysis_coming.borrow().is_some()
+        self.analysis.borrow().is_none() && self.analysis_pending
     }
 }

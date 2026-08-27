@@ -34,8 +34,10 @@ pub mod decorate;
 mod diagnostics;
 pub mod extend;
 mod features;
+pub mod instances;
 pub mod navigate;
 mod parity;
+pub mod requires;
 mod state;
 pub mod structure;
 pub mod studio;
@@ -90,32 +92,93 @@ milliseconds and pays for the definitions on the first file.
 */
 pub enum Pending {
     Ready(Box<dyn analysis::Analysis>),
-    Building(std::sync::mpsc::Receiver<Box<dyn analysis::Analysis>>),
+    Builder(Builder),
+}
+
+/*
+What builds a session, once the flags of the project are known.
+
+Luau's flags are global to the process and some of them decide what a
+session is: `LuauSolverV2` picks the type solver, and the globals of a
+session are registered under whichever solver was on when it was built. So
+the build cannot start before `initialize` says which project this is, and
+the server hands the flags to this rather than the binary guessing them.
+*/
+pub type Builder =
+    Box<dyn FnOnce(&crate::config::lsp::FFlagsConfig) -> Box<dyn analysis::Analysis> + Send>;
+
+/*
+What the loop waits on: a message from the editor, or the session landing.
+
+The two arrive on different threads and the server has to answer both, so
+they meet on one channel. The alternative was to look for the session on
+each message, and that left a project whose editor went quiet with a
+session it had built and never picked up.
+*/
+pub(super) enum Event {
+    Message(rpc::Message),
+    Analysis(Box<dyn analysis::Analysis>),
+    /// The editor closed the stream, or the read failed
+    Eof,
 }
 
 pub fn run_pending(analysis: Option<Pending>) -> Result<()> {
-    let stdin = std::io::stdin();
-    let mut input = BufReader::new(stdin.lock());
     let stdout = std::io::stdout();
     let mut output = stdout.lock();
 
-    let (ready, coming) = match analysis {
+    let (events, inbox) = std::sync::mpsc::channel();
+
+    let (ready, builder) = match analysis {
         Some(Pending::Ready(a)) => (Some(a), None),
 
-        Some(Pending::Building(rx)) => (None, Some(rx)),
+        Some(Pending::Builder(build)) => (None, Some(build)),
 
         None => (None, None),
     };
 
+    let reader = events.clone();
+
+    std::thread::spawn(move || {
+        let stdin = std::io::stdin();
+        let mut input = BufReader::new(stdin.lock());
+
+        loop {
+            match rpc::read(&mut input) {
+                Ok(Some(message)) => {
+                    if reader.send(Event::Message(message)).is_err() {
+                        return;
+                    }
+                }
+
+                // A closed stream is how an editor shuts a server down.
+                _ => {
+                    let _ = reader.send(Event::Eof);
+
+                    return;
+                }
+            }
+        }
+    });
+
     let mut server = Server {
         analysis: std::cell::RefCell::new(ready),
-        analysis_coming: std::cell::RefCell::new(coming),
+        analysis_pending: builder.is_some(),
+        builder,
+        events: Some(events),
         ..Default::default()
     };
 
-    while let Some(message) = rpc::read(&mut input)? {
-        if server.handle(&message, &mut output)? {
-            break;
+    for event in inbox {
+        match event {
+            Event::Message(message) => {
+                if server.handle(&message, &mut output)? {
+                    break;
+                }
+            }
+
+            Event::Analysis(built) => server.take_analysis(built, &mut output)?,
+
+            Event::Eof => break,
         }
     }
 
@@ -134,12 +197,22 @@ struct Server {
     worms: Pool,
     /// What the artifacts of the pool looked like at the last load
     worm_stamp: Vec<(std::path::PathBuf, Option<std::time::SystemTime>, u64)>,
+    /// Why the pool last failed to build, so the message is said once
+    worm_error: Option<String>,
     /// `shutdown` sets this, so a later `exit` is clean and not abrupt
     shutting_down: bool,
     /// The `[lsp]` table of the project; the default serves every Luau file
     lsp: crate::config::lsp::LspConfig,
     /// `[aliases]`, so a document link resolves a require the way the build does
     aliases: HashMap<String, String>,
+    /*
+    The DataModel map of the project, kept for the require completions.
+
+    The analyzer gets its own copy for resolution. This one answers what a
+    half-written `@game/` spec can become, which is a filesystem question and
+    reaches no analyzer at all.
+    */
+    mounts: crate::requires::datamodel::MountTable,
     /*
     The project symbol index, for `workspace/symbol`.
 
@@ -167,14 +240,47 @@ struct Server {
     /// A cell, because a publish borrows the server shared.
     analysis: std::cell::RefCell<Option<Box<dyn analysis::Analysis>>>,
     /*
-    The session while a thread is still building it.
+    Whether a thread is still building the session.
 
-    Taken the first time a request needs the analyzer and finds it there.
-    Until then every type question answers that it is loading, which is a
-    truer answer than nothing and one an editor can show.
+    Until it lands, every type question answers that it is loading, which is
+    a truer answer than nothing and one an editor can show.
     */
-    analysis_coming:
-        std::cell::RefCell<Option<std::sync::mpsc::Receiver<Box<dyn analysis::Analysis>>>>,
+    analysis_pending: bool,
+    /*
+    What builds the session, until the config that decides its flags is read.
+
+    `load_config` takes it and spawns it, because that is the first moment
+    the project has been read. A server with no analyzer holds none.
+    */
+    builder: Option<Builder>,
+    /// Where the builder thread posts the session it finished
+    events: Option<std::sync::mpsc::Sender<Event>>,
+    /*
+    The instance tree of the rojo sourcemap, as types.
+
+    It is what makes `script.Providers` and `script.Parent.Config` resolve:
+    the tree names the neighbours of each file, and the analyzer binds
+    `script` per module to the type of its own node.
+    */
+    instances: instances::Instances,
+    /// What the sourcemap looked like at the last read, so a rewrite reloads
+    sourcemap_stamp: Option<(std::time::SystemTime, u64)>,
+    /*
+    Whether a read happened at all.
+
+    A missing sourcemap has no stamp, and so does a project the server has
+    not looked at yet. Without this the two read the same and the server
+    would re-read a file that is not there on every message.
+    */
+    sourcemap_read: bool,
+    /*
+    Which read of the sourcemap the current type names belong to.
+
+    A reload declares the tree again, and a type name the global scope
+    already holds is a redefinition error, so each read spells its names
+    with a number of its own.
+    */
+    sourcemap_generation: u64,
 }
 
 impl Default for Server {
@@ -187,14 +293,22 @@ impl Default for Server {
             excluded: Excludes::default(),
             worms: no_worms(),
             worm_stamp: Vec::new(),
+            worm_error: None,
             shutting_down: false,
             lsp: Default::default(),
             aliases: HashMap::new(),
+            mounts: Default::default(),
             symbols: workspace::Index::default(),
             studio: None,
             editor: Value::Null,
             analysis: std::cell::RefCell::new(None),
-            analysis_coming: std::cell::RefCell::new(None),
+            analysis_pending: false,
+            builder: None,
+            events: None,
+            instances: instances::Instances::default(),
+            sourcemap_stamp: None,
+            sourcemap_read: false,
+            sourcemap_generation: 0,
         }
     }
 }
@@ -202,6 +316,14 @@ impl Default for Server {
 impl Server {
     /// Returns true when the server must stop
     pub(super) fn handle(&mut self, message: &rpc::Message, out: &mut impl Write) -> Result<bool> {
+        /*
+        The sourcemap is checked before every message, because rojo rewrites
+        it while the editor is open and the tree it describes is what a type
+        question is answered against. The check is one stat, and the read
+        only happens when the file changed.
+        */
+        self.refresh_instances();
+
         match message.method.as_str() {
             "initialize" => {
                 self.initialize(&message.params, out)?;
@@ -253,7 +375,7 @@ impl Server {
             }
 
             "textDocument/didOpen" => {
-                self.refresh_worms();
+                self.refresh_worms(out)?;
 
                 let uri = uri_of(&message.params);
                 let text = message.params["textDocument"]["text"]
@@ -274,7 +396,7 @@ impl Server {
             the machinery that avoids the send.
             */
             "textDocument/didChange" => {
-                self.refresh_worms();
+                self.refresh_worms(out)?;
 
                 let uri = uri_of(&message.params);
 
@@ -289,7 +411,7 @@ impl Server {
             }
 
             "textDocument/didSave" => {
-                self.refresh_worms();
+                self.refresh_worms(out)?;
 
                 // The tree changed, and the user is not waiting on a keystroke.
                 self.reindex();
@@ -312,7 +434,7 @@ impl Server {
             }
 
             "textDocument/formatting" => {
-                self.refresh_worms();
+                self.refresh_worms(out)?;
 
                 let result = self.format(&uri_of(&message.params));
 
@@ -453,7 +575,7 @@ impl Server {
             that opens the lightbulb.
             */
             "textDocument/codeAction" => {
-                self.refresh_worms();
+                self.refresh_worms(out)?;
 
                 let uri = uri_of(&message.params);
                 let text = self.documents.get(&uri).cloned().unwrap_or_default();
@@ -473,7 +595,7 @@ impl Server {
             that wants those types asks here.
             */
             "larvae/definitions" => {
-                self.refresh_worms();
+                self.refresh_worms(out)?;
 
                 let reply = extend::definitions_reply(&self.worms);
 
@@ -558,7 +680,16 @@ fn capabilities(analysis: bool) -> Value {
         // Both read the type graph, so neither means anything without it.
         caps["signatureHelpProvider"] = json!({ "triggerCharacters": ["(", ","] });
         caps["inlayHintProvider"] = json!(true);
-        caps["completionProvider"] = json!({ "triggerCharacters": [".", ":", "\""] });
+        /*
+        Every string mark opens a require spec, and a project that writes
+        `'` got no list at all: the editor asks on a trigger character, and
+        only `"` was one. `/` re-asks after a directory, so a path completes
+        a segment at a time without the author retyping anything, and `@`
+        opens the aliases.
+        */
+        caps["completionProvider"] = json!({
+            "triggerCharacters": [".", ":", "\"", "'", "`", "/", "@"],
+        });
     }
 
     json!({
