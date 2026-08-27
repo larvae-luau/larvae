@@ -886,7 +886,7 @@ impl crate::lsp::analysis::Analysis for MockAnalysis {
         Vec::new()
     }
 
-    fn hover(&mut self, _: &std::path::Path, _: u32, _: bool) -> Option<String> {
+    fn hover(&mut self, _: &std::path::Path, _: u32, _: bool, _: bool) -> Option<String> {
         None
     }
 
@@ -1004,7 +1004,7 @@ impl crate::lsp::analysis::Analysis for Issue1503Analysis {
         Vec::new()
     }
 
-    fn hover(&mut self, _: &std::path::Path, _: u32, _: bool) -> Option<String> {
+    fn hover(&mut self, _: &std::path::Path, _: u32, _: bool, _: bool) -> Option<String> {
         None
     }
 

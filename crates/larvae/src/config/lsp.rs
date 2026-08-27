@@ -257,6 +257,15 @@ pub struct HoverConfig {
     */
     #[serde(default)]
     pub show_table_kinds: bool,
+
+    /*
+    Say how long a string literal is.
+
+    On, as luau-lsp has it. A reader hovering `"Loaded"` knows it is a
+    string; the length is the thing they cannot count at a glance.
+    */
+    #[serde(default = "on")]
+    pub include_string_length: bool,
 }
 
 impl Default for HoverConfig {

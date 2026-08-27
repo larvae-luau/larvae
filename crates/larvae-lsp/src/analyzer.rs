@@ -125,6 +125,7 @@ unsafe extern "C" {
         path: *const c_char,
         byte: u32,
         show_table_kinds: i32,
+        include_string_length: i32,
     ) -> *const c_char;
     fn larvae_completions(
         s: *mut c_void,
@@ -170,9 +171,22 @@ extern "C" fn resolve_cb(
     its module; every other spec falls through to default resolution, which
     is the hook-or-fallthrough shape the plan draws.
     */
-    if let Some(hooks) = &state.hooks
-        && let Some(path) = (hooks.resolve)(Path::new(from.as_ref()), &spec)
-    {
+    let hooked = state
+        .hooks
+        .as_ref()
+        .and_then(|h| (h.resolve)(Path::new(from.as_ref()), &spec));
+
+    if std::env::var_os("LARVAE_RESOLVE_DEBUG").is_some() {
+        eprintln!(
+            "hook {:?} from {:?} -> {:?} (hooks installed: {})",
+            spec,
+            from.as_ref(),
+            hooked,
+            state.hooks.is_some()
+        );
+    }
+
+    if let Some(path) = hooked {
         state.resolve_buffer = CString::new(path).ok();
 
         return state
@@ -181,7 +195,18 @@ extern "C" fn resolve_cb(
             .map_or(std::ptr::null(), |c| c.as_ptr());
     }
 
-    match resolve_spec(Path::new(from.as_ref()), &spec, state.mounts.as_ref()) {
+    let answer = resolve_spec(Path::new(from.as_ref()), &spec, state.mounts.as_ref());
+
+    if std::env::var_os("LARVAE_RESOLVE_DEBUG").is_some() {
+        eprintln!(
+            "resolve {:?} from {:?} -> {:?}",
+            spec,
+            from.as_ref(),
+            answer
+        );
+    }
+
+    match answer {
         Some(path) => {
             let text = path.to_string_lossy().into_owned();
 
@@ -556,9 +581,24 @@ impl Analysis for LuauAnalysis {
             .collect()
     }
 
-    fn hover(&mut self, path: &Path, at: u32, show_table_kinds: bool) -> Option<String> {
+    fn hover(
+        &mut self,
+        path: &Path,
+        at: u32,
+        show_table_kinds: bool,
+        include_string_length: bool,
+    ) -> Option<String> {
         let key = self.key(path);
-        let text = unsafe { larvae_hover(self.session, key, at, show_table_kinds as i32) };
+
+        let text = unsafe {
+            larvae_hover(
+                self.session,
+                key,
+                at,
+                show_table_kinds as i32,
+                include_string_length as i32,
+            )
+        };
 
         if text.is_null() {
             return None;
@@ -791,7 +831,7 @@ mod hover_cards {
         let path = std::path::Path::new("/t.luau");
 
         analysis.open(path, src);
-        analysis.hover(path, at, false)
+        analysis.hover(path, at, false, false)
     }
 
     /// The offset of the first byte of `word` in `src`.
@@ -855,8 +895,12 @@ mod hover_cards {
 
         analysis.open(path, src);
 
-        let hidden = analysis.hover(path, at(src, "map"), false).expect("a card");
-        let shown = analysis.hover(path, at(src, "map"), true).expect("a card");
+        let hidden = analysis
+            .hover(path, at(src, "map"), false, false)
+            .expect("a card");
+        let shown = analysis
+            .hover(path, at(src, "map"), true, false)
+            .expect("a card");
 
         assert!(!hidden.contains("{|"), "the marker leaked: {hidden}");
         assert!(
@@ -871,5 +915,89 @@ mod hover_cards {
         let src = "--!strict\nlocal x = 1\n\n\nreturn x\n";
 
         assert_eq!(card(src, src.len() as u32 - 1), None);
+    }
+}
+
+#[cfg(test)]
+mod luau_lsp_parity {
+    use super::*;
+    use larvae::lsp::analysis::Analysis;
+
+    /*
+    These pin the shapes a differential run against luau-lsp found.
+
+    The run hovered the same positions in a real Roblox project through both
+    servers and compared the rendered types. Each case below is a shape that
+    differed, and the expectation is what luau-lsp answers.
+    */
+    fn card(src: &str, word: &str) -> String {
+        let mut analysis = LuauAnalysis::new();
+        let path = std::path::Path::new("/t.luau");
+
+        analysis.open(path, src);
+        analysis
+            .hover(path, src.find(word).expect("the word") as u32, false, true)
+            .unwrap_or_default()
+    }
+
+    /// A service comes back as itself, not as the `Instance` the signature says.
+    #[test]
+    fn get_service_answers_with_the_service() {
+        let src = "local Players = game:GetService(\"Players\")\nreturn Players\n";
+
+        assert_eq!(card(src, "Players"), "local Players: Players");
+    }
+
+    /// A method is named for the type it hangs off, with no `self` in the list.
+    #[test]
+    fn a_method_reads_as_the_type_that_has_it() {
+        let src = "local p = Instance.new(\"Part\")\np:Destroy()\n";
+
+        assert_eq!(card(src, "Destroy"), "function Instance:Destroy(): nil");
+    }
+
+    /// A field keeps the path the author wrote, so the card says where it came from.
+    #[test]
+    fn a_field_keeps_its_path() {
+        let src = "local x = math.cos(1)\nreturn x\n";
+
+        assert_eq!(card(src, "cos"), "function math.cos(n: number): number");
+    }
+
+    /// A type in a return pack resolves, which needed the visitor to enter the pack.
+    #[test]
+    fn a_return_type_resolves() {
+        let src = "--!strict\nlocal function g(a: number): (number, string)\n\treturn a, \"x\"\nend\nreturn g\n";
+        let at = src.rfind("string").expect("the return type") as u32;
+
+        let mut analysis = LuauAnalysis::new();
+        let path = std::path::Path::new("/t.luau");
+
+        analysis.open(path, src);
+
+        assert_eq!(
+            analysis.hover(path, at, false, true).as_deref(),
+            Some("type string = string")
+        );
+    }
+
+    /// A string literal says how long it is, which is the part a reader cannot count.
+    #[test]
+    fn a_string_literal_says_its_length() {
+        let src = "local s = \"Loaded\"\nreturn s\n";
+
+        assert_eq!(card(src, "\"Loaded\""), "string (6 bytes)");
+    }
+
+    /// A global says it is a type, so a table of constructors is not read as a value.
+    #[test]
+    fn a_global_reads_as_a_type() {
+        let src = "local c = Color3\nreturn c\n";
+
+        assert!(
+            card(src, "Color3").starts_with("type Color3 ="),
+            "{}",
+            card(src, "Color3")
+        );
     }
 }

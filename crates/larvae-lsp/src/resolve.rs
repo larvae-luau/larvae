@@ -283,3 +283,26 @@ mod game_requires {
         );
     }
 }
+
+#[cfg(test)]
+mod huskfall {
+    use super::*;
+    use std::path::Path;
+
+    /// A plain relative require in a real project has to resolve.
+    #[test]
+    fn a_relative_require_in_a_package_resolves() {
+        let from = Path::new(
+            "/mnt/new_volume/Programming/Luau/Roblox/Huskfall/packages/roblox/.ember/ffrostfall_fluid/src/anim/lerp.luau",
+        );
+
+        if !from.is_file() {
+            return; // the project is not on this machine
+        }
+
+        assert!(
+            resolve_spec(from, "../reactive/graph", None).is_some(),
+            "the resolver did not find ../reactive/graph"
+        );
+    }
+}

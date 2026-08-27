@@ -19,7 +19,10 @@ session is used from one thread, which the Rust side guarantees.
 #include "Luau/ConfigResolver.h"
 #include "Luau/BuiltinDefinitions.h"
 #include "Luau/Frontend.h"
+#include "Luau/ConstraintSolver.h"
+#include "Luau/TypeInfer.h"
 #include "Luau/ToString.h"
+#include "Luau/TypeChecker2.h"
 #include "Luau/TypeAttach.h"
 
 #include "Luau/Common.h"
@@ -285,6 +288,93 @@ void larvae_set_resolver(LarvaeSession* s, void* userdata, larvae_resolve_fn res
 }
 
 /*
+`game:GetService("Players")` answers with `Players`, not with `Instance`.
+
+The declaration says the method takes a string and gives an `Instance`,
+because that is all a declaration can say. So every service a project binds
+read as `Instance`, and a reader lost the whole type of the thing they had
+just fetched.
+
+Luau lets a function carry a magic handler that reads the call rather than
+the signature. This one takes the string the author wrote, looks it up in
+the type namespace, and answers with that type. luau-lsp attaches the same
+thing to the same method for the same reason.
+
+A name that is not a type is left alone, and the declared `Instance` stands.
+Reporting it as an error belongs to the checker, not to a hover: a project
+that fetches a service this build has no type for still deserves to run.
+*/
+struct MagicServiceLookup final : Luau::MagicFunction
+{
+    static std::optional<Luau::TypeId> named(Luau::Scope* scope, const Luau::AstExprCall& call)
+    {
+        if (call.args.size < 1)
+            return std::nullopt;
+
+        auto text = call.args.data[0]->as<Luau::AstExprConstantString>();
+        if (!text || !scope)
+            return std::nullopt;
+
+        std::string name(text->value.data, text->value.size);
+        std::optional<Luau::TypeFun> found = scope->lookupType(name);
+
+        // A generic type is not a service, and substituting one needs arguments.
+        if (!found || !found->typeParams.empty() || !found->typePackParams.empty())
+            return std::nullopt;
+
+        return Luau::follow(found->type);
+    }
+
+    std::optional<Luau::WithPredicate<Luau::TypePackId>> handleOldSolver(
+        Luau::TypeChecker& typeChecker,
+        const Luau::ScopePtr&,
+        const Luau::AstExprCall& call,
+        Luau::WithPredicate<Luau::TypePackId>) override
+    {
+        std::optional<Luau::TypeId> service = named(typeChecker.globalScope.get(), call);
+        if (!service)
+            return std::nullopt;
+
+        Luau::TypeArena& arena = *typeChecker.currentModule->internalTypes;
+
+        return Luau::WithPredicate<Luau::TypePackId>{arena.addTypePack({*service})};
+    }
+
+    bool infer(const Luau::MagicFunctionCallContext& context) override
+    {
+        std::optional<Luau::TypeId> service = named(context.solver->rootScope.get(), *context.callSite);
+        if (!service)
+            return false;
+
+        Luau::TypePackId pack = context.solver->arena->addTypePack({*service});
+        asMutable(context.result)->ty.emplace<Luau::BoundTypePack>(pack);
+
+        return true;
+    }
+};
+
+/// Put the handler on `ServiceProvider.GetService` of one global table.
+static void attachServiceLookup(Luau::GlobalTypes& globals)
+{
+    std::optional<Luau::TypeFun> provider = globals.globalScope->lookupType("ServiceProvider");
+    if (!provider)
+        return;
+
+    auto* ctv = Luau::getMutable<Luau::ExternType>(provider->type);
+    if (!ctv)
+        return;
+
+    auto method = ctv->props.find("GetService");
+    if (method == ctv->props.end() || !method->second.readTy)
+        return;
+
+    if (!Luau::get<Luau::FunctionType>(*method->second.readTy))
+        return;
+
+    Luau::attachMagicFunction(*method->second.readTy, std::make_shared<MagicServiceLookup>());
+}
+
+/*
 Load one declaration file into the global scope.
 
 The globals are frozen after the built in load, so they are thawed for this
@@ -305,6 +395,14 @@ int larvae_set_definitions(LarvaeSession* s, const char* name, const char* sourc
 
     Luau::LoadDefinitionFileResult forAutocomplete = s->frontend.loadDefinitionFile(
         s->frontend.globalsForAutocomplete, s->frontend.globalsForAutocomplete.globalScope, source, name, false, true);
+
+    /*
+    Both tables get the handler, and the autocomplete one matters most: a
+    hover reads that table, so a handler only on the other one would leave
+    the card saying `Instance` while a completion knew better.
+    */
+    attachServiceLookup(s->frontend.globals);
+    attachServiceLookup(s->frontend.globalsForAutocomplete);
 
     Luau::freeze(s->frontend.globals.globalTypes);
     Luau::freeze(s->frontend.globalsForAutocomplete.globalTypes);
@@ -403,6 +501,103 @@ size_t larvae_check(LarvaeSession* s, const char* path, LarvaeDiag* out, size_t 
 }
 
 /*
+Check one module the way a hover has to see it.
+
+Luau's plain check runs in the mode the file asks for, and most Luau asks
+for none, so an unannotated `local` is `any` and stays `any`. The
+autocomplete checker runs strict whatever the file says, which is what makes
+a require of a module that writes `local graph` come back as the table it
+holds rather than as `any`. Luau says so on the option itself: strict mode,
+in order to get more precise type information.
+
+luau-lsp does the same thing for the same reason, and calls it `checkStrict`.
+Measured on a real project: `local graph = require("../reactive/graph")` read
+as `any` under the plain check and as the module's full table under this one.
+
+The type graph is retained, because everything a hover reads lives in it. A
+module checked once without it keeps an empty arena, so the module is marked
+dirty first or the second check gives the same empty answer back.
+*/
+static Luau::ModulePtr strictCheck(LarvaeSession* s, const char* path)
+{
+    Luau::ModulePtr had = s->frontend.moduleResolverForAutocomplete.getModule(path);
+
+    if (had && had->internalTypes->types.empty())
+        s->frontend.markDirty(path);
+
+    Luau::FrontendOptions options;
+    options.retainFullTypeGraphs = true;
+    options.forAutocomplete = true;
+    options.runLintChecks = false;
+
+    try
+    {
+        s->frontend.check(path, options);
+    }
+    catch (const std::exception&)
+    {
+        return nullptr;
+    }
+
+    return s->frontend.moduleResolverForAutocomplete.getModule(path);
+}
+
+/*
+The innermost type reference that holds a position.
+
+The ancestry walk is the obvious way to find one and it does not reach every
+type: a return type inside `(number, string)` sits in a pack the walk does
+not enter, so hovering it showed the whole function instead. A visitor
+reaches every type node the file has, and the smallest match is the one the
+cursor is on.
+*/
+struct TypeAtPosition final : Luau::AstVisitor
+{
+    Luau::Position position;
+    Luau::AstTypeReference* found = nullptr;
+
+    explicit TypeAtPosition(Luau::Position position)
+        : position(position)
+    {
+    }
+
+    bool visit(Luau::AstType* node) override
+    {
+        auto ref = node->as<Luau::AstTypeReference>();
+
+        if (ref && ref->location.containsClosed(position))
+        {
+            // Smallest wins, so a generic argument beats the type that holds it.
+            if (!found || found->location.encloses(ref->location))
+                found = ref;
+        }
+
+        return true;
+    }
+
+    /*
+    A return type sits in a pack, and the base visitor does not enter one.
+    That is why a return annotation showed the whole function: the walk
+    reached the pack and stopped at its door.
+    */
+    bool visit(Luau::AstTypePack*) override
+    {
+        return true;
+    }
+
+    // Types hide inside expressions and statements, so every node is walked.
+    bool visit(Luau::AstStat*) override
+    {
+        return true;
+    }
+
+    bool visit(Luau::AstExpr*) override
+    {
+        return true;
+    }
+};
+
+/*
 The hover card, in the shape a reader expects to see.
 
 Three things decide whether a hover is useful, and the first cut of this got
@@ -425,22 +620,14 @@ and what a reader is looking for.
 The options match luau-lsp's, because the two servers should not disagree
 about how one type reads.
 */
-const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int show_table_kinds)
+const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int show_table_kinds,
+                         int include_string_length)
 {
     auto it = s->open.find(path);
     if (it == s->open.end())
         return nullptr;
 
-    try
-    {
-        s->frontend.check(path);
-    }
-    catch (const std::exception&)
-    {
-        return nullptr;
-    }
-
-    Luau::ModulePtr module = s->frontend.moduleResolver.getModule(path);
+    Luau::ModulePtr module = strictCheck(s, path);
     const Luau::SourceModule* source = s->frontend.getSourceModule(path);
     if (!module || !source)
         return nullptr;
@@ -472,9 +659,21 @@ const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int 
 
     if (scope && !ancestry.empty())
     {
-        Luau::AstNode* node = ancestry.back();
+        /*
+        The innermost type reference the position sits in, and not only the
+        last node.
 
-        if (auto ref = node->as<Luau::AstTypeReference>())
+        A `number` inside a parameter list has the function above it in the
+        walk, and taking the last node alone found the function. So hovering
+        a type annotation showed the signature of whatever held it, which is
+        never what the cursor is on.
+        */
+        TypeAtPosition finder(position);
+        source->root->visit(&finder);
+
+        Luau::AstTypeReference* ref = finder.found;
+
+        if (ref)
         {
             std::optional<Luau::TypeFun> fun = ref->prefix
                 ? scope->lookupImportedType(ref->prefix->value, ref->name.value)
@@ -520,6 +719,30 @@ const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int 
     if (!type)
         type = Luau::findTypeAtPosition(*module, *source, position);
 
+    /*
+    A field or a method reached through a dot.
+
+    `findTypeAtPosition` answers for the expression that starts at the
+    position, and the name in `a.b` starts after the dot, so `b` answered
+    with nothing. The type of the whole index expression is what a reader
+    hovering `b` is asking about, and the module recorded it.
+    */
+    if (!type)
+    {
+        for (auto up = ancestry.rbegin(); up != ancestry.rend(); ++up)
+        {
+            auto index = (*up)->as<Luau::AstExprIndexName>();
+
+            if (!index || !index->location.containsClosed(position))
+                continue;
+
+            if (auto found = module->astTypes.find(index))
+                type = *found;
+
+            break;
+        }
+    }
+
     if (!type)
         return nullptr;
 
@@ -557,7 +780,87 @@ const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int 
             else if (auto localExpr = expr->as<Luau::AstExprLocal>())
                 name = localExpr->local->name.value;
             else if (auto index = expr->as<Luau::AstExprIndexName>())
-                name = index->index.value;
+            {
+                /*
+                The whole path, so a card reads `math.cos` and not `cos`.
+
+                A reader hovering a name in `math.cos` wants to know where it
+                came from, and the bare name says nothing they did not
+                already see. The separator is the one the author wrote, so a
+                method keeps its colon.
+                */
+                std::string path(index->index.value);
+
+                /*
+                A method is named for the type it hangs off and not for the
+                variable that holds one. `p:Destroy()` reads as
+                `Instance:Destroy()`, because the card is about the method
+                and every `Instance` has it. A field keeps the path the
+                author wrote, so `math.cos` stays `math.cos`.
+                */
+                if (index->op == ':')
+                {
+                    name = path;
+
+                    goto named;
+                }
+
+                for (Luau::AstExpr* walk = index->expr; walk;)
+                {
+                    if (auto step = walk->as<Luau::AstExprIndexName>())
+                    {
+                        path = std::string(step->index.value) + std::string(1, index->op) + path;
+                        walk = step->expr;
+
+                        continue;
+                    }
+
+                    if (auto global = walk->as<Luau::AstExprGlobal>())
+                        path = std::string(global->name.value) + std::string(1, index->op) + path;
+                    else if (auto local = walk->as<Luau::AstExprLocal>())
+                        path = std::string(local->local->name.value) + std::string(1, index->op) + path;
+
+                    break;
+                }
+
+                name = path;
+            }
+        }
+
+    named:
+
+        /*
+        A method reads as `Instance:Destroy()`, not `Destroy(self: Instance)`.
+
+        The receiver is the first argument in the type and the author never
+        wrote it, so showing it puts a parameter in the card that does not
+        exist in the source. Luau hides it on request, and the name carries
+        the type it hangs off instead, which is how luau-lsp writes one and
+        how the Roblox documentation writes one.
+        */
+        if (ftv->hasSelf)
+        {
+            opts.hideFunctionSelfArgument = true;
+
+            auto [args, tail] = Luau::flatten(ftv->argTypes);
+            (void)tail;
+
+            if (!args.empty())
+            {
+                Luau::ToStringOptions bare;
+                bare.exhaustive = false;
+
+                std::string base = Luau::toString(Luau::follow(args[0]), bare);
+
+                // A base that renders as a whole table is noise, not a name.
+                if (!base.empty() && base.find('{') == std::string::npos
+                    && base.find('(') == std::string::npos
+                    && name.find(':') == std::string::npos
+                    && name.find('.') == std::string::npos)
+                {
+                    name = base + ":" + name;
+                }
+            }
         }
 
         /*
@@ -572,6 +875,60 @@ const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int 
     }
 
     std::string text = Luau::toString(followed, opts);
+
+    /*
+    A string literal says how long it is.
+
+    A reader hovering `"Loaded"` already knows it is a string. The length is
+    the thing they cannot count at a glance, and it is what luau-lsp shows.
+    The character count comes too when it differs from the byte count, which
+    is the case that matters: a name with an accent in it.
+    */
+    if (include_string_length)
+    {
+        if (Luau::AstExpr* expr = found.getExpr())
+        {
+            if (auto literal = expr->as<Luau::AstExprConstantString>())
+            {
+                const size_t bytes = literal->value.size;
+                size_t characters = 0;
+
+                for (size_t i = 0; i < bytes; ++i)
+                {
+                    // A continuation byte is part of the character before it.
+                    if ((static_cast<unsigned char>(literal->value.data[i]) & 0xC0) != 0x80)
+                        characters++;
+                }
+
+                s->hoverStorage = "string (" + std::to_string(bytes) + " bytes";
+
+                if (characters != bytes)
+                    s->hoverStorage += ", " + std::to_string(characters) + " characters";
+
+                s->hoverStorage += ")";
+
+                return s->hoverStorage.c_str();
+            }
+        }
+    }
+
+    /*
+    A global says it is a type and what it stands for.
+
+    `Color3` is a table of constructors, and a card that opened with `{
+    fromHSV: ...` read as though the reader were hovering a value they had
+    made. luau-lsp writes `type Color3 = ...`, which says where the name
+    came from.
+    */
+    if (Luau::AstExpr* expr = found.getExpr())
+    {
+        if (auto global = expr->as<Luau::AstExprGlobal>())
+        {
+            s->hoverStorage = "type " + std::string(global->name.value) + " = " + text;
+
+            return s->hoverStorage.c_str();
+        }
+    }
 
     // A type name says it is a type, and what it stands for.
     if (!aliasName.empty())

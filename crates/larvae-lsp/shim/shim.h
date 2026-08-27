@@ -70,7 +70,8 @@ size_t larvae_check(LarvaeSession* s, const char* path, LarvaeDiag* out, size_t 
    `show_table_kinds` keeps the `{| |}` and `{- -}` markers that say whether a
    table is sealed. They are noise to most readers, so the default hides them
    and the setting brings them back. */
-const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int show_table_kinds);
+const char* larvae_hover(LarvaeSession* s, const char* path, uint32_t byte, int show_table_kinds,
+                         int include_string_length);
 
 typedef struct {
     const char* label;

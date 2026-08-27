@@ -202,7 +202,13 @@ pub trait Analysis: Send {
     They matter to somebody writing a type and to nobody reading one, so the
     caller passes what the project asked for.
     */
-    fn hover(&mut self, path: &Path, at: u32, show_table_kinds: bool) -> Option<String>;
+    fn hover(
+        &mut self,
+        path: &Path,
+        at: u32,
+        show_table_kinds: bool,
+        include_string_length: bool,
+    ) -> Option<String>;
 
     /// Completions at a byte offset
     fn completions(&mut self, path: &Path, at: u32) -> Vec<AnalysisCompletion>;

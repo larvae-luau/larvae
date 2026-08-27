@@ -154,6 +154,10 @@ impl Server {
             self.lsp.hover.show_table_kinds = on;
         }
 
+        if let Some(on) = settings["hover"]["includeStringLength"].as_bool() {
+            self.lsp.hover.include_string_length = on;
+        }
+
         let hints = &settings["inlayHints"];
 
         if let Some(on) = hints["variableTypes"].as_bool() {
