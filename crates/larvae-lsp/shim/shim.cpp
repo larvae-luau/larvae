@@ -3443,6 +3443,23 @@ const char* larvae_documentation_symbol(LarvaeSession* s, const char* path, uint
         if (!etv)
             return nullptr;
 
+        /*
+        A sourcemap node extends its class and has no page of its own, so
+        the walk climbs to the first ancestor with a real name. The class
+        is what the reader is looking at: `ReplicatedStorage` typed by the
+        tree still reads the service's page.
+        */
+        while (etv && etv->name.rfind("_larvae_", 0) == 0)
+        {
+            const Luau::ExternType* parent =
+                etv->parent ? Luau::get<Luau::ExternType>(Luau::follow(*etv->parent)) : nullptr;
+
+            etv = parent;
+        }
+
+        if (!etv)
+            return nullptr;
+
         s->documentationStorage = "@roblox/globaltype/" + etv->name;
 
         return s->documentationStorage.c_str();
