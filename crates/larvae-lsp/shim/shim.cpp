@@ -564,9 +564,43 @@ struct MagicNamedType : Luau::MagicFunction
     }
 };
 
-/// `game:GetService("Players")`, which answers with the service.
+/*
+`game:GetService("Players")`, which answers with the service.
+
+The sourcemap speaks first. The tree declares `game` with one property
+per service, and that property's type carries the children of the
+project, so `GetService("ReplicatedStorage").Shared` resolves to the
+folder the sourcemap holds. A service the tree does not list falls back
+to its class, which is the answer the platform alone can give.
+*/
 struct MagicServiceLookup final : MagicNamedType
 {
+    std::optional<Luau::TypeId> named(Luau::Scope* scope, const Luau::AstExprCall& call) const override
+    {
+        if (scope && call.args.size >= 1)
+        {
+            if (auto text = call.args.data[0]->as<Luau::AstExprConstantString>())
+            {
+                std::string name(text->value.data, text->value.size);
+
+                if (std::optional<Luau::Binding> game = scope->linearSearchForBinding("game", true))
+                {
+                    const auto* root = Luau::get<Luau::ExternType>(Luau::follow(game->typeId));
+
+                    if (root)
+                    {
+                        auto prop = root->props.find(name);
+
+                        if (prop != root->props.end() && prop->second.readTy
+                            && Luau::get<Luau::ExternType>(Luau::follow(*prop->second.readTy)))
+                            return Luau::follow(*prop->second.readTy);
+                    }
+                }
+            }
+        }
+
+        return MagicNamedType::named(scope, call);
+    }
 };
 
 /*

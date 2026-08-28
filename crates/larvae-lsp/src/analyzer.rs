@@ -1964,6 +1964,60 @@ mod type_completions {
                 .collect::<Vec<_>>()
         );
     }
+
+    /*
+    GetService answers with the sourcemap's service, children and all.
+
+    The tree types `game` with one property per service, and the property
+    carries the project's children. The class alone knows none of them, so
+    a service fetched by name used to answer `Folder` questions with
+    `any`: `GetService("ReplicatedStorage").Shared` resolved nothing while
+    `game.ReplicatedStorage.Shared` resolved fine, and no reader can tell
+    the two idioms apart.
+    */
+    #[test]
+    fn get_service_answers_with_the_sourcemap_tree() {
+        let _luau = super::luau_globals::shared();
+
+        let mut analysis = LuauAnalysis::new();
+
+        assert!(analysis.definitions("@larvae-defs", LARVAE_TYPES));
+        assert!(analysis.definitions(
+            "@sourcemap",
+            "declare extern type _larvae_sourcemap_7_0 extends DataModel with
+             \tReplicatedStorage: _larvae_sourcemap_7_1
+end
+             declare extern type _larvae_sourcemap_7_1 extends ReplicatedStorage with
+             \tShared: Folder
+end
+             declare game: _larvae_sourcemap_7_0
+",
+        ));
+
+        let src = "--!strict
+local rs = game:GetService(\"ReplicatedStorage\")
+                   local shared = rs.Shared
+return shared
+";
+        let path = std::path::Path::new("/t.luau");
+
+        analysis.open(path, src);
+
+        let errors: Vec<String> = analysis
+            .check(path)
+            .into_iter()
+            .map(|d| d.message)
+            .collect();
+
+        assert_eq!(errors, Vec::<String>::new());
+
+        let at = src.find("local shared").expect("the binding") as u32 + 8;
+        let card = analysis
+            .hover(path, at, false, false)
+            .expect("a hover answers");
+
+        assert!(card.contains("Folder"), "{card}");
+    }
 }
 
 #[cfg(test)]
