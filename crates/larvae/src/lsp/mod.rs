@@ -37,6 +37,7 @@ mod features;
 pub mod instances;
 pub mod navigate;
 mod parity;
+mod renames;
 pub mod requires;
 mod state;
 pub mod structure;
@@ -116,7 +117,7 @@ each message, and that left a project whose editor went quiet with a
 session it had built and never picked up.
 */
 pub(super) enum Event {
-    Message(rpc::Message),
+    Message(Box<rpc::Message>),
     Analysis(Box<dyn analysis::Analysis>),
     /// The editor closed the stream, or the read failed
     Eof,
@@ -145,7 +146,7 @@ pub fn run_pending(analysis: Option<Pending>) -> Result<()> {
         loop {
             match rpc::read(&mut input) {
                 Ok(Some(message)) => {
-                    if reader.send(Event::Message(message)).is_err() {
+                    if reader.send(Event::Message(Box::new(message))).is_err() {
                         return;
                     }
                 }
@@ -255,6 +256,8 @@ struct Server {
     builder: Option<Builder>,
     /// Where the builder thread posts the session it finished
     events: Option<std::sync::mpsc::Sender<Event>>,
+    /// The rename dialog in flight, holding the edit its answer applies
+    pending_rename: Option<renames::Pending>,
     /*
     The instance tree of the rojo sourcemap, as types.
 
@@ -307,6 +310,7 @@ impl Default for Server {
             analysis_pending: false,
             builder: None,
             events: None,
+            pending_rename: None,
             instances: instances::Instances::default(),
             sourcemap_stamp: None,
             sourcemap_config: String::new(),
@@ -326,6 +330,18 @@ impl Server {
         only happens when the file changed.
         */
         self.refresh_instances();
+
+        /*
+        A response has no method. The one conversation the server starts
+        is the rename dialog, and its answer routes by the id it carries.
+        */
+        if message.method.is_empty() {
+            if let Some(id) = &message.id {
+                self.on_reply(id, &message.result, out)?;
+            }
+
+            return Ok(true);
+        }
 
         match message.method.as_str() {
             "initialize" => {
@@ -489,6 +505,10 @@ impl Server {
                 let result = self.workspace_symbols(&message.params);
 
                 self.reply(message, out, result)?;
+            }
+
+            "workspace/didRenameFiles" => {
+                self.on_did_rename(&message.params, out)?;
             }
 
             "textDocument/signatureHelp" => {
@@ -692,6 +712,14 @@ fn capabilities(analysis: bool) -> Value {
         "selectionRangeProvider": true,
         "documentLinkProvider": { "resolveProvider": false },
         "colorProvider": true,
+        /*
+        The rename notice, so a moved file can carry its requires along.
+        The editor tells the server after the move, the server asks the
+        user with one dialog, and the edit applies on the answer.
+        */
+        "workspace": {
+            "fileOperations": renames::capabilities(),
+        },
     });
 
     /*

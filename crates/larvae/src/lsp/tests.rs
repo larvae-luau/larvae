@@ -193,6 +193,116 @@ fn a_syntax_error_is_the_only_diagnostic_and_is_an_error() {
 }
 
 /*
+A rename asks one question, and the yes applies the edit.
+
+The editor reports the move after it happened, so nothing on disk can
+resolve the old spec any more. The server still finds the require, asks
+with a dialog, and the answer routes back by the id the question carried.
+*/
+#[test]
+fn a_rename_asks_and_the_answer_rewrites_the_requires() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::create_dir_all(dir.path().join("src")).expect("makes it");
+    std::fs::write(
+        dir.path().join("src/main.luau"),
+        "local u = require('./tools')\nreturn u\n",
+    )
+    .expect("writes");
+    std::fs::write(dir.path().join("src/tools.luau"), "return {}\n").expect("writes");
+
+    let mut server = Server {
+        root: Some(dir.path().to_path_buf()),
+        ..Server::default()
+    };
+    let mut out = Vec::new();
+
+    server
+        .handle(
+            &message(
+                "workspace/didRenameFiles",
+                None,
+                json!({ "files": [{
+                    "oldUri": format!("file://{}/src/util.luau", dir.path().display()),
+                    "newUri": format!("file://{}/src/tools.luau", dir.path().display()),
+                }] }),
+            ),
+            &mut out,
+        )
+        .unwrap();
+
+    // wait: the spec says ./tools, and util was renamed TO tools, so the
+    // old spelling on disk is ./util; the fixture writes the PRE state.
+    let asked = String::from_utf8(out).unwrap();
+
+    assert!(
+        asked.is_empty(),
+        "the spec already says the new name: {asked}"
+    );
+
+    std::fs::write(
+        dir.path().join("src/main.luau"),
+        "local u = require('./util')\nreturn u\n",
+    )
+    .expect("writes");
+
+    let mut out = Vec::new();
+    server
+        .handle(
+            &message(
+                "workspace/didRenameFiles",
+                None,
+                json!({ "files": [{
+                    "oldUri": format!("file://{}/src/util.luau", dir.path().display()),
+                    "newUri": format!("file://{}/src/tools.luau", dir.path().display()),
+                }] }),
+            ),
+            &mut out,
+        )
+        .unwrap();
+
+    let asked = String::from_utf8(out).unwrap();
+
+    assert!(
+        asked.contains("window/showMessageRequest"),
+        "the server asks first: {asked}"
+    );
+    assert!(
+        asked.contains("update 1 require in 1 file?"),
+        "the question counts what it found: {asked}"
+    );
+
+    let id: Value = serde_json::from_str(
+        asked
+            .split("\"id\":")
+            .nth(1)
+            .and_then(|rest| rest.split(',').next())
+            .expect("the request has an id"),
+    )
+    .expect("a json id");
+
+    let mut out = Vec::new();
+    server
+        .handle(
+            &rpc::Message {
+                id: Some(id),
+                method: String::new(),
+                params: json!(null),
+                result: json!({ "title": "Update requires" }),
+            },
+            &mut out,
+        )
+        .unwrap();
+
+    let applied = String::from_utf8(out).unwrap();
+
+    assert!(
+        applied.contains("workspace/applyEdit"),
+        "the yes applies: {applied}"
+    );
+    assert!(applied.contains("./tools"), "the new spelling: {applied}");
+}
+
+/*
 A `$` line in a doc fence is the author talking to the checker.
 
 luau-lsp hides it from the rendered card, so a doc written for either
