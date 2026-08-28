@@ -514,49 +514,47 @@ impl Server {
         let context = json!({ "path": path, "text": src, "offset": at });
 
         /*
-        A claimed file gets both halves. The worm's respond hook answers
-        the markup, ex: the class behind a tag, and wins where it answers.
-        The Luau between the markup goes to the analyzer as the worm's
-        lowering, positions mapped by line, because a claimed front-end
-        preserves lines by contract.
+        A claimed file gets both halves, in the order the completions
+        take: the analyzer answers first, over the worm's lowering with
+        positions mapped by line, and the worm's respond hook sees that
+        answer and wins where it answers. The order is what lets a markup
+        card carry the type underneath it: a component hover shows the
+        signature of the function the element calls, and the worm can
+        only say so if the analyzer has already spoken.
         */
         if let Some(index) = self.worms.frontend_for(&path) {
-            let from_worm = self.worms.lsp_respond("hover", &context, Value::Null);
+            let base = match self.worms.compile(index, src) {
+                Ok(outcome) if outcome.ok => {
+                    let lowered = super::analysis::plain_view(&outcome.text);
+                    let mut analysis = self.analysis.borrow_mut();
 
-            if !from_worm.is_null() {
-                return from_worm;
-            }
+                    analysis
+                        .as_mut()
+                        .and_then(|a| {
+                            a.open(&path, &lowered);
 
-            let Ok(outcome) = self.worms.compile(index, src) else {
-                return Value::Null;
-            };
-
-            if !outcome.ok {
-                return Value::Null;
-            }
-
-            let lowered = super::analysis::plain_view(&outcome.text);
-            let mut analysis = self.analysis.borrow_mut();
-
-            let Some(text) = analysis.as_mut().and_then(|a| {
-                a.open(&path, &lowered);
-
-                a.hover(
-                    &path,
-                    lowered_offset(src, &lowered, at),
-                    self.lsp.hover.show_table_kinds,
-                    self.lsp.hover.include_string_length,
-                )
-            }) else {
-                return Value::Null;
-            };
-
-            return json!({
-                "contents": {
-                    "kind": "markdown",
-                    "value": card(&self.instances.readable(&text), None),
+                            a.hover(
+                                &path,
+                                lowered_offset(src, &lowered, at),
+                                self.lsp.hover.show_table_kinds,
+                                self.lsp.hover.include_string_length,
+                            )
+                        })
+                        .map(|text| {
+                            json!({
+                                "contents": {
+                                    "kind": "markdown",
+                                    "value": card(&self.instances.readable(&text), None),
+                                }
+                            })
+                        })
+                        .unwrap_or(Value::Null)
                 }
-            });
+
+                _ => Value::Null,
+            };
+
+            return self.worms.lsp_respond("hover", &context, base);
         }
 
         let view = super::analysis::plain_view(src);
