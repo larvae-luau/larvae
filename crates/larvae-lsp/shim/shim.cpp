@@ -2931,8 +2931,19 @@ int larvae_signature_help(
         s->parameterStorage.push_back(label);
     }
 
+    /*
+    Only a variadic the author wrote shows. The new solver gives every
+    function an implicit tail pack, and printing that drew `, ...` on
+    every signature: a one-argument function read as taking more, and a
+    no-argument function read as `(...)`.
+    */
     if (tail)
-        s->parameterStorage.push_back("...");
+    {
+        const auto* variadic = Luau::get<Luau::VariadicTypePack>(Luau::follow(*tail));
+
+        if (variadic && !variadic->hidden)
+            s->parameterStorage.push_back("...: " + Luau::toString(variadic->ty, opts));
+    }
 
     std::string label = "(";
     for (size_t i = 0; i < s->parameterStorage.size(); ++i)

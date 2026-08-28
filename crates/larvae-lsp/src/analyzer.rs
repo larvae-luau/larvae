@@ -1484,6 +1484,38 @@ mod hover_cards {
         );
     }
 
+    /*
+    The popup shows the parameters the author wrote, and nothing more.
+
+    The new solver gives every function an implicit tail pack, and the
+    signature grew `, ...` from it: a one-argument function read as
+    taking more, and a no-argument function read as `(...)`. A variadic
+    the author wrote still shows, with its type.
+    */
+    #[test]
+    fn a_signature_ends_where_the_parameters_end() {
+        let _luau = super::luau_globals::shared();
+
+        let mut analysis = LuauAnalysis::new();
+        let path = std::path::Path::new("/t.luau");
+        let src = "--!strict\nlocal function one(a: number): number\n\treturn a\nend\nlocal function none(): ()\nend\nlocal function spread(...: string): ()\nend\nlocal x = one(\nlocal y = none(\nlocal z = spread(\n";
+
+        analysis.open(path, src);
+
+        let mut label = |needle: &str| {
+            let at = src.find(needle).expect("the call site") as u32 + needle.len() as u32;
+
+            analysis
+                .signature(path, at)
+                .map(|s| s.label)
+                .unwrap_or_default()
+        };
+
+        assert_eq!(label("local x = one("), "(a: number): number");
+        assert_eq!(label("local y = none("), "(): ()");
+        assert_eq!(label("local z = spread("), "(...: string): ()");
+    }
+
     /// A function shows the signature the author wrote, not its type.
     #[test]
     fn a_function_shows_its_signature() {
