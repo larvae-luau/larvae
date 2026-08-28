@@ -130,6 +130,56 @@ fn fmt_options_match_the_config() {
     );
 }
 
+/*
+The schema lists every key of the lsp subtables that grow the most.
+
+They grew three settings in a week and the schema learned none of them,
+so larvae.toml had no intellisense for what the server already read.
+The serialized default config is the truth the schema has to match.
+*/
+#[test]
+fn lsp_subtable_keys_match_the_config() {
+    let schema = schema();
+
+    let real = |value: toml::Value| -> BTreeSet<String> {
+        value
+            .as_table()
+            .expect("a table")
+            .keys()
+            .cloned()
+            .collect()
+    };
+
+    for (def, config) in [
+        (
+            "lsp_inlay_hints",
+            toml::Value::try_from(larvae::config::lsp::InlayHintsConfig::default()).unwrap(),
+        ),
+        (
+            "lsp_completion",
+            toml::Value::try_from(larvae::config::lsp::CompletionConfig::default()).unwrap(),
+        ),
+        (
+            "lsp_imports",
+            toml::Value::try_from(larvae::config::lsp::ImportsConfig::default()).unwrap(),
+        ),
+    ] {
+        let documented = keys(&schema["$defs"][def]["properties"]);
+        let fields = real(config);
+
+        assert_eq!(
+            fields.difference(&documented).collect::<Vec<_>>(),
+            Vec::<&String>::new(),
+            "these [{def}] keys are missing from the schema"
+        );
+        assert_eq!(
+            documented.difference(&fields).collect::<Vec<_>>(),
+            Vec::<&String>::new(),
+            "the schema offers [{def}] keys that do not exist"
+        );
+    }
+}
+
 /// The schema lists every [bundle] key, and no other key.
 #[test]
 fn bundle_keys_match_the_config() {

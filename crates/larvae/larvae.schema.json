@@ -2381,6 +2381,17 @@
           "default": true,
           "description": "Offer a service or module the file has not imported yet, with the binding inserted above the first statement."
         },
+        "require_style": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "always_relative",
+            "always_absolute",
+            "nearest_absolute"
+          ],
+          "default": "auto",
+          "description": "How a module auto-import spells its require. `auto` writes an alias where one covers the module and the relative form elsewhere; `always_absolute` writes the `@game` path; `nearest_absolute` takes the shortest stable anchor: an alias, then `@game`, then relative. Default: auto."
+        },
         "use_const": {
           "type": "boolean",
           "enum": [
@@ -2405,6 +2416,15 @@
           ],
           "default": true,
           "description": "Off answers every completion request with an empty list, so another server owns the list."
+        },
+        "hide_deprecated": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": false,
+          "description": "Drop deprecated entries from the completion list whole. Off, they stay listed with a strikethrough. Default: off."
         },
         "show_keywords": {
           "type": "boolean",
@@ -2442,6 +2462,31 @@
           ],
           "default": false,
           "description": "Draw the inferred type of a parameter the author left unannotated."
+        },
+        "function_return_types": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": false,
+          "description": "Show the inferred return type of a function, after its parameter list. Default: off."
+        },
+        "parameter_names": {
+          "type": "string",
+          "enum": [
+            "none",
+            "literals",
+            "all"
+          ],
+          "default": "none",
+          "description": "Show the name of each parameter before the argument that fills it: on no call, on literal arguments, or on every one. An argument spelled like its parameter stays bare. Default: none."
+        },
+        "update_delay": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 700,
+          "description": "How long the hints hold still while the author types, in milliseconds. A request mid-edit answers with the last settled hints, and one refresh follows the pause. 0 recomputes on every request. Default: 700."
         },
         "type_hint_max_length": {
           "type": "integer",
