@@ -168,6 +168,25 @@ Notable changes land here. Format follows
   case folded, and a platform call a handler refines names nothing, so no
   `className:` in front of every `game:GetService` line. The variables of
   a `for ... in` hint their types before the `in` keyword
+- Module auto-imports. Every module of the workspace offers itself by
+  its stem, and accepting one writes the require above the first real
+  statement, in the quote `[fmt] quote_style` keeps and the style
+  `[lsp.completion.imports] require_style` picks: `auto` writes an alias
+  where one covers the module, `always_absolute` writes the `@game`
+  path, and `nearest_absolute` takes the shortest stable anchor. The
+  service auto-import reads the same quote setting
+- A renamed file offers to carry its requires along. The server matches
+  every spec that named the old place, rewrites each in the form it was
+  written in, and asks with one dialog before anything applies
+- `.config.luau` speaks its own shape: the keys typecheck, complete,
+  and error at the file's own bytes, with every lint name spelled out
+- The data worm narrows a matched string to its literal:
+  `[worms.data.config] force_string_singletons` maps a file glob to
+  value globs, and `"kind"` lowers as `"kind" :: "kind"`
+- A doc fence hides a line that starts with `$`, on hover and on
+  completion docs alike; prose keeps its dollars
+- `ScopedInstanceIdentity` carries `ResolveInstance`, patched over the
+  dump's stub until upstream ships the real shape
 - `[bundle] module_ids = "opaque"` numbers the modules of a bundle instead
   of naming their paths. A path id reads well in an error and also ships
   the whole project layout: every file, package, and vendor directory in a
@@ -322,6 +341,19 @@ Notable changes land here. Format follows
 - A hint no longer repeats the binding's own name. Luau names a table
   type after the binding that holds it, so `const EmptyStats = { ... }`
   drew a hint of `: EmptyStats`, which says nothing
+- `game:GetService("X")` answers with the sourcemap's service, children
+  and all, so `ReplicatedStorage.Shared` resolves the way
+  `game.ReplicatedStorage.Shared` always did
+- Every binding of a multi-return call hints its type, and a hint
+  survives the old solver's empty scopes by reading the value expression
+- A claimed hover reaches the worm with the analyzer's answer, so a
+  component hover carries the signature the element calls and follows it
+  when it changes
+- A data file offers no Luau completions: a ctrl-space in a `.toml`
+  answered with the Luau global scope, which is noise in a file that
+  holds no code
+- With the analyzer landed, a syntax error is reported once, in Luau's
+  own words
 
 ## 0.6.0 - 2026-08-21
 
