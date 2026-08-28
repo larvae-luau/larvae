@@ -97,8 +97,339 @@ impl Instances {
 
         out.push_str(rest);
 
-        std::borrow::Cow::Owned(out)
+        std::borrow::Cow::Owned(collapse_repeats(&out))
     }
+}
+
+/*
+A union or intersection with one spelling repeated says the name once.
+
+Two different tree nodes are two different types to Luau, and a union of
+them is honest. Substituting the class names above can erase the
+difference: both spell `Folder`, and the reader gets `Folder | Folder`,
+which says nothing twice. The walk keeps a chain's first spelling of
+each member and drops the repeats, at every bracket depth, and it never
+looks inside a string, so a singleton like `"a | a"` keeps its bytes.
+*/
+fn collapse_repeats(text: &str) -> String {
+    // Edge whitespace survives the walk; the walk works on the middle.
+    let trimmed = text.trim_matches(' ');
+
+    if trimmed != text {
+        let lead = &text[..text.len() - text.trim_start_matches(' ').len()];
+        let trail = &text[text.trim_end_matches(' ').len()..];
+
+        return format!("{lead}{}{trail}", collapse_repeats(trimmed));
+    }
+
+    // A list first: each element or field collapses on its own.
+    if let Some(parts) = split_separated(text) {
+        return parts
+            .into_iter()
+            .map(|(sep, part)| format!("{sep}{}", collapse_repeats(part)))
+            .collect();
+    }
+
+    // A field or a binding: the name stays, the type after the colon walks.
+    if let Some(at) = top_level(text, ": ") {
+        return format!("{}: {}", &text[..at], collapse_repeats(&text[at + 2..]));
+    }
+
+    // A function type: the arguments and the returns walk separately.
+    if let Some(at) = top_level(text, " -> ") {
+        return format!(
+            "{} -> {}",
+            collapse_repeats(&text[..at]),
+            collapse_repeats(&text[at + 4..])
+        );
+    }
+
+    let pieces = split_top(text, &['|', '&']);
+
+    if pieces.len() > 1 {
+        let mut seen: Vec<String> = Vec::new();
+        let mut out = String::new();
+
+        for (op, piece) in &pieces {
+            let inner = collapse_repeats(piece.trim());
+
+            if seen.contains(&inner) {
+                continue;
+            }
+
+            if !out.is_empty() {
+                out.push(' ');
+                out.push(*op);
+                out.push(' ');
+            }
+
+            out.push_str(&inner);
+            seen.push(inner);
+        }
+
+        return out;
+    }
+
+    // No chain here: descend into each bracket group and rebuild around it.
+    let mut out = String::new();
+    let mut rest = text;
+
+    while let Some(open) = rest.find(['(', '{', '<']) {
+        let Some(close) = matching(rest, open) else {
+            out.push_str(rest);
+
+            return out;
+        };
+
+        out.push_str(&rest[..=open]);
+        out.push_str(&collapse_repeats(&rest[open + 1..close]));
+        out.push_str(&rest[close..=close]);
+        rest = &rest[close + 1..];
+    }
+
+    out.push_str(rest);
+
+    out
+}
+
+/*
+The list elements of `text`, split at the top-level commas, semicolons,
+and newlines, each keeping the separator text before it. `None` when the
+text is one element, so the caller does not recurse forever.
+*/
+fn split_separated(text: &str) -> Option<Vec<(&str, &str)>> {
+    let mut cuts = Vec::new();
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    let mut previous = ' ';
+
+    for (i, c) in text.char_indices() {
+        if let Some(q) = quote {
+            if c == q && previous != '\\' {
+                quote = None;
+            }
+
+            previous = c;
+
+            continue;
+        }
+
+        match c {
+            '"' | '\'' | '`' => quote = Some(c),
+
+            '(' | '{' | '<' => depth += 1,
+
+            ')' | '}' => depth -= 1,
+
+            '>' if previous != '-' => depth -= 1,
+
+            ',' | ';' | '\n' if depth == 0 => cuts.push(i),
+
+            _ => {}
+        }
+
+        previous = c;
+    }
+
+    if cuts.is_empty() {
+        return None;
+    }
+
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+
+    for cut in cuts {
+        parts.push((&text[start..=cut], ""));
+        start = cut + 1;
+    }
+
+    parts.push((&text[start..], ""));
+
+    // The separator travels with the piece before it; rebuild as (lead, body).
+    Some(
+        parts
+            .into_iter()
+            .map(|(chunk, _)| {
+                let body_end = chunk
+                    .char_indices()
+                    .rev()
+                    .find(|(_, c)| matches!(c, ',' | ';' | '\n'))
+                    .map(|(i, _)| i);
+
+                match body_end {
+                    Some(i) => (&chunk[..i], &chunk[i..]),
+
+                    None => (chunk, ""),
+                }
+            })
+            .map(|(body, sep)| ("", body, sep))
+            .map(|(_, body, sep)| (body, sep))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|(body, sep)| (sep, body))
+            .collect(),
+    )
+}
+
+/// Where `needle` first appears at the top depth, quotes skipped.
+fn top_level(text: &str, needle: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    let mut previous = ' ';
+
+    for (i, c) in text.char_indices() {
+        if let Some(q) = quote {
+            if c == q && previous != '\\' {
+                quote = None;
+            }
+
+            previous = c;
+
+            continue;
+        }
+
+        match c {
+            '"' | '\'' | '`' => quote = Some(c),
+
+            '(' | '{' | '<' => depth += 1,
+
+            ')' | '}' => depth -= 1,
+
+            '>' if previous != '-' => depth -= 1,
+
+            _ if depth == 0 && text[i..].starts_with(needle) => return Some(i),
+
+            _ => {}
+        }
+
+        previous = c;
+    }
+
+    None
+}
+
+/*
+The pieces of one operator chain at the top depth, with the operator
+before each piece. One kind of operator per chain: Luau parenthesizes a
+mixed one, so a mix at one depth is not a chain and stays whole.
+*/
+fn split_top<'a>(text: &'a str, ops: &[char]) -> Vec<(char, &'a str)> {
+    let mut pieces = Vec::new();
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    let mut start = 0usize;
+    let mut kind = ' ';
+
+    let bytes: Vec<char> = text.chars().collect();
+    let mut byte_at = 0usize;
+
+    for (i, c) in bytes.iter().enumerate() {
+        let here = byte_at;
+        byte_at += c.len_utf8();
+
+        match quote {
+            Some(q) => {
+                if *c == q && (i == 0 || bytes[i - 1] != '\\') {
+                    quote = None;
+                }
+
+                continue;
+            }
+
+            None => {}
+        }
+
+        match c {
+            '"' | '\'' | '`' => quote = Some(*c),
+
+            '(' | '{' => depth += 1,
+
+            ')' | '}' => depth -= 1,
+
+            // `<` opens a generic; the `>` of an arrow closes nothing.
+            '<' => depth += 1,
+
+            '>' if i > 0 && bytes[i - 1] != '-' => depth -= 1,
+
+            '|' | '&' if depth == 0 => {
+                if kind == ' ' {
+                    kind = *c;
+                } else if kind != *c {
+                    // A mixed chain at one depth is not one chain.
+                    return Vec::new();
+                }
+
+                pieces.push((*c, &text[start..here]));
+                start = here + 1;
+            }
+
+            _ => {}
+        }
+    }
+
+    let _ = ops;
+
+    if pieces.is_empty() {
+        return Vec::new();
+    }
+
+    pieces.push((kind, &text[start..]));
+
+    // The first piece carries no operator of its own; give it the chain's.
+    pieces[0].0 = kind;
+
+    pieces
+}
+
+/// The index of the bracket that closes the one at `open`, quotes skipped.
+fn matching(text: &str, open: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    let mut previous = ' ';
+
+    for (i, c) in text.char_indices().skip_while(|(i, _)| *i < open) {
+        match quote {
+            Some(q) => {
+                if c == q && previous != '\\' {
+                    quote = None;
+                }
+
+                previous = c;
+
+                continue;
+            }
+
+            None => {}
+        }
+
+        match c {
+            '"' | '\'' | '`' => quote = Some(c),
+
+            '(' | '{' | '<' => depth += 1,
+
+            ')' | '}' => {
+                depth -= 1;
+
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+
+            '>' if previous != '-' => {
+                depth -= 1;
+
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+
+            _ => {}
+        }
+
+        previous = c;
+    }
+
+    None
 }
 
 /// What every generated type name starts with, so the rewrite can find one
@@ -474,6 +805,48 @@ const TAKEN: &[&str] = &[
     "AddTag",
     "RemoveTag",
 ];
+
+#[cfg(test)]
+mod collapse {
+    use super::collapse_repeats;
+
+    #[test]
+    fn a_repeated_member_says_its_name_once() {
+        assert_eq!(collapse_repeats("Folder | Folder"), "Folder");
+        assert_eq!(collapse_repeats("A | B | A"), "A | B");
+        assert_eq!(collapse_repeats("R15 & R15"), "R15");
+        assert_eq!(collapse_repeats("Folder | Part"), "Folder | Part");
+    }
+
+    #[test]
+    fn the_walk_descends_into_brackets() {
+        assert_eq!(
+            collapse_repeats("{ x: Folder | Folder }"),
+            "{ x: Folder | Folder }".replace("Folder | Folder", "Folder")
+        );
+        assert_eq!(
+            collapse_repeats("(Folder | Folder) -> ()"),
+            "(Folder) -> ()"
+        );
+    }
+
+    #[test]
+    fn a_string_keeps_its_bytes() {
+        assert_eq!(collapse_repeats("\"a | a\""), "\"a | a\"");
+        assert_eq!(
+            collapse_repeats("kind: \"x | x\" | \"x | x\""),
+            "kind: \"x | x\""
+        );
+    }
+
+    #[test]
+    fn an_arrow_is_not_a_close_bracket() {
+        assert_eq!(
+            collapse_repeats("(a: number) -> Folder | Folder"),
+            "(a: number) -> Folder"
+        );
+    }
+}
 
 #[cfg(test)]
 mod tests {
