@@ -185,6 +185,12 @@ Notable changes land here. Format follows
   value globs, and `"kind"` lowers as `"kind" :: "kind"`
 - A doc fence hides a line that starts with `$`, on hover and on
   completion docs alike; prose keeps its dollars
+- `unused_import`, split from `unused_variable` and warn by default: a
+  require bound to a name nothing reads is a leftover, and the fix is
+  always to delete the line. A method named require stays a variable
+- `[lsp.inlay_hints] update_delay`: the hints hold still while the
+  author types, follow their lines as edits move them, and recompute
+  once after the pause
 - `ScopedInstanceIdentity` carries `ResolveInstance`, patched over the
   dump's stub until upstream ships the real shape
 - `[bundle] module_ids = "opaque"` numbers the modules of a bundle instead
@@ -354,6 +360,16 @@ Notable changes land here. Format follows
   holds no code
 - With the analyzer landed, a syntax error is reported once, in Luau's
   own words
+- A repeated member of a union or intersection says its name once: two
+  different tree nodes both spelling `Folder` drew `Folder | Folder`
+- A zero-argument function reads `()` across modules. The exported pack
+  collapses to a bare hidden variadic, and the vendored stringifier
+  printed it as `(...any)`; the build applies a display patch until
+  upstream hides the bare form the way it hides the wrapped one
+- A worm-lowered module checks strict, a claimed edit reflects before
+  the save, and a refused lowering says why at the require that names it
+- A signature popup ends where the parameters end, and a component's
+  attribute list holds props alone
 
 ## 0.6.0 - 2026-08-21
 
