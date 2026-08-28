@@ -416,13 +416,31 @@ impl Server {
     list is complete for the directory it names, so the editor filters it
     on the next keystroke rather than asking again.
     */
-    fn require_completions(&self, partial: &str, path: &std::path::Path) -> Value {
+    fn require_completions(
+        &self,
+        src: &str,
+        at: u32,
+        partial: &str,
+        path: &std::path::Path,
+    ) -> Value {
         let root = match &self.root {
             Some(root) => root.as_path(),
 
             // With no project root, a relative spec still reads against the file.
             None => path.parent().unwrap_or(path),
         };
+
+        /*
+        The edit replaces what the author typed of the current segment, and
+        the range says so. Without it the editor guesses a word range, and
+        its guess has no `@` and no `.` in it: typing `@sh` filtered
+        against a word of `sh`, no offer matched, and the list closed
+        instead of narrowing.
+        */
+        let segment = partial.rfind('/').map(|cut| cut + 1).unwrap_or(0);
+        let lines = rpc::Lines::new(src);
+        let replace_from = at - (partial.len() - segment) as u32;
+        let range = lines.range(src, (replace_from, at));
 
         let luaurc = super::decorate::luaurc_upward(path, root);
 
@@ -441,7 +459,8 @@ impl Server {
                 "label": c.label,
                 "kind": c.kind,
                 "detail": c.detail,
-                "insertText": c.insert,
+                "textEdit": { "range": range, "newText": c.insert },
+                "filterText": c.label,
                 // A directory sorts after the files that sit beside it.
                 "sortText": match c.kind {
                     19 => format!("1{}", c.label),
@@ -599,7 +618,7 @@ impl Server {
         written in a plain Luau file just as often.
         */
         if let Some(partial) = super::requires::spec_at(src, at) {
-            return self.require_completions(partial, &path);
+            return self.require_completions(src, at, partial, &path);
         }
 
         /*

@@ -1925,6 +1925,76 @@ fn analyzer_off_is_the_classic_server() {
     assert!(text.contains("unused"), "the lint pass went quiet: {text}");
 }
 
+/*
+A require offer replaces exactly what the author typed of the segment.
+
+Without the edit range the editor guesses a word, and its guess holds no
+`@`: typing `@sh` filtered a list of `@shared/` offers against `sh`,
+nothing matched, and the list closed instead of narrowing.
+*/
+#[test]
+fn a_require_offer_carries_the_range_it_replaces() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::create_dir_all(dir.path().join("src")).expect("makes it");
+    std::fs::write(
+        dir.path().join(".luaurc"),
+        r#"{ "aliases": { "shared": "src" } }"#,
+    )
+    .expect("writes");
+    std::fs::write(dir.path().join("src/util.luau"), "return {}\n").expect("writes");
+
+    let mut server = Server::default();
+    server.root = Some(dir.path().to_path_buf());
+    let mut out = Vec::new();
+
+    let uri = format!("file://{}/src/main.luau", dir.path().display());
+    let text = "local a = require('@sh')\nreturn a\n";
+
+    server
+        .handle(
+            &message(
+                "textDocument/didOpen",
+                None,
+                json!({ "textDocument": { "uri": uri, "text": text } }),
+            ),
+            &mut out,
+        )
+        .unwrap();
+
+    // The cursor sits after `@sh`, inside the quotes.
+    let reply = ask(
+        &mut server,
+        "textDocument/completion",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 0, "character": 22 },
+        }),
+    );
+
+    let items = reply["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no items in {reply}"));
+    let offer = items
+        .iter()
+        .find(|i| i["label"] == "@shared/")
+        .unwrap_or_else(|| panic!("no @shared/ offer in {reply}"));
+
+    // The edit replaces from the `@` to the cursor, so the filter sees it.
+    let range = &offer["textEdit"]["range"];
+
+    assert_eq!(
+        range["start"],
+        json!({ "line": 0, "character": 19 }),
+        "{offer}"
+    );
+    assert_eq!(
+        range["end"],
+        json!({ "line": 0, "character": 22 }),
+        "{offer}"
+    );
+    assert_eq!(offer["textEdit"]["newText"], "@shared/");
+}
+
 /// A later change replaces what the editor said before.
 #[test]
 fn a_configuration_change_replaces_the_blob() {
