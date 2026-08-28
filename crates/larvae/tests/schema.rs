@@ -145,6 +145,7 @@ fn bundle_keys_match_the_config() {
         entry: Some("src/main.luau".into()),
         output: Some("bundle.luau".into()),
         tree_shake: true,
+        module_ids: larvae::config::bundle::ModuleIds::Paths,
     };
 
     let real: BTreeSet<String> = toml::Value::try_from(full)

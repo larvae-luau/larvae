@@ -168,6 +168,14 @@ Notable changes land here. Format follows
   case folded, and a platform call a handler refines names nothing, so no
   `className:` in front of every `game:GetService` line. The variables of
   a `for ... in` hint their types before the `in` keyword
+- `[bundle] module_ids = "opaque"` numbers the modules of a bundle instead
+  of naming their paths. A path id reads well in an error and also ships
+  the whole project layout: every file, package, and vendor directory in a
+  table key anyone who reads the bundle can read, and obfuscation alone
+  hex-escapes those bytes without changing them. Numbers, not hashes, on
+  purpose: a hash of a path is deterministic, so a list of likely paths
+  recovers the names, and a number carries nothing to recover. The
+  numbering follows the sorted paths, so a rebundle emits the same bytes
 
 ### Fixed
 

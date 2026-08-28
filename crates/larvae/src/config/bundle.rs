@@ -29,6 +29,35 @@ pub struct BundleConfig {
     */
     #[serde(default = "yes")]
     pub tree_shake: bool,
+
+    /*
+    What the registry calls each module.
+
+    A path id reads well in the output and in the two runtime errors that
+    name a module. It also ships the whole project layout: every file,
+    every package, every vendor directory, spelled out in a table key that
+    anyone who can read the bundle can read. `opaque` numbers the modules
+    instead, so the output names no file and no package.
+
+    Numbers, not hashes, on purpose. A hash of a path is deterministic, so
+    a list of likely paths recovers the names by hashing candidates. A
+    number carries nothing to recover. The numbering follows the sorted
+    paths, so the same project bundles to the same bytes.
+    */
+    #[serde(default)]
+    pub module_ids: ModuleIds,
+}
+
+/// How `[bundle] module_ids` names the modules of the registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModuleIds {
+    /// The project relative path, readable where an error names a module
+    #[default]
+    Paths,
+
+    /// A number with no meaning, so the bundle names no file and no package
+    Opaque,
 }
 
 fn yes() -> bool {
@@ -58,6 +87,15 @@ mod tests {
         assert!(c.tree_shake);
         assert_eq!(c.entry, None);
         assert_eq!(c.output, None);
+        assert_eq!(c.module_ids, ModuleIds::Paths);
+    }
+
+    #[test]
+    fn module_ids_reads_both_spellings_and_refuses_a_third() {
+        let c: BundleConfig = toml::from_str("module_ids = \"opaque\"").unwrap();
+
+        assert_eq!(c.module_ids, ModuleIds::Opaque);
+        assert!(toml::from_str::<BundleConfig>("module_ids = \"hashed\"").is_err());
     }
 
     #[test]

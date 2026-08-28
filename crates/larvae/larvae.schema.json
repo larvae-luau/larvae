@@ -2176,6 +2176,15 @@
           ],
           "default": true,
           "description": "Drop the modules that the entry cannot reach. Turn off to keep modules that only a dynamic require reaches."
+        },
+        "module_ids": {
+          "type": "string",
+          "enum": [
+            "paths",
+            "opaque"
+          ],
+          "default": "paths",
+          "description": "What the registry calls each module. `paths` reads well in errors and ships the project layout. `opaque` numbers the modules, so the bundle names no file and no package."
         }
       }
     },
