@@ -75,11 +75,23 @@ impl Server {
         the author saved a new field and the require still typed the old
         table.
         */
-        if let Some((path, _)) = claimed
+        if let Some((path, index)) = claimed
             && self.lsp.analyzer
             && let Some(analysis) = self.analysis.borrow_mut().as_mut()
         {
             analysis.invalidate(path);
+
+            /*
+            The buffer's own lowering opens too, or the next check would
+            read the file from disk: an unsaved edit reflected nowhere,
+            and a saved one only because the disk happened to agree. The
+            same open is what the plain path below does with its view.
+            */
+            if let Ok(outcome) = self.worms.compile(index, src)
+                && outcome.ok
+            {
+                analysis.open(path, &super::analysis::plain_view(&outcome.text));
+            }
         }
 
         let mut diagnostics = match claimed {
