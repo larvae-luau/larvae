@@ -203,9 +203,10 @@ typedef struct {
     uint8_t kind;    /* 1 type, 2 parameter */
 } LarvaeHint;
 
-/* The hints for a whole module. Returns how many, writes at most cap. */
+/* The hints for a whole module. Returns how many, writes at most cap.
+   name_mode: 0 no parameter names, 1 on literal arguments, 2 on every one. */
 size_t larvae_inlay_hints(LarvaeSession* s, const char* path, LarvaeHint* out, size_t cap,
-                          int want_variables, int want_parameters);
+                          int want_variables, int want_parameters, int want_returns, int name_mode);
 
 /* One source text, compiled, in the listing an editor shows.
 

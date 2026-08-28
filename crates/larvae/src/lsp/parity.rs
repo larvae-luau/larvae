@@ -493,8 +493,9 @@ impl Server {
         are separate because a reader often wants one and not the other.
         */
         let cfg = &self.lsp.inlay_hints;
+        let names = cfg.parameter_names.mode();
 
-        if !cfg.variable_types && !cfg.parameter_types {
+        if !cfg.variable_types && !cfg.parameter_types && !cfg.function_return_types && names == 0 {
             return json!([]);
         }
 
@@ -502,7 +503,15 @@ impl Server {
             .analysis
             .borrow_mut()
             .as_mut()
-            .map(|a| a.hints(&path, cfg.variable_types, cfg.parameter_types))
+            .map(|a| {
+                a.hints(
+                    &path,
+                    cfg.variable_types,
+                    cfg.parameter_types,
+                    cfg.function_return_types,
+                    names,
+                )
+            })
             .unwrap_or_default();
 
         let from = params["range"]["start"]["line"].as_u64().map(|l| l as u32);
@@ -530,6 +539,9 @@ impl Server {
                     "label": label,
                     "kind": h.kind,
                     "paddingLeft": false,
+                    // A parameter name sits before its argument, and the
+                    // argument must not read as glued to it.
+                    "paddingRight": h.kind == 2,
                 })
             })
             .collect();

@@ -217,6 +217,8 @@ unsafe extern "C" {
         cap: usize,
         want_variables: i32,
         want_parameters: i32,
+        want_returns: i32,
+        name_mode: i32,
     ) -> usize;
     fn larvae_definition(
         s: *mut c_void,
@@ -695,6 +697,8 @@ impl Analysis for LuauAnalysis {
         path: &Path,
         variables: bool,
         parameters: bool,
+        returns: bool,
+        names: u8,
     ) -> Vec<larvae::lsp::analysis::AnalysisHint> {
         let key = self.key(path);
 
@@ -721,6 +725,8 @@ impl Analysis for LuauAnalysis {
                 CAP,
                 variables as i32,
                 parameters as i32,
+                returns as i32,
+                names as i32,
             )
         };
 
@@ -2225,6 +2231,119 @@ mod library_name {
                 std::env::consts::DLL_PREFIX,
                 std::env::consts::DLL_SUFFIX
             )
+        );
+    }
+}
+
+#[cfg(test)]
+mod inlay_hints {
+    use super::*;
+    use larvae::lsp::analysis::Analysis;
+
+    fn labels(src: &str) -> Vec<(u32, String)> {
+        wanted(src, true, true, false, 0)
+    }
+
+    fn wanted(src: &str, vars: bool, params: bool, returns: bool, names: u8) -> Vec<(u32, String)> {
+        let _luau = super::luau_globals::shared();
+        let mut analysis = LuauAnalysis::new();
+        let path = std::path::Path::new("/t.luau");
+
+        analysis.open(path, src);
+
+        analysis
+            .hints(path, vars, params, returns, names)
+            .into_iter()
+            .map(|h| (h.line, h.label))
+            .collect()
+    }
+
+    /// A loop variable hints its type before the `in`.
+    #[test]
+    fn a_for_in_variable_hints_its_type() {
+        let src = "--!strict\nlocal list = { 1, 2, 3 }\nfor index, value in list do\n\tprint(index, value)\nend\n";
+        let found = labels(src);
+
+        assert!(
+            found.iter().any(|(l, t)| *l == 2 && t == ": number"),
+            "{found:?}"
+        );
+        assert_eq!(
+            found.iter().filter(|(l, _)| *l == 2).count(),
+            2,
+            "both loop variables hint: {found:?}"
+        );
+    }
+
+    /*
+    A hint that repeats the variable's own name says nothing.
+
+    Luau names a table type after the binding that holds it, so
+    `local EmptyStats = { ... }` rendered a hint of `: EmptyStats`.
+    */
+    #[test]
+    fn a_table_named_after_its_binding_hints_nothing() {
+        let src = "--!strict\nlocal EmptyStats = { Strength = 0 }\nlocal count = 1 + 1\nreturn { EmptyStats, count }\n";
+        let found = labels(src);
+
+        assert!(
+            !found.iter().any(|(_, t)| t.contains("EmptyStats")),
+            "{found:?}"
+        );
+        assert!(
+            found.iter().any(|(l, t)| *l == 2 && t == ": number"),
+            "the real hint stays: {found:?}"
+        );
+    }
+
+    /// A discarded loop variable stays bare, the way luau-lsp leaves it.
+    #[test]
+    fn an_underscore_hints_nothing() {
+        let src =
+            "--!strict\nlocal list = { 1, 2, 3 }\nfor _, value in list do\n\tprint(value)\nend\n";
+        let found = labels(src);
+
+        assert_eq!(
+            found.iter().filter(|(l, _)| *l == 2).count(),
+            1,
+            "only `value` hints: {found:?}"
+        );
+    }
+
+    /// An unannotated function hints what it returns, after the parameters.
+    #[test]
+    fn a_function_hints_its_return_type() {
+        let src = "--!strict\nlocal function count()\n\treturn 1\nend\nreturn count\n";
+        let found = wanted(src, false, false, true, 0);
+
+        assert_eq!(found, vec![(1, ": number".to_owned())]);
+    }
+
+    /*
+    A call site names the parameters its arguments fill.
+
+    An argument already named like its parameter is skipped, the way
+    luau-lsp skips it, because the word is on the screen.
+    */
+    #[test]
+    fn a_call_names_the_arguments_that_need_it() {
+        let src = "--!strict\nlocal function add(id: number, kind: string): ()\nend\nlocal id = 1\nadd(id, \"x\")\nreturn add\n";
+        let all = wanted(src, false, false, false, 2);
+
+        assert_eq!(all, vec![(4, "kind:".to_owned())], "id names itself");
+
+        let literals = wanted(
+            "--!strict\nlocal function add(id: number, kind: string): ()\nend\nlocal n = 1\nadd(n, \"x\")\nreturn add\n",
+            false,
+            false,
+            false,
+            1,
+        );
+
+        assert_eq!(
+            literals,
+            vec![(4, "kind:".to_owned())],
+            "a variable is not a literal"
         );
     }
 }

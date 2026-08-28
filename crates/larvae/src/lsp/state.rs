@@ -192,6 +192,24 @@ impl Server {
             self.lsp.inlay_hints.type_hint_max_length = n as usize;
         }
 
+        if let Some(on) = editor(&["inlayHints", "functionReturnTypes"]).as_bool() {
+            self.lsp.inlay_hints.function_return_types = on;
+        }
+
+        if let Some(text) = editor(&["inlayHints", "parameterNames"]).as_str() {
+            use crate::config::lsp::ParameterNames;
+
+            match text.to_lowercase().as_str() {
+                "none" => self.lsp.inlay_hints.parameter_names = ParameterNames::None,
+
+                "literals" => self.lsp.inlay_hints.parameter_names = ParameterNames::Literals,
+
+                "all" => self.lsp.inlay_hints.parameter_names = ParameterNames::All,
+
+                _ => {}
+            }
+        }
+
         if let Some(text) = editor(&["sourcemap"]).as_str() {
             self.lsp.sourcemap = text.to_owned();
         }

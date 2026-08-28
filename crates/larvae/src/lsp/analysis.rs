@@ -328,12 +328,20 @@ pub trait Analysis: Send {
     /*
     The types the author left out, for the whole module.
 
-    Both kinds render as a type hint of the protocol, so only the collector
-    behind this can tell a local's hint from a parameter's. The two flags
-    carry the project's settings down to where the split exists.
+    Every kind renders as a hint of the protocol, so only the collector
+    behind this can tell the kinds apart, and the flags carry the project's
+    settings down to where the split exists. `names` is luau-lsp's own
+    scale: 0 none, 1 the literal arguments, 2 every argument.
     */
-    fn hints(&mut self, path: &Path, variables: bool, parameters: bool) -> Vec<AnalysisHint> {
-        let _ = (path, variables, parameters);
+    fn hints(
+        &mut self,
+        path: &Path,
+        variables: bool,
+        parameters: bool,
+        returns: bool,
+        names: u8,
+    ) -> Vec<AnalysisHint> {
+        let _ = (path, variables, parameters, returns, names);
 
         Vec::new()
     }

@@ -270,6 +270,41 @@ pub struct InlayHintsConfig {
     */
     #[serde(default = "fifty")]
     pub type_hint_max_length: usize,
+
+    /// The inferred return type of a function, after its parameter list
+    #[serde(default)]
+    pub function_return_types: bool,
+
+    /// The name of each parameter, before the argument that fills it
+    #[serde(default)]
+    pub parameter_names: ParameterNames,
+}
+
+/// Which call arguments get a parameter name drawn before them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParameterNames {
+    /// No call site gets one. luau-lsp's default, and so larvae's.
+    #[default]
+    None,
+
+    /// Only a literal argument, where the value says nothing about the name.
+    Literals,
+
+    All,
+}
+
+impl ParameterNames {
+    /// The scale the analyzer seam speaks: 0 none, 1 literals, 2 all.
+    pub fn mode(self) -> u8 {
+        match self {
+            Self::None => 0,
+
+            Self::Literals => 1,
+
+            Self::All => 2,
+        }
+    }
 }
 
 /*

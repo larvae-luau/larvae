@@ -2933,10 +2933,11 @@ int larvae_signature_help(
 /*
 Collect the inlay hints of one module.
 
-Two kinds, and both answer the same question: what is the type the author
-did not write. A local with no annotation gets its inferred type after the
-name. A function parameter and a return type get the same, which is what
-makes an unannotated codebase readable without changing it.
+Four kinds, the same four luau-lsp draws. A local with no annotation gets
+its inferred type after the name, and a loop variable gets the same before
+the `in`. A parameter gets its type, a function gets its return type after
+the parameter list, and a call site gets the name of each parameter before
+the argument it receives.
 
 The walk visits the AST rather than the type graph, because a hint belongs
 at a place in the text, and only the AST knows where the author wrote a
@@ -2956,6 +2957,10 @@ struct HintCollector : Luau::AstVisitor
     */
     bool wantVariables = true;
     bool wantParameters = true;
+    bool wantReturns = false;
+
+    /* 0 none, 1 the literal arguments, 2 every argument. luau-lsp's modes. */
+    int nameMode = 0;
 
     Luau::ToStringOptions opts;
 
@@ -3006,8 +3011,63 @@ struct HintCollector : Luau::AstVisitor
             if (!type)
                 continue;
 
+            // A discard is a discard. luau-lsp leaves `_` bare too.
+            if (strcmp(local->name.value, "_") == 0)
+                continue;
+
             if (auto text = render(*type))
+            {
+                /*
+                Luau names a table type after the binding that holds it,
+                so `const EmptyStats = { ... }` rendered as `EmptyStats`.
+                A hint that repeats the variable's own name says nothing.
+                */
+                if (*text == local->name.value)
+                    continue;
+
                 found.push_back({local->location.end, {": " + *text, 1}});
+            }
+        }
+
+        return true;
+    }
+
+    /*
+    The loop variables of a `for ... in`, before the `in`.
+
+    The types come from the scope, because a loop variable is a local and
+    not an expression, and the iterator decides what it holds.
+    */
+    bool visit(Luau::AstStatForIn* node) override
+    {
+        if (!wantVariables)
+            return true;
+
+        for (size_t i = 0; i < node->vars.size; ++i)
+        {
+            Luau::AstLocal* var = node->vars.data[i];
+
+            if (!var || var->annotation)
+                continue;
+
+            if (strcmp(var->name.value, "_") == 0)
+                continue;
+
+            Luau::ScopePtr scope = Luau::findScopeAtPosition(*module, var->location.begin);
+            if (!scope)
+                continue;
+
+            std::optional<Luau::TypeId> type = scope->lookup(var);
+            if (!type)
+                continue;
+
+            if (auto text = render(*type))
+            {
+                if (*text == var->name.value)
+                    continue;
+
+                found.push_back({var->location.end, {": " + *text, 1}});
+            }
         }
 
         return true;
@@ -3015,7 +3075,7 @@ struct HintCollector : Luau::AstVisitor
 
     bool visit(Luau::AstExprFunction* node) override
     {
-        if (!wantParameters)
+        if (!wantParameters && !wantReturns)
             return true;
 
         auto* self = module->astTypes.find(node);
@@ -3026,25 +3086,122 @@ struct HintCollector : Luau::AstVisitor
         if (!fn)
             return true;
 
-        auto [args, tail] = Luau::flatten(fn->argTypes);
-        (void)tail;
+        if (wantParameters)
+        {
+            auto [args, tail] = Luau::flatten(fn->argTypes);
+            (void)tail;
 
-        // A method takes the receiver first, and the author did not write it.
+            // A method takes the receiver first, and the author did not write it.
+            size_t offset = node->self ? 1 : 0;
+
+            for (size_t i = 0; i < node->args.size; ++i)
+            {
+                Luau::AstLocal* arg = node->args.data[i];
+
+                if (!arg || arg->annotation)
+                    continue;
+
+                size_t index = i + offset;
+                if (index >= args.size())
+                    break;
+
+                if (auto text = render(args[index]))
+                    found.push_back({arg->location.end, {": " + *text, 1}});
+            }
+        }
+
+        /*
+        The return type, after the parameter list. `()` still hints: a
+        reader asking what a call gives back is told plainly that it gives
+        nothing, which luau-lsp answers the same way.
+        */
+        if (wantReturns && !node->returnAnnotation && node->argLocation)
+        {
+            std::string text = Luau::toString(fn->retTypes, opts);
+
+            if (!text.empty() && text.find("*error-type*") == std::string::npos)
+                found.push_back({node->argLocation->end, {": " + text, 1}});
+        }
+
+        return true;
+    }
+
+    /*
+    The name of each parameter, before the argument that fills it.
+
+    An argument that is itself named like the parameter is skipped, the
+    way luau-lsp skips it: `add(entity, x)` against `add(entity: Entity)`
+    already reads as what it is, and a hint would say the word twice.
+    */
+    /// Case folded, for the name compare luau-lsp makes the same way.
+    static bool sameWord(const std::string& a, const char* b)
+    {
+        for (size_t i = 0; i < a.size(); ++i)
+        {
+            if (!b[i] || tolower((unsigned char)a[i]) != tolower((unsigned char)b[i]))
+                return false;
+        }
+
+        return b[a.size()] == '\0';
+    }
+
+    bool visit(Luau::AstExprCall* node) override
+    {
+        if (nameMode == 0)
+            return true;
+
+        const Luau::TypeId* callee = module->astTypes.find(node->func);
+        if (!callee)
+            return true;
+
+        const Luau::FunctionType* fn = Luau::get<Luau::FunctionType>(Luau::follow(*callee));
+        if (!fn)
+            return true;
+
+        /*
+        A platform call that a handler refines names nothing, and that is
+        what luau-lsp shows for the same calls: `game:GetService("Players")`
+        and `Instance.new("Part")` read whole as written, and a `className:`
+        in front of every one would be the loudest word on the screen.
+        A bare global still names its arguments; `require` through a string
+        is the one bare call where the argument is the whole sentence.
+        */
+        if (fn->magic && !node->func->is<Luau::AstExprGlobal>())
+            return true;
+
+        if (auto* global = node->func->as<Luau::AstExprGlobal>();
+            global && strcmp(global->name.value, "require") == 0 && node->args.size >= 1
+            && node->args.data[0]->is<Luau::AstExprConstantString>())
+            return true;
+
         size_t offset = node->self ? 1 : 0;
 
         for (size_t i = 0; i < node->args.size; ++i)
         {
-            Luau::AstLocal* arg = node->args.data[i];
-
-            if (!arg || arg->annotation)
-                continue;
-
+            Luau::AstExpr* arg = node->args.data[i];
             size_t index = i + offset;
-            if (index >= args.size())
+
+            if (!arg || index >= fn->argNames.size())
                 break;
 
-            if (auto text = render(args[index]))
-                found.push_back({arg->location.end, {": " + *text, 1}});
+            const std::optional<Luau::FunctionArgument>& name = fn->argNames[index];
+            if (!name || name->name.empty() || name->name == "self" || name->name == "_")
+                continue;
+
+            if (nameMode == 1 && !arg->is<Luau::AstExprConstantBool>() && !arg->is<Luau::AstExprConstantNumber>()
+                && !arg->is<Luau::AstExprConstantString>() && !arg->is<Luau::AstExprConstantNil>())
+                continue;
+
+            if (auto* local = arg->as<Luau::AstExprLocal>(); local && sameWord(name->name, local->local->name.value))
+                continue;
+
+            if (auto* global = arg->as<Luau::AstExprGlobal>(); global && sameWord(name->name, global->name.value))
+                continue;
+
+            if (auto* indexed = arg->as<Luau::AstExprIndexName>(); indexed && sameWord(name->name, indexed->index.value))
+                continue;
+
+            found.push_back({arg->location.begin, {name->name + ":", 2}});
         }
 
         return true;
@@ -3052,7 +3209,7 @@ struct HintCollector : Luau::AstVisitor
 };
 
 size_t larvae_inlay_hints(LarvaeSession* s, const char* path, LarvaeHint* out, size_t cap,
-                          int want_variables, int want_parameters)
+                          int want_variables, int want_parameters, int want_returns, int name_mode)
 {
     auto it = s->open.find(path);
     if (it == s->open.end())
@@ -3075,6 +3232,8 @@ size_t larvae_inlay_hints(LarvaeSession* s, const char* path, LarvaeHint* out, s
     HintCollector collector(s, module);
     collector.wantVariables = want_variables != 0;
     collector.wantParameters = want_parameters != 0;
+    collector.wantReturns = want_returns != 0;
+    collector.nameMode = name_mode;
     source->root->visit(&collector);
 
     s->hintStorage.clear();
