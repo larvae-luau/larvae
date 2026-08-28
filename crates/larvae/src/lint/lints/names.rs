@@ -29,6 +29,8 @@ lints! {
         "a local function that nothing calls";
     UnusedVariable => "unused_variable", Correctness, Warn,
         "a name declared and never read";
+    UnusedImport => "unused_import", Correctness, Warn,
+        "a module required and never used";
 }
 
 // --- unused_variable -------------------------------------------------------
@@ -143,11 +145,28 @@ impl UnusedVariable {
     }
 }
 
-/// Which half of the walk a caller wants.
+impl UnusedImport {
+    /*
+    A require bound to a name that nothing reads.
+
+    Its own lint, split from `unused_variable`, because the reader acts
+    differently on the two: an unused variable hides a possible bug in
+    the code around it, an unused import is a leftover from an edit and
+    the fix is always to delete the line. The split also lets a project
+    level them apart.
+    */
+    fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
+        unused(ctx, out, Wanted::Imports);
+    }
+}
+
+/// Which slice of the walk a caller wants.
 #[derive(PartialEq)]
 enum Wanted {
     /// `local function f() end`, which the Luau compiler calls FunctionUnused.
     Functions,
+    /// `local x = require(...)`, which is an import and not a variable.
+    Imports,
     /// Everything else a scope binds.
     Everything,
 }
@@ -172,8 +191,18 @@ fn unused(ctx: &LintCtx<'_>, out: &mut Vec<Finding>, wanted: Wanted) {
         }
 
         let is_function = binding.origin == Origin::LocalFunction;
+        let is_import =
+            binding.origin == Origin::Local && declares_require(ctx, binding.declared_in);
 
-        if is_function != (wanted == Wanted::Functions) {
+        let slice = match (is_function, is_import) {
+            (true, _) => Wanted::Functions,
+
+            (false, true) => Wanted::Imports,
+
+            (false, false) => Wanted::Everything,
+        };
+
+        if slice != wanted {
             continue;
         }
 
@@ -209,10 +238,12 @@ fn unused(ctx: &LintCtx<'_>, out: &mut Vec<Finding>, wanted: Wanted) {
         and an unused `local` LocalUnused. The split is the declaring
         form, so `local f = function() end` stays a variable here.
         */
-        let lint = match is_function {
-            true => "unused_function",
+        let lint = match (is_function, is_import) {
+            (true, _) => "unused_function",
 
-            false => "unused_variable",
+            (false, true) => "unused_import",
+
+            (false, false) => "unused_variable",
         };
 
         let span = TokSpan::new(
@@ -226,16 +257,23 @@ fn unused(ctx: &LintCtx<'_>, out: &mut Vec<Finding>, wanted: Wanted) {
         discards it, which is a possible bug and not only untidy code.
         */
         let (message, help) = if binding.writes.is_empty() {
-            let what = match is_function {
-                true => "is never called",
+            if is_import {
+                (
+                    format!("{} is required and never used", binding.name),
+                    "remove the import, or prefix the name with _ to keep it".to_string(),
+                )
+            } else {
+                let what = match is_function {
+                    true => "is never called",
 
-                false => "is never used",
-            };
+                    false => "is never used",
+                };
 
-            (
-                format!("{} {what}", binding.name),
-                "remove it, or prefix the name with _ to keep it".to_string(),
-            )
+                (
+                    format!("{} {what}", binding.name),
+                    "remove it, or prefix the name with _ to keep it".to_string(),
+                )
+            }
         } else {
             (
                 format!("{} is assigned but never read", binding.name),
@@ -245,6 +283,28 @@ fn unused(ctx: &LintCtx<'_>, out: &mut Vec<Finding>, wanted: Wanted) {
 
         out.push(Finding::new(lint, ctx.bytes(span), message).with_help(help));
     }
+}
+
+/*
+Whether the declaring statement calls `require`.
+
+A token test, not a tree walk: the resolution already ran and the span
+is small. The identifier has to stand alone, so `t.require(x)` is a
+method of something else and stays a variable.
+*/
+fn declares_require(ctx: &LintCtx<'_>, declared_in: TokSpan) -> bool {
+    let toks = ctx.toks;
+
+    (declared_in.start..declared_in.end.min(toks.len() as u32)).any(|i| {
+        let tok = &toks[i as usize];
+
+        tok.text(ctx.src) == "require"
+            && (i == declared_in.start || {
+                let before = toks[i as usize - 1].text(ctx.src);
+
+                before != "." && before != ":"
+            })
+    })
 }
 
 // --- shadowing -------------------------------------------------------------
