@@ -93,6 +93,10 @@ typedef struct {
 /* Type-check one module. Returns how many diagnostics, writes at most cap. */
 size_t larvae_check(LarvaeSession* s, const char* path, LarvaeDiag* out, size_t cap);
 
+/* The deprecated uses of one module, as hint diagnostics for the editor's
+   strikethrough. Luau's own linter finds them. */
+size_t larvae_deprecated(LarvaeSession* s, const char* path, LarvaeDiag* out, size_t cap);
+
 /* The type at a byte offset, rendered; null when nothing is there.
 
    `show_table_kinds` keeps the `{| |}` and `{- -}` markers that say whether a

@@ -982,6 +982,76 @@ size_t larvae_check(LarvaeSession* s, const char* path, LarvaeDiag* out, size_t 
 }
 
 /*
+The deprecated uses of one module, for the strikethrough in the editor.
+
+Luau's own linter finds them: DeprecatedApi knows the platform's marks
+and DeprecatedGlobal the language's, and both read the checked module,
+so a member found through a type is found here. Nothing else of the
+linter runs; larvae has its own lints and this asks one question.
+*/
+size_t larvae_deprecated(LarvaeSession* s, const char* path, LarvaeDiag* out, size_t cap)
+{
+    auto it = s->open.find(path);
+    if (it == s->open.end())
+        return 0;
+
+    try
+    {
+        s->frontend.check(path);
+    }
+    catch (const std::exception&)
+    {
+        return 0;
+    }
+
+    Luau::ModulePtr module = s->frontend.moduleResolver.getModule(path);
+    Luau::SourceModule* source = s->frontend.getSourceModule(path);
+    if (!module || !source || !source->root)
+        return 0;
+
+    Luau::LintOptions options;
+    options.enableWarning(Luau::LintWarning::Code_DeprecatedApi);
+    options.enableWarning(Luau::LintWarning::Code_DeprecatedGlobal);
+
+    std::vector<Luau::LintWarning> warnings;
+
+    try
+    {
+        warnings = Luau::lint(
+            source->root, *source->names, s->frontend.globals.globalScope, module.get(),
+            source->hotcomments, options);
+    }
+    catch (const std::exception&)
+    {
+        return 0;
+    }
+
+    LineIndex lines(it->second);
+
+    s->diagStorage.clear();
+    s->diagStorage.reserve(cap);
+    size_t n = 0;
+
+    for (const Luau::LintWarning& warning : warnings)
+    {
+        if (n >= cap)
+            break;
+
+        s->diagStorage.push_back(warning.text);
+
+        out[n].start = lines.byteOf(warning.location.begin, it->second);
+        out[n].end = lines.byteOf(warning.location.end, it->second);
+        out[n].code = 0;
+        // 4 is Hint: the mark is a strikethrough, not a squiggle.
+        out[n].severity = 4;
+        out[n].message = s->diagStorage.back().c_str();
+        ++n;
+    }
+
+    return n;
+}
+
+/*
 Check one module the way a hover has to see it.
 
 Luau's plain check runs in the mode the file asks for, and most Luau asks

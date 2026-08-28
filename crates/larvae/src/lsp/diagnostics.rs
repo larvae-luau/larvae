@@ -181,6 +181,53 @@ impl Server {
         }
 
         /*
+        The deprecated uses, struck through and quiet.
+
+        Severity 4 is Hint, which draws no squiggle and stays out of the
+        problems panel, and tag 2 is Deprecated, which is the
+        strikethrough. Luau's own linter finds the uses, so a member
+        found through a type is found here.
+        */
+        if claimed.is_none()
+            && self.lsp.analyzer
+            && let Some(analysis) = self.analysis.borrow_mut().as_mut()
+            && let Some(path) = path.as_deref()
+        {
+            let marks: Vec<Value> = analysis
+                .deprecated_uses(path)
+                .into_iter()
+                .map(|diag| {
+                    json!({
+                        "range": lines.range(src, (diag.span.0, diag.span.1)),
+                        "severity": diag.severity,
+                        "source": "Luau",
+                        "message": diag.message,
+                        "tags": [2],
+                    })
+                })
+                .collect();
+
+            /*
+            One deprecation, one voice. Larvae's own `deprecated` lint
+            carries a built-in list for the CLI, where no analyzer runs;
+            here the platform's marks are the precise ones, so a larvae
+            finding that overlaps one stands down. A name the project
+            deprecated itself gets no platform mark, and larvae still
+            speaks for it.
+            */
+            diagnostics.retain(|d| {
+                d["code"] != "deprecated"
+                    || !marks.iter().any(|m| {
+                        m["range"]["start"]["line"] == d["range"]["start"]["line"]
+                            && m["range"]["end"]["line"] == d["range"]["end"]["line"]
+                            && overlaps(&m["range"], &d["range"])
+                    })
+            });
+
+            diagnostics.extend(marks);
+        }
+
+        /*
         A worm that refused to lower a required module says why, here, at
         the require that names it. Without this the require answered
         `*error-type*` and nothing anywhere said the reason, while the
@@ -284,6 +331,13 @@ A finding of larvae and a finding of a worm arrive in the same shape, so both
 routes render here. The help goes into the message, because the editor has
 the room for it.
 */
+/// Whether two same-line protocol ranges share any characters.
+fn overlaps(a: &Value, b: &Value) -> bool {
+    let of = |v: &Value, side: &str| v[side]["character"].as_u64().unwrap_or(0);
+
+    of(a, "start") < of(b, "end") && of(b, "start") < of(a, "end")
+}
+
 fn diagnostic(src: &str, lines: &rpc::Lines, finding: Finding) -> Value {
     json!({
         "range": lines.range(src, finding.span),

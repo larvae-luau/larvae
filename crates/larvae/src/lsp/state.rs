@@ -196,6 +196,10 @@ impl Server {
             self.lsp.inlay_hints.function_return_types = on;
         }
 
+        if let Some(on) = editor(&["completion", "hideDeprecated"]).as_bool() {
+            self.lsp.completion.hide_deprecated = on;
+        }
+
         if let Some(n) = editor(&["inlayHints", "updateDelay"]).as_u64() {
             self.lsp.inlay_hints.update_delay = n;
         }

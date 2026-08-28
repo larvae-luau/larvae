@@ -15,6 +15,7 @@ at the edge.
 use std::path::Path;
 
 /// One diagnostic from the analyzer, byte addressed
+#[derive(Debug)]
 pub struct AnalysisDiag {
     pub span: (u32, u32),
     /// 1 is Error and 2 is Warning, the numbering of the protocol
@@ -384,6 +385,18 @@ pub trait Analysis: Send {
 
     /// Drop the cached state of one document and its dependents
     fn invalidate(&mut self, path: &Path);
+
+    /*
+    The deprecated uses of one module, as hint diagnostics.
+
+    The editor draws them as a strikethrough. An analyzer that cannot
+    say has nothing struck through, which is the honest default.
+    */
+    fn deprecated_uses(&mut self, path: &Path) -> Vec<AnalysisDiag> {
+        let _ = path;
+
+        Vec::new()
+    }
 }
 
 #[cfg(test)]

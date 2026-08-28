@@ -191,6 +191,15 @@ Notable changes land here. Format follows
 - `[lsp.inlay_hints] update_delay`: the hints hold still while the
   author types, follow their lines as edits move them, and recompute
   once after the pause
+- A key a dot cannot reach rewrites itself into brackets on accept:
+  `Jump Force` after `t.` writes `t["Jump Force"]`, in the quote
+  `[fmt] quote_style` keeps, and the dot the author typed goes with it
+- Deprecated uses draw a strikethrough in the file, from Luau's own
+  linter, as hints that raise no squiggle. The completion list already
+  struck them through; `[lsp.completion] hide_deprecated` drops them
+  from the list whole, and stays off by default. Where the platform
+  marks a use, larvae's own `deprecated` finding stands down, so a
+  name the project deprecated itself still gets larvae's message
 - `ScopedInstanceIdentity` carries `ResolveInstance`, patched over the
   dump's stub until upstream ships the real shape
 - `[bundle] module_ids = "opaque"` numbers the modules of a bundle instead
@@ -201,6 +210,13 @@ Notable changes land here. Format follows
   purpose: a hash of a path is deterministic, so a list of likely paths
   recovers the names, and a number carries nothing to recover. The
   numbering follows the sorted paths, so a rebundle emits the same bytes
+
+### Changed
+
+- Every child of the character rigs is optional: `["Left Arm"]` is
+  `Part?` now, the Humanoid and its Animator too. A part can be
+  destroyed, detached, or not yet streamed in, and a guaranteed type
+  hid the nil the runtime can hand back
 
 ### Fixed
 

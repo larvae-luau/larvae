@@ -403,6 +403,16 @@ pub struct CompletionConfig {
     #[serde(default = "on")]
     pub show_keywords: bool,
 
+    /*
+    Drop the deprecated entries from the list entirely.
+
+    Off by default: a deprecated member still exists, the strikethrough
+    already says what the platform thinks of it, and hiding it is a
+    stance a project takes on purpose.
+    */
+    #[serde(default)]
+    pub hide_deprecated: bool,
+
     #[serde(default)]
     pub imports: ImportsConfig,
 }
