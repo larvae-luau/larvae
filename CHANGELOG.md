@@ -160,6 +160,14 @@ Notable changes land here. Format follows
   the names inside a hole are pinned instead of renamed. With `[bundle]` set,
   the bundle output gets the same treatment, because a bundle prints through
   the generator like any file
+- The last two inlay hint kinds: `function_return_types` draws what an
+  unannotated function returns, after its parameter list, and
+  `parameter_names` draws the name of each parameter before the argument
+  that fills it, on literal arguments or on all of them. The skips are
+  luau-lsp's: an argument spelled like its parameter stays bare, compared
+  case folded, and a platform call a handler refines names nothing, so no
+  `className:` in front of every `game:GetService` line. The variables of
+  a `for ... in` hint their types before the `in` keyword
 
 ### Fixed
 
@@ -286,6 +294,26 @@ Notable changes land here. Format follows
   about a table inside the chain, and opens one member per line only where the
   line passes `column_width`. So the order is `column_width` first, then
   `type_operators`, then `table_types.width`
+- The new solver builds one globals table, not two. The second table
+  serves the old solver's autocomplete, and the new solver never reads
+  it, so the session loaded the platform types twice for nothing. The
+  first hover card lands at 2.4 seconds where it landed at 19
+- A require offer narrows as the author types. The offers carried no
+  edit range, so the editor guessed a word range with no `@` in it,
+  filtered `@shared/` against `sh`, and closed the list. Every offer
+  now carries the edit and the filter text that match what was typed
+- Editing a claimed data file updates the types that read it. The
+  analyzer kept the module it built from the old text, so a hover on a
+  require of the file answered the old shape until a restart. Publishing
+  a claimed file invalidates its module, and the next check rebuilds
+  every dependent
+- A flag override before the first snapshot poisoned the reset: the
+  snapshot was taken after the change and the reset put the change back.
+  In the tests, the first flag test decided the solver for every later
+  session in the binary. Every write path snapshots first now
+- A hint no longer repeats the binding's own name. Luau names a table
+  type after the binding that holds it, so `const EmptyStats = { ... }`
+  drew a hint of `: EmptyStats`, which says nothing
 
 ## 0.6.0 - 2026-08-21
 
