@@ -64,6 +64,21 @@ fn install() -> Result<ExitCode> {
     let bin_dir = paths::bin_dir()?;
     let target = paths::installed_exe()?;
 
+    /*
+    A debug install works, and says what it costs.
+
+    Installing a work-in-progress build is the development loop, so it is
+    not refused. The cost still deserves one line: the editor server runs
+    every keystroke, and the debug profile serves each one about twenty
+    times slower, which reads as larvae being broken when the line is
+    missing.
+    */
+    if cfg!(debug_assertions) {
+        eprintln!(
+            "note: installing a debug build; the editor server runs about twenty times slower than a release build"
+        );
+    }
+
     if let Some(tool) = paths::managing_tool(&me) {
         eprintln!(
             "note: {tool} already manages this binary, a copy in {} may shadow it on PATH",
@@ -134,6 +149,28 @@ fn install_server(me: &Path, bin_dir: &Path) {
         std::env::consts::DLL_PREFIX,
         std::env::consts::DLL_SUFFIX
     );
+
+    /*
+    A server without the analyzer never replaces one that has it.
+
+    The workspace builds larvae-lsp without the feature for its tests, so a
+    featureless binary sits beside larvae after any test run. Installing it
+    silently took hover and completion away from the editor, and nothing
+    said why. The analyzer build carries the shim's exported names; the
+    check reads for one of them.
+    */
+    let sibling = from.join(&server);
+
+    if sibling.is_file() && !file_mentions(&sibling, b"larvae_session_new") {
+        eprintln!(
+            "note: larvae-lsp beside this binary was built without the analyzer, so the installed server is kept"
+        );
+        eprintln!("      a test run builds that form; build the real one with:");
+        eprintln!("          cargo build -p larvae-lsp --features analyzer          (debug)");
+        eprintln!("          cargo build --release -p larvae-lsp --features analyzer (release)");
+
+        return;
+    }
 
     for name in [server.as_str(), library.as_str()] {
         let source = from.join(name);
@@ -397,6 +434,15 @@ Put the bin directory on PATH. On Windows, the command writes the registry.
 Unix shells differ too much for a safe profile edit without user consent, so
 the command prints the line instead.
 */
+/// True when the file holds the byte string, read in one pass
+fn file_mentions(path: &Path, needle: &[u8]) -> bool {
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+
+    bytes.windows(needle.len()).any(|w| w == needle)
+}
+
 fn add_to_path(bin_dir: &Path) {
     let on_path = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).any(|entry| entry == bin_dir))
