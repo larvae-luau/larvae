@@ -327,16 +327,12 @@ fn split_top<'a>(text: &'a str, ops: &[char]) -> Vec<(char, &'a str)> {
         let here = byte_at;
         byte_at += c.len_utf8();
 
-        match quote {
-            Some(q) => {
-                if *c == q && (i == 0 || bytes[i - 1] != '\\') {
-                    quote = None;
-                }
-
-                continue;
+        if let Some(q) = quote {
+            if *c == q && (i == 0 || bytes[i - 1] != '\\') {
+                quote = None;
             }
 
-            None => {}
+            continue;
         }
 
         match c {
@@ -388,18 +384,14 @@ fn matching(text: &str, open: usize) -> Option<usize> {
     let mut previous = ' ';
 
     for (i, c) in text.char_indices().skip_while(|(i, _)| *i < open) {
-        match quote {
-            Some(q) => {
-                if c == q && previous != '\\' {
-                    quote = None;
-                }
-
-                previous = c;
-
-                continue;
+        if let Some(q) = quote {
+            if c == q && previous != '\\' {
+                quote = None;
             }
 
-            None => {}
+            previous = c;
+
+            continue;
         }
 
         match c {

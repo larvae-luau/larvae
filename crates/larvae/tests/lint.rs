@@ -457,7 +457,10 @@ fn an_unused_require_is_an_unused_import() {
     assert!(fires("unused_import", "local x = require('./util')\n"));
     assert!(!fires("unused_variable", "local x = require('./util')\n"));
 
-    assert!(!fires("unused_import", "local x = require('./util')\nprint(x)\n"));
+    assert!(!fires(
+        "unused_import",
+        "local x = require('./util')\nprint(x)\n"
+    ));
 
     assert!(fires("unused_variable", "local x = t.require(1)\n"));
     assert!(!fires("unused_import", "local x = t.require(1)\n"));

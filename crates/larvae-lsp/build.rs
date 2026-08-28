@@ -98,7 +98,7 @@ fn build_analyzer() {
         .trim()
         .to_string();
 
-    patch_vendored(&luau);
+    patch_vendored(luau);
 
     let marker = out.join(format!("luau-{pin}.built"));
     let vendor_lib = out.join(platform.archive("luauvendor"));
@@ -473,21 +473,19 @@ fn patch_vendored(luau: &std::path::Path) {
         return;
     };
 
-    let replacement = format!(
-        "        if (isEmpty(ftv.argTypes))
-        {{
+    let replacement = "        if (isEmpty(ftv.argTypes))
+        {
             // if we've got an empty argument pack, we're done.
-        }}
+        }
         // larvae: a bare hidden tail is an empty argument list. See the
         // build script for why this line is applied rather than committed.
         else if (auto vtp = get<VariadicTypePack>(follow(ftv.argTypes));
                  vtp && vtp->hidden && FInt::DebugLuauVerboseTypeNames < 1)
-        {{
-        }}
-        else if (state.opts.functionTypeArguments)"
-    );
+        {
+        }
+        else if (state.opts.functionTypeArguments)";
 
-    let patched = text.replacen(anchor, &replacement, 1);
+    let patched = text.replacen(anchor, replacement, 1);
 
     if std::fs::write(&file, patched).is_err() {
         println!("cargo:warning=larvae: cannot write the ToString.cpp patch");
