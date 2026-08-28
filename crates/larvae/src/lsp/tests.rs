@@ -1575,6 +1575,123 @@ fn import_edit(server: &Server, src_prefix_line: u32, character: u32) -> (String
 }
 
 /*
+A module of the project offers itself, and accepting writes the require.
+
+The offer comes from the workspace walk, spelled in the configured style:
+relative by default here, an alias when one covers the module and the
+style asks for it. A `.server.` file is a script, not a module, and
+never offers.
+*/
+#[test]
+fn a_module_auto_import_writes_the_require() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::create_dir_all(dir.path().join("src/Widgets")).expect("makes it");
+    std::fs::write(dir.path().join("src/util.luau"), "return {}\n").expect("writes");
+    std::fs::write(dir.path().join("src/Widgets/init.luau"), "return {}\n").expect("writes");
+    std::fs::write(dir.path().join("src/boot.server.luau"), "return nil\n").expect("writes");
+
+    let mut server = issue_server("uti");
+    server.root = Some(dir.path().to_path_buf());
+    server.symbols = workspace::Index::build(dir.path(), &Default::default());
+    server.documents.insert(
+        format!("file://{}/src/main.luau", dir.path().display()),
+        "uti".into(),
+    );
+
+    let items = server.completions(&json!({
+        "textDocument": { "uri": format!("file://{}/src/main.luau", dir.path().display()) },
+        "position": { "line": 0, "character": 3 },
+    }));
+    let items = items.as_array().cloned().unwrap_or_default();
+
+    let offer = items
+        .iter()
+        .find(|i| i["label"] == "util")
+        .unwrap_or_else(|| panic!("util offers: {items:?}"));
+
+    assert!(
+        offer["additionalTextEdits"][0]["newText"]
+            .as_str()
+            .unwrap()
+            .contains("require(\"./util\")"),
+        "{offer}"
+    );
+
+    assert!(
+        !items.iter().any(|i| i["label"] == "boot"),
+        "a script offered itself: {items:?}"
+    );
+}
+
+/// The directory module offers by its directory name, addressed whole.
+#[test]
+fn an_init_module_offers_as_its_directory() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::create_dir_all(dir.path().join("src/Widgets")).expect("makes it");
+    std::fs::write(dir.path().join("src/Widgets/init.luau"), "return {}\n").expect("writes");
+
+    let mut server = issue_server("Wid");
+    server.root = Some(dir.path().to_path_buf());
+    server.symbols = workspace::Index::build(dir.path(), &Default::default());
+    server.documents.insert(
+        format!("file://{}/src/main.luau", dir.path().display()),
+        "Wid".into(),
+    );
+
+    let items = server.completions(&json!({
+        "textDocument": { "uri": format!("file://{}/src/main.luau", dir.path().display()) },
+        "position": { "line": 0, "character": 3 },
+    }));
+    let items = items.as_array().cloned().unwrap_or_default();
+
+    let offer = items
+        .iter()
+        .find(|i| i["label"] == "Widgets")
+        .unwrap_or_else(|| panic!("the directory offers: {items:?}"));
+
+    assert!(
+        offer["detail"]
+            .as_str()
+            .unwrap()
+            .contains("require(\"./Widgets\")"),
+        "{offer}"
+    );
+}
+
+/// An alias speaks for the module when the style lets it.
+#[test]
+fn the_alias_style_spells_the_import_under_its_alias() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::create_dir_all(dir.path().join("src/shared")).expect("makes it");
+    std::fs::write(dir.path().join("src/shared/util.luau"), "return {}\n").expect("writes");
+
+    let mut server = issue_server("uti");
+    server.root = Some(dir.path().to_path_buf());
+    server.symbols = workspace::Index::build(dir.path(), &Default::default());
+    server.aliases.insert("shared".into(), "src/shared".into());
+    server.documents.insert(
+        format!("file://{}/src/client/main.luau", dir.path().display()),
+        "uti".into(),
+    );
+
+    let items = server.completions(&json!({
+        "textDocument": { "uri": format!("file://{}/src/client/main.luau", dir.path().display()) },
+        "position": { "line": 0, "character": 3 },
+    }));
+    let items = items.as_array().cloned().unwrap_or_default();
+
+    let offer = items
+        .iter()
+        .find(|i| i["label"] == "util")
+        .unwrap_or_else(|| panic!("util offers: {items:?}"));
+
+    assert!(
+        offer["detail"].as_str().unwrap().contains("@shared/util"),
+        "auto style speaks the alias: {offer}"
+    );
+}
+
+/*
 The auto-import writes `const` unless the project says otherwise.
 
 This is a deliberate departure from luau-lsp, which defaults the setting off
@@ -1588,6 +1705,26 @@ fn an_auto_import_writes_const_by_default() {
 
     assert!(text.starts_with("const EncodingService ="), "{text}");
     assert!(detail.contains("const EncodingService"), "{detail}");
+}
+
+/*
+The import writes the quote the formatter would keep.
+
+`[fmt] quote_style = "auto-prefer-single"` and an accepted import with
+double quotes fought each other one save later.
+*/
+#[test]
+fn an_auto_import_follows_the_project_quote_style() {
+    let mut server = issue_server("Enc");
+    server.fmt.quote_style = crate::fmt::config::QuoteStyle::AutoPreferSingle;
+
+    let (detail, text) = import_edit(&server, 0, 3);
+
+    assert!(
+        text.contains("game:GetService('EncodingService')"),
+        "{text}"
+    );
+    assert!(detail.contains("('EncodingService')"), "{detail}");
 }
 
 /// A project that has not adopted `const` turns the setting off and gets `local`.

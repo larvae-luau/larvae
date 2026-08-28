@@ -423,6 +423,34 @@ pub struct ImportsConfig {
     */
     #[serde(default = "on")]
     pub use_const: bool,
+
+    /*
+    How an auto-imported require spells its path.
+
+    luau-lsp's ids, mapped onto string requires. Its `nearestAbsolute`
+    anchors an instance path on the nearest stable ancestor; the string
+    equivalent of that anchor is an alias when one covers the module and
+    the `@game` absolute when none does.
+    */
+    #[serde(default)]
+    pub require_style: RequireStyle,
+}
+
+/// How `[lsp.completion.imports] require_style` spells a require.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequireStyle {
+    /// An alias where one covers the module, the relative form elsewhere.
+    #[default]
+    Auto,
+
+    AlwaysRelative,
+
+    /// The `@game` absolute; the relative form where no mount covers it.
+    AlwaysAbsolute,
+
+    /// The shortest stable anchor: an alias, then `@game`, then relative.
+    NearestAbsolute,
 }
 
 impl Default for ImportsConfig {

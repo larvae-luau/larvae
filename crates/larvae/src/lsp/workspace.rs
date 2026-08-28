@@ -64,6 +64,8 @@ const SCATTERED: u8 = 2;
 #[derive(Debug, Clone, Default)]
 pub struct Index {
     entries: Vec<Entry>,
+    /// Every file the walk covered, for the module auto-imports
+    files: Vec<std::path::PathBuf>,
 }
 
 impl Index {
@@ -83,7 +85,8 @@ impl Index {
     no cache, so the caller decides when to build again.
     */
     pub fn build(root: &Path, excludes: &Excludes) -> Self {
-        let files = crate::commands::fmt::collect(root, &[], excludes, &[]).unwrap_or_default();
+        let mut files = crate::commands::fmt::collect(root, &[], excludes, &[]).unwrap_or_default();
+        files.sort();
 
         let mut entries: Vec<Entry> = files
             .par_iter()
@@ -103,7 +106,12 @@ impl Index {
             ))
         });
 
-        Self { entries }
+        Self { entries, files }
+    }
+
+    /// The files of the last walk, sorted, for the module auto-imports
+    pub fn files(&self) -> &[std::path::PathBuf] {
+        &self.files
     }
 
     /// The number of symbols that the index holds

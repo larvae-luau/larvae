@@ -769,9 +769,23 @@ impl Server {
             let keyword = self.lsp.completion.imports.keyword();
             let lines = rpc::Lines::new(src);
 
+            /*
+            The quote follows `[fmt] quote_style`, so an accepted import
+            does not fight the formatter one save later. A service name
+            never needs an escape, so the two auto styles read as their
+            preference alone, and `preserve` writes the default.
+            */
+            let quote = match self.fmt.quote_style {
+                crate::fmt::config::QuoteStyle::AutoPreferSingle
+                | crate::fmt::config::QuoteStyle::ForceSingle => '\'',
+
+                _ => '"',
+            };
+
             for service in analysis.services() {
                 if !service.starts_with(prefix.as_str())
                     || src.contains(&format!("GetService(\"{service}\")"))
+                    || src.contains(&format!("GetService('{service}')"))
                 {
                     continue;
                 }
@@ -782,7 +796,7 @@ impl Server {
                     "label": service,
                     "kind": 9,
                     "detail": format!(
-                        "auto-import: {keyword} {service} = game:GetService(\"{service}\")"
+                        "auto-import: {keyword} {service} = game:GetService({quote}{service}{quote})"
                     ),
                     "sortText": format!("9{service}"),
                     "additionalTextEdits": [{
@@ -791,7 +805,53 @@ impl Server {
                             "end": { "line": insert_at, "character": 0 },
                         },
                         "newText": format!(
-                            "{keyword} {service} = game:GetService(\"{service}\")\n"
+                            "{keyword} {service} = game:GetService({quote}{service}{quote})\n"
+                        ),
+                    }],
+                }));
+            }
+
+            /*
+            Module auto-imports, beside the services. Every file of the
+            project is offerable by its stem, and accepting one writes the
+            require in the style `[lsp.completion.imports] require_style`
+            picks, in the quote the formatter keeps. A `.server.` or
+            `.client.` file is a script and not a module, so it never
+            offers, and an `init` file offers as its directory.
+            */
+            for target in self.symbols.files() {
+                let Some(stem) = module_import_stem(target, &path) else {
+                    continue;
+                };
+
+                if !stem.starts_with(prefix.as_str()) || src.contains(&format!(" {stem} = require"))
+                {
+                    continue;
+                }
+
+                let spoken = match target.file_stem().and_then(|s| s.to_str()) {
+                    Some("init") => target.parent().unwrap_or(target).to_path_buf(),
+
+                    _ => target.with_extension(""),
+                };
+
+                let spec = self.import_spec(&path, &spoken);
+                let insert_at = import_insertion_line(src);
+
+                items.push(json!({
+                    "label": stem,
+                    "kind": 9,
+                    "detail": format!(
+                        "auto-import: {keyword} {stem} = require({quote}{spec}{quote})"
+                    ),
+                    "sortText": format!("9{stem}"),
+                    "additionalTextEdits": [{
+                        "range": {
+                            "start": { "line": insert_at, "character": 0 },
+                            "end": { "line": insert_at, "character": 0 },
+                        },
+                        "newText": format!(
+                            "{keyword} {stem} = require({quote}{spec}{quote})\n"
                         ),
                     }],
                 }));
@@ -803,6 +863,49 @@ impl Server {
         // Tier 3: the worms that transform completions see the list first.
         self.worms
             .lsp_respond("completions", &context, json!(items))
+    }
+
+    /*
+    The spec an auto-import writes for one module, in the configured style.
+
+    Every style falls back to the relative form, which can say anywhere:
+    an alias only speaks for the tree under it, and `@game` only for a
+    mounted one.
+    */
+    fn import_spec(&self, requirer: &std::path::Path, spoken: &std::path::Path) -> String {
+        use crate::config::lsp::RequireStyle;
+
+        let style = self.lsp.completion.imports.require_style;
+
+        let alias = || {
+            let root = self.root.as_deref()?;
+
+            self.aliases
+                .iter()
+                .filter_map(|(name, value)| {
+                    let kept = spoken.strip_prefix(root.join(value)).ok()?;
+
+                    Some(format!("@{name}/{}", super::renames::segments(kept)))
+                })
+                .min_by_key(String::len)
+        };
+
+        let game = || {
+            let dm = self.mounts.dm_of(spoken)?;
+
+            Some(dm.game_path())
+        };
+
+        match style {
+            RequireStyle::Auto => alias(),
+
+            RequireStyle::AlwaysRelative => None,
+
+            RequireStyle::AlwaysAbsolute => game(),
+
+            RequireStyle::NearestAbsolute => alias().or_else(game),
+        }
+        .unwrap_or_else(|| super::renames::relative_spec(requirer, spoken))
     }
 
     /// Reports if the `[lsp]` mode leaves this file to another server

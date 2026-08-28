@@ -196,6 +196,28 @@ impl Server {
             self.lsp.inlay_hints.function_return_types = on;
         }
 
+        if let Some(text) = editor(&["completion", "imports", "requireStyle"]).as_str() {
+            use crate::config::lsp::RequireStyle;
+
+            match text.to_lowercase().replace('_', "").as_str() {
+                "auto" => self.lsp.completion.imports.require_style = RequireStyle::Auto,
+
+                "alwaysrelative" => {
+                    self.lsp.completion.imports.require_style = RequireStyle::AlwaysRelative;
+                }
+
+                "alwaysabsolute" => {
+                    self.lsp.completion.imports.require_style = RequireStyle::AlwaysAbsolute;
+                }
+
+                "nearestabsolute" => {
+                    self.lsp.completion.imports.require_style = RequireStyle::NearestAbsolute;
+                }
+
+                _ => {}
+            }
+        }
+
         if let Some(text) = editor(&["inlayHints", "parameterNames"]).as_str() {
             use crate::config::lsp::ParameterNames;
 
