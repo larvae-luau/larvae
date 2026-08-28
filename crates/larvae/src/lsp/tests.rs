@@ -192,6 +192,23 @@ fn a_syntax_error_is_the_only_diagnostic_and_is_an_error() {
     );
 }
 
+/*
+A `$` line in a doc fence is the author talking to the checker.
+
+luau-lsp hides it from the rendered card, so a doc written for either
+server reads the same. Prose keeps its dollars.
+*/
+#[test]
+fn a_dollar_line_hides_inside_a_doc_fence() {
+    let docs = "Costs $5.\n```luau\n$local hidden = 1\nprint(hidden)\n```\n$ prose keeps this\n";
+    let card = crate::lsp::features::card("local x: number", Some(docs));
+
+    assert!(!card.contains("hidden = 1"), "{card}");
+    assert!(card.contains("print(hidden)"), "{card}");
+    assert!(card.contains("Costs $5."), "{card}");
+    assert!(card.contains("$ prose keeps this"), "{card}");
+}
+
 #[test]
 fn a_clean_document_produces_no_diagnostics() {
     assert_eq!(diagnostics_of("return 1\n"), json!([]));

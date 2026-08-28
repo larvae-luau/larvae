@@ -258,15 +258,77 @@ The rule is the shape luau-lsp writes, so a reader who moves between the two
 servers reads one card. The type goes in a Luau fence, a rule of ten dashes
 separates it, and the prose follows as markdown.
 */
-fn card(text: &str, documentation: Option<&str>) -> String {
+pub(super) fn card(text: &str, documentation: Option<&str>) -> String {
     let mut out = format!("```luau\n{text}\n```");
 
-    if let Some(docs) = documentation.filter(|d| !d.trim().is_empty()) {
+    if let Some(docs) = documentation
+        .map(visible_docs)
+        .filter(|d| !d.trim().is_empty())
+    {
         out.push_str("\n----------\n");
-        out.push_str(docs);
+        out.push_str(&docs);
     }
 
     out
+}
+
+/*
+Documentation with its `$` lines hidden.
+
+A doc comment's Luau fence sometimes needs a line for the example to
+typecheck that no reader needs to see, ex: the `local` that binds what
+the interesting line uses. luau-lsp hides a fence line that starts with
+`$`, so a doc written for either server renders the same. Only a `luau`
+fence hides them: a dollar elsewhere in prose is a dollar.
+*/
+fn visible_docs(docs: &str) -> String {
+    let mut out = String::with_capacity(docs.len());
+    let mut in_luau_fence = false;
+
+    for line in docs.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+
+        if let Some(rest) = trimmed.strip_prefix("```") {
+            in_luau_fence = !in_luau_fence && rest.trim_end().eq_ignore_ascii_case("luau");
+        } else if in_luau_fence && trimmed.starts_with('$') {
+            continue;
+        }
+
+        out.push_str(line);
+    }
+
+    out
+}
+
+/*
+The binding name a module auto-import offers, or nothing.
+
+A name has to be writable as a Luau identifier to bind, a script is not
+a module, and the file being edited never offers itself.
+*/
+fn module_import_stem(target: &std::path::Path, editing: &std::path::Path) -> Option<String> {
+    if target == editing {
+        return None;
+    }
+
+    let stem = target.file_stem()?.to_str()?;
+
+    if stem.contains(".server") || stem.contains(".client") {
+        return None;
+    }
+
+    let stem = match stem {
+        "init" => target.parent()?.file_name()?.to_str()?,
+
+        named => named,
+    };
+
+    let identifier = stem
+        .chars()
+        .enumerate()
+        .all(|(i, c)| c == '_' || c.is_ascii_alphabetic() || (i > 0 && c.is_ascii_digit()));
+
+    (identifier && !stem.is_empty()).then(|| stem.to_string())
 }
 
 /// The byte offset of the position in a request's params
@@ -342,7 +404,7 @@ fn completion_item(c: &crate::lsp::analysis::AnalysisCompletion) -> Value {
     scroll it.
     */
     if let Some(docs) = &c.documentation {
-        item["documentation"] = json!({ "kind": "markdown", "value": docs });
+        item["documentation"] = json!({ "kind": "markdown", "value": visible_docs(docs) });
     }
 
     // 1 is Deprecated, the one tag the protocol defines.
