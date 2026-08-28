@@ -247,6 +247,12 @@ unsafe extern "C" {
     fn larvae_set_script_type(s: *mut c_void, path: *const c_char, type_name: *const c_char);
     fn larvae_set_character_type(s: *mut c_void, kind: i32);
     fn larvae_check(s: *mut c_void, path: *const c_char, out: *mut RawDiag, cap: usize) -> usize;
+    fn larvae_deprecated(
+        s: *mut c_void,
+        path: *const c_char,
+        out: *mut RawDiag,
+        cap: usize,
+    ) -> usize;
     fn larvae_hover(
         s: *mut c_void,
         path: *const c_char,
@@ -987,6 +993,27 @@ impl Analysis for LuauAnalysis {
                     .to_string_lossy()
                     .into_owned(),
                 code: (d.code != 0).then(|| d.code.to_string()),
+            })
+            .collect()
+    }
+
+    fn deprecated_uses(&mut self, path: &Path) -> Vec<AnalysisDiag> {
+        let key = self.key(path);
+        let mut raw: Vec<RawDiag> = Vec::with_capacity(128);
+        let n = unsafe { larvae_deprecated(self.session, key, raw.as_mut_ptr(), 128) };
+
+        unsafe { raw.set_len(n) };
+
+        let wrap = self.config_wraps.get(path);
+
+        raw.iter()
+            .map(|d| AnalysisDiag {
+                span: (unwrapped(d.start, wrap), unwrapped(d.end, wrap)),
+                severity: d.severity,
+                message: unsafe { CStr::from_ptr(d.message) }
+                    .to_string_lossy()
+                    .into_owned(),
+                code: None,
             })
             .collect()
     }
@@ -2217,6 +2244,34 @@ mod type_completions {
     }
 
     /*
+    A deprecated use is found, spanned, and spoken as a hint.
+
+    Luau's own linter knows the platform's marks. `Instance.Remove` has
+    carried @deprecated for a decade, which makes it a stable probe.
+    */
+    #[test]
+    fn a_deprecated_use_reports_as_a_hint() {
+        let _luau = super::luau_globals::shared();
+
+        let mut analysis = LuauAnalysis::new();
+        let src = "--!strict\nlocal p = Instance.new(\"Part\")\np:Remove()\nreturn p\n";
+        let path = std::path::Path::new("/t.luau");
+
+        analysis.open(path, src);
+
+        let marks = larvae::lsp::analysis::Analysis::deprecated_uses(&mut analysis, path);
+
+        assert!(
+            marks.iter().any(|d| {
+                d.severity == 4
+                    && d.message.contains("Remove")
+                    && src[d.span.0 as usize..d.span.1 as usize].contains("Remove")
+            }),
+            "{marks:?}"
+        );
+    }
+
+    /*
     The identity type carries its one method, not `any`.
 
     Upstream's dump stubs `ScopedInstanceIdentity`, and the patch script
@@ -2402,12 +2457,27 @@ mod larvae_definitions {
     mark removes the parts with it.
     */
     #[test]
-    fn r15_types_the_character_with_no_cast() {
+    fn r15_types_the_character_and_its_children_are_optional() {
         let _luau = super::luau_globals::shared();
 
-        let src = format!("{CHARACTER}local a = c.Humanoid.Animator\nreturn a\n");
+        /*
+        Every child of the rig is optional: a part can be destroyed,
+        detached, or not yet streamed in. A direct chain through one is
+        the error it deserves, and the guard the author writes for the
+        runtime is the one that satisfies the checker.
+        */
+        let direct = format!("{CHARACTER}local a = c.Humanoid.Animator\nreturn a\n");
 
-        assert_eq!(errors(CharacterType::R15, &src), Vec::<String>::new());
+        assert!(
+            !errors(CharacterType::R15, &direct).is_empty(),
+            "a child can be nil, and a direct chain has to say so"
+        );
+
+        let guarded = format!(
+            "{CHARACTER}local h = c.Humanoid\nlocal a = if h then h.Animator else nil\nreturn a\n"
+        );
+
+        assert_eq!(errors(CharacterType::R15, &guarded), Vec::<String>::new());
     }
 
     /// A completion after the property lists the parts the rig has.

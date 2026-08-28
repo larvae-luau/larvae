@@ -10,63 +10,65 @@
 -- picks one of these and the analyzer puts it on the property.
 --
 -- Each child carries its real class, so a completion after a dot lists the
--- parts a rig actually has and a hover names them.
+-- parts a rig actually has and a hover names them. Every child is
+-- optional: a part can be destroyed, detached, or not yet streamed in,
+-- and a guaranteed type would hide the nil the runtime can hand back.
 
 export type R15Character = Model & {
-	HumanoidRootPart: Part,
-	Head: MeshPart,
+	HumanoidRootPart: Part?,
+	Head: MeshPart?,
 
-	UpperTorso: MeshPart,
-	LowerTorso: MeshPart,
+	UpperTorso: MeshPart?,
+	LowerTorso: MeshPart?,
 
-	LeftUpperArm: MeshPart,
-	LeftLowerArm: MeshPart,
-	LeftHand: MeshPart,
+	LeftUpperArm: MeshPart?,
+	LeftLowerArm: MeshPart?,
+	LeftHand: MeshPart?,
 
-	RightUpperArm: MeshPart,
-	RightLowerArm: MeshPart,
-	RightHand: MeshPart,
+	RightUpperArm: MeshPart?,
+	RightLowerArm: MeshPart?,
+	RightHand: MeshPart?,
 
-	LeftUpperLeg: MeshPart,
-	LeftLowerLeg: MeshPart,
-	LeftFoot: MeshPart,
+	LeftUpperLeg: MeshPart?,
+	LeftLowerLeg: MeshPart?,
+	LeftFoot: MeshPart?,
 
-	RightUpperLeg: MeshPart,
-	RightLowerLeg: MeshPart,
-	RightFoot: MeshPart,
+	RightUpperLeg: MeshPart?,
+	RightLowerLeg: MeshPart?,
+	RightFoot: MeshPart?,
 
-	Humanoid: Humanoid & {
-		Animator: Animator,
-		HumanoidDescription: HumanoidDescription,
-	},
+	Humanoid: (Humanoid & {
+		Animator: Animator?,
+		HumanoidDescription: HumanoidDescription?,
+	})?,
 
-	BodyColors: BodyColors,
+	BodyColors: BodyColors?,
 
 	-- Every spawned character carries these two, whatever the rig.
-	Animate: LocalScript,
-	Health: Script,
+	Animate: LocalScript?,
+	Health: Script?,
 }
 
 -- The R6 part names carry spaces, so the keys are quoted.
 export type R6Character = Model & {
-	HumanoidRootPart: Part,
-	Head: Part,
-	Torso: Part,
+	HumanoidRootPart: Part?,
+	Head: Part?,
+	Torso: Part?,
 
-	["Left Arm"]: Part,
-	["Right Arm"]: Part,
-	["Left Leg"]: Part,
-	["Right Leg"]: Part,
+	["Left Arm"]: Part?,
+	["Right Arm"]: Part?,
+	["Left Leg"]: Part?,
+	["Right Leg"]: Part?,
 
-	Humanoid: Humanoid & {
-		Animator: Animator,
-		HumanoidDescription: HumanoidDescription,
-	},
+	Humanoid: (Humanoid & {
+		Animator: Animator?,
+		HumanoidDescription: HumanoidDescription?,
+	})?,
 
-	BodyColors: BodyColors,
+	BodyColors: BodyColors?,
 
-	Animate: LocalScript,
-	Health: Script,
+	Animate: LocalScript?,
+	Health: Script?,
 }
 
 --[[
