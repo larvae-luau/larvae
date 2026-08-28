@@ -98,6 +98,8 @@ fn build_analyzer() {
         .trim()
         .to_string();
 
+    patch_vendored(&luau);
+
     let marker = out.join(format!("luau-{pin}.built"));
     let vendor_lib = out.join(platform.archive("luauvendor"));
 
@@ -421,4 +423,73 @@ fn seal_msvc(
     let status = link.status().expect("link.exe links the library");
 
     assert!(status.success(), "linking {} failed", lib.display());
+}
+
+/*
+The display patches larvae carries onto the vendored Luau.
+
+The vendor is a submodule pinned by luau.pin, so a change cannot be
+committed there; it is re-applied here, before the vendor compiles, and
+skipped when it is already present. When a pin bump moves the anchor
+text, the warning below says the patch stopped applying, which is the
+moment to re-read the upstream code and re-anchor or retire the patch.
+
+One patch today. A zero-argument function's pack collapses to a bare
+hidden variadic when a module interface is cloned, and the stringifier
+dispatches a bare pack straight to the variadic printer, which ignores
+the hidden flag that the wrapped-pack path honors. The printed result
+was `(...any) -> T` for a function the author wrote as `()`. The patch
+makes the function printer treat a bare hidden tail as the empty
+argument list, the same answer the wrapped form already gets.
+*/
+#[cfg(feature = "analyzer")]
+fn patch_vendored(luau: &std::path::Path) {
+    let file = luau.join("Analysis/src/ToString.cpp");
+
+    let Ok(text) = std::fs::read_to_string(&file) else {
+        println!("cargo:warning=larvae: cannot read the vendored ToString.cpp to patch it");
+
+        return;
+    };
+
+    let marker = "larvae: a bare hidden tail is an empty argument list";
+
+    if text.contains(marker) {
+        return;
+    }
+
+    let anchor = "        if (isEmpty(ftv.argTypes))
+        {
+            // if we've got an empty argument pack, we're done.
+        }
+        else if (state.opts.functionTypeArguments)";
+
+    let Some(_) = text.find(anchor) else {
+        println!(
+            "cargo:warning=larvae: the ToString.cpp patch anchor is gone; zero-argument \
+             functions render as (...any) across modules until it is re-anchored"
+        );
+
+        return;
+    };
+
+    let replacement = format!(
+        "        if (isEmpty(ftv.argTypes))
+        {{
+            // if we've got an empty argument pack, we're done.
+        }}
+        // larvae: a bare hidden tail is an empty argument list. See the
+        // build script for why this line is applied rather than committed.
+        else if (auto vtp = get<VariadicTypePack>(follow(ftv.argTypes));
+                 vtp && vtp->hidden && FInt::DebugLuauVerboseTypeNames < 1)
+        {{
+        }}
+        else if (state.opts.functionTypeArguments)"
+    );
+
+    let patched = text.replacen(anchor, &replacement, 1);
+
+    if std::fs::write(&file, patched).is_err() {
+        println!("cargo:warning=larvae: cannot write the ToString.cpp patch");
+    }
 }
