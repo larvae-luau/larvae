@@ -227,10 +227,36 @@ static std::vector<std::pair<Luau::FValue<bool>*, bool>>& savedFlags()
     return saved;
 }
 
+static std::vector<std::pair<Luau::FValue<int>*, int>>& savedIntFlags()
+{
+    static std::vector<std::pair<Luau::FValue<int>*, int>> saved;
+
+    if (saved.empty())
+    {
+        for (Luau::FValue<int>* it = Luau::FValue<int>::list; it; it = it->next)
+            saved.push_back({it, it->value});
+    }
+
+    return saved;
+}
+
+/*
+Snapshot before the first change, or there is nothing to put back.
+
+Every path that writes a flag calls this first. The one that forgot was
+`larvae_set_flag`, and the cost was a suite where the first flag test set
+the new solver, the reset then took its snapshot from the changed world,
+and every later session ran a solver nobody asked for.
+*/
+static void snapshotFlags()
+{
+    savedFlags();
+    savedIntFlags();
+}
+
 static void enableAllFlags()
 {
-    // Snapshot before the first change, or there is nothing to put back.
-    savedFlags();
+    snapshotFlags();
 
     for (Luau::FValue<bool>* it = Luau::FValue<bool>::list; it; it = it->next)
     {
@@ -341,7 +367,12 @@ that reason alone. A caller that changes them puts them back with this.
 */
 void larvae_reset_flags(void)
 {
+    snapshotFlags();
+
     for (auto& entry : savedFlags())
+        entry.first->value = entry.second;
+
+    for (auto& entry : savedIntFlags())
         entry.first->value = entry.second;
 
     applyRequiredFlags();
@@ -357,6 +388,8 @@ one who can fix it.
 */
 int larvae_set_flag(const char* name, const char* value)
 {
+    snapshotFlags();
+
     for (Luau::FValue<bool>* it = Luau::FValue<bool>::list; it; it = it->next)
     {
         if (strcmp(it->name, name) != 0)

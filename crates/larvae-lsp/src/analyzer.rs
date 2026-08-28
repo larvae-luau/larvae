@@ -202,7 +202,6 @@ unsafe extern "C" {
     fn larvae_enable_all_flags();
     fn larvae_set_flag(name: *const c_char, value: *const c_char) -> i32;
     fn larvae_apply_required_flags();
-    fn larvae_reset_flags();
     fn larvae_signature_help(
         s: *mut c_void,
         path: *const c_char,
@@ -1012,6 +1011,16 @@ So a session test takes one permit of six, and a flag test takes the whole
 pool. The sweep acquires in index order, so two exclusives cannot deadlock,
 and a permit holder blocks nothing but its own slot.
 */
+/*
+The reset serves the tests alone. The flags are process global, so only a
+test has a reason to put them back, and a declaration in the main block
+reads as dead everywhere else.
+*/
+#[cfg(test)]
+unsafe extern "C" {
+    fn larvae_reset_flags();
+}
+
 #[cfg(test)]
 mod luau_globals {
     use std::sync::atomic::{AtomicUsize, Ordering};
