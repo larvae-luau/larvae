@@ -281,7 +281,7 @@ fn a_rename_asks_and_the_answer_rewrites_the_requires() {
     .expect("a json id");
 
     let mut out = Vec::new();
-    server
+    let stop = server
         .handle(
             &rpc::Message {
                 id: Some(id),
@@ -292,6 +292,14 @@ fn a_rename_asks_and_the_answer_rewrites_the_requires() {
             &mut out,
         )
         .unwrap();
+
+    /*
+    Handle answers true to stop the server. A response must answer
+    false: the editor replies to every request the server sends, and
+    the first refresh answer read as a hang-up, which was five clean
+    exits in a row and an editor that gave up restarting.
+    */
+    assert!(!stop, "a response stopped the server");
 
     let applied = String::from_utf8(out).unwrap();
 

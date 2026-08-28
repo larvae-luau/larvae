@@ -334,13 +334,16 @@ impl Server {
         /*
         A response has no method. The one conversation the server starts
         is the rename dialog, and its answer routes by the id it carries.
+        Handle answers true to stop the server, so a response answers
+        false: the editor replying to a request must never read as the
+        editor hanging up.
         */
         if message.method.is_empty() {
             if let Some(id) = &message.id {
                 self.on_reply(id, &message.result, out)?;
             }
 
-            return Ok(true);
+            return Ok(false);
         }
 
         match message.method.as_str() {
