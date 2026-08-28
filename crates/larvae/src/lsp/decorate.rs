@@ -96,6 +96,23 @@ pub fn links_with_aliases(
     root: &Path,
     toml_aliases: &HashMap<String, String>,
 ) -> Vec<Link> {
+    links_with_claims(src, path, root, toml_aliases, &[])
+}
+
+/*
+The same links, resolving the extensions the project's worms claim too.
+
+A require of a claimed file is a module the same as any Luau file, and a
+link that cannot resolve one cannot say where its worm refused to lower
+it either.
+*/
+pub fn links_with_claims(
+    src: &str,
+    path: &Path,
+    root: &Path,
+    toml_aliases: &HashMap<String, String>,
+    claimed: &[String],
+) -> Vec<Link> {
     let Ok(lexed) = lexer::lex(src) else {
         return Vec::new();
     };
@@ -129,7 +146,7 @@ pub fn links_with_aliases(
         style: IndexingStyle::default(),
         quote: '"',
         strict: false,
-        claimed: &[],
+        claimed,
         // Links only resolve; the relative rewrite changes what a build emits.
         client_relative_requires: false,
     };

@@ -259,6 +259,22 @@ struct Server {
     /// The rename dialog in flight, holding the edit its answer applies
     pending_rename: Option<renames::Pending>,
     /*
+    Why a worm refused to lower a module, by file.
+
+    The load hook writes it from the analyzer's thread, and the next
+    publish pins the reason to every require that names the file. A
+    successful load clears its entry.
+    */
+    load_errors: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, String>>>,
+    /// When each open document last changed, for the hint hold
+    hint_hold: HashMap<String, std::time::Instant>,
+    /// The last settled hints per document, served while the author types
+    hint_cache: std::cell::RefCell<HashMap<String, Value>>,
+    /// Wakes the settle thread on every change; it reports the pause back
+    settle: Option<std::sync::mpsc::Sender<std::time::Instant>>,
+    /// The document the last keystroke landed in, refreshed at the pause
+    last_typed: Option<String>,
+    /*
     The instance tree of the rojo sourcemap, as types.
 
     It is what makes `script.Providers` and `script.Parent.Config` resolve:
@@ -311,6 +327,11 @@ impl Default for Server {
             builder: None,
             events: None,
             pending_rename: None,
+            load_errors: Default::default(),
+            hint_hold: HashMap::new(),
+            hint_cache: Default::default(),
+            settle: None,
+            last_typed: None,
             instances: instances::Instances::default(),
             sourcemap_stamp: None,
             sourcemap_config: String::new(),

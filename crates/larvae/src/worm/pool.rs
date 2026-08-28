@@ -382,13 +382,38 @@ impl Pool {
 
     /// The lowered source from the first resolver worm that loads the path
     pub fn lsp_load_any(&self, path: &str) -> Option<super::proto::LspLoadReply> {
+        self.lsp_load_traced(path).ok().flatten()
+    }
+
+    /*
+    The same load, and a refusal comes back with its reason.
+
+    A worm that cannot lower a file is the only one who knows why, and a
+    require of that file otherwise fails as a bare `*error-type*` with
+    nothing to read. `Ok(None)` is a path no resolver claims, which is a
+    different answer from a claimed file that will not lower.
+    */
+    pub fn lsp_load_traced(
+        &self,
+        path: &str,
+    ) -> Result<Option<super::proto::LspLoadReply>, String> {
+        let mut refusal = None;
+
         for index in self.lsp_resolvers() {
-            if let Ok(reply) = self.lsp_load(index, path) {
-                return Some(reply);
+            match self.lsp_load(index, path) {
+                Ok(reply) => return Ok(Some(reply)),
+
+                // The root cause is the worm's own sentence; the context
+                // chain above it repeats the worm's name.
+                Err(e) => refusal = Some(e.root_cause().to_string()),
             }
         }
 
-        None
+        match refusal {
+            Some(reason) => Err(reason),
+
+            None => Ok(None),
+        }
     }
 
     /// The indexes of the worms that answer tier-1 resolution

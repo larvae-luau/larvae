@@ -193,6 +193,56 @@ fn a_syntax_error_is_the_only_diagnostic_and_is_an_error() {
 }
 
 /*
+A module a worm refuses to lower says why, at the require.
+
+The load hook records the refusal keyed by the file, and the publish
+pins it to every require that names the file. Without this the require
+answered `*error-type*` and nothing anywhere said the reason.
+*/
+#[test]
+fn a_refused_lowering_reports_at_the_require() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::create_dir_all(dir.path().join("src")).expect("makes it");
+    std::fs::write(dir.path().join("src/util.luau"), "return {}\n").expect("writes");
+
+    let mut server = Server {
+        root: Some(dir.path().to_path_buf()),
+        ..Server::default()
+    };
+
+    server.load_errors.lock().unwrap().insert(
+        dir.path().join("src/util.luau"),
+        "worm `x` failed, line 1: no lowering\nmore detail".into(),
+    );
+
+    let mut out = Vec::new();
+    server
+        .handle(
+            &message(
+                "textDocument/didOpen",
+                None,
+                json!({ "textDocument": {
+                    "uri": format!("file://{}/src/main.luau", dir.path().display()),
+                    "text": "local u = require('./util')\nreturn u\n",
+                } }),
+            ),
+            &mut out,
+        )
+        .unwrap();
+
+    let published = String::from_utf8(out).unwrap();
+
+    assert!(
+        published.contains("this module does not lower: worm `x` failed, line 1: no lowering"),
+        "{published}"
+    );
+    assert!(
+        !published.contains("more detail"),
+        "only the first line reaches the list: {published}"
+    );
+}
+
+/*
 A rename asks one question, and the yes applies the edit.
 
 The editor reports the move after it happened, so nothing on disk can

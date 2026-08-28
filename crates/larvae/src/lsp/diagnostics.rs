@@ -180,6 +180,41 @@ impl Server {
             }
         }
 
+        /*
+        A worm that refused to lower a required module says why, here, at
+        the require that names it. Without this the require answered
+        `*error-type*` and nothing anywhere said the reason, while the
+        build would have printed it. The check above is what ran the
+        loads, so the reasons are current by the time this reads them.
+        */
+        if let (Some(path), Some(root)) = (path.as_deref(), self.root.as_deref())
+            && let Ok(errors) = self.load_errors.lock()
+            && !errors.is_empty()
+        {
+            let claims = self.worms.lsp_resolved_claims();
+
+            for link in super::decorate::links_with_claims(src, path, root, &self.aliases, &claims)
+            {
+                let canonical = link.target.canonicalize().ok();
+                let Some(reason) = errors
+                    .get(&link.target)
+                    .or_else(|| canonical.as_deref().and_then(|c| errors.get(c)))
+                else {
+                    continue;
+                };
+
+                diagnostics.push(json!({
+                    "range": lines.range(src, link.range),
+                    "severity": 1,
+                    "source": "larvae",
+                    "message": format!(
+                        "this module does not lower: {}",
+                        reason.lines().next().unwrap_or(reason)
+                    ),
+                }));
+            }
+        }
+
         // Tier 3: the worms that transform diagnostics see the list first.
         let context = json!({ "path": path, "text": src });
         let diagnostics = self

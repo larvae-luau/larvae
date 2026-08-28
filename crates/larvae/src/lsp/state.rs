@@ -637,15 +637,34 @@ impl Server {
 
         let resolve_pool = self.worms.clone();
         let load_pool = self.worms.clone();
+        let load_errors = self.load_errors.clone();
 
         analysis.set_module_hooks(crate::lsp::analysis::ModuleHooks {
             resolve: Box::new(move |from, spec| {
                 resolve_pool.lsp_resolve(&from.to_string_lossy(), spec)
             }),
-            load: Box::new(move |path| {
-                load_pool
-                    .lsp_load_any(path)
-                    .map(|r| crate::lsp::analysis::plain_view(&r.source).into_owned())
+            /*
+            A load that fails leaves its reason behind, keyed by the file,
+            and the next publish pins it to the requires that name it. A
+            load that succeeds clears the old reason, so a fixed file
+            stops reporting the moment it lowers again.
+            */
+            load: Box::new(move |path| match load_pool.lsp_load_traced(path) {
+                Ok(reply) => {
+                    if let Ok(mut errors) = load_errors.lock() {
+                        errors.remove(std::path::Path::new(path));
+                    }
+
+                    reply.map(|r| crate::lsp::analysis::plain_view(&r.source).into_owned())
+                }
+
+                Err(reason) => {
+                    if let Ok(mut errors) = load_errors.lock() {
+                        errors.insert(std::path::PathBuf::from(path), reason);
+                    }
+
+                    None
+                }
             }),
             claims: self.worms.lsp_resolved_claims(),
         });
