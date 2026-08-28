@@ -118,6 +118,8 @@ session it had built and never picked up.
 */
 pub(super) enum Event {
     Message(Box<rpc::Message>),
+    /// Typing paused; the editor is told to ask for its hints again
+    Settled,
     Analysis(Box<dyn analysis::Analysis>),
     /// The editor closed the stream, or the read failed
     Eof,
@@ -161,11 +163,45 @@ pub fn run_pending(analysis: Option<Pending>) -> Result<()> {
         }
     });
 
+    /*
+    The settle thread turns a stream of keystrokes into one pause. Every
+    change posts a deadline; the thread waits out the newest one and then
+    reports Settled, which becomes one hint refresh. It costs a thread
+    that spends its life asleep.
+    */
+    let (settle, strokes) = std::sync::mpsc::channel::<std::time::Instant>();
+    let settle_events = events.clone();
+
+    std::thread::spawn(move || {
+        while let Ok(mut deadline) = strokes.recv() {
+            loop {
+                let now = std::time::Instant::now();
+
+                if deadline <= now {
+                    break;
+                }
+
+                match strokes.recv_timeout(deadline - now) {
+                    Ok(next) => deadline = next,
+
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
+
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+                }
+            }
+
+            if settle_events.send(Event::Settled).is_err() {
+                return;
+            }
+        }
+    });
+
     let mut server = Server {
         analysis: std::cell::RefCell::new(ready),
         analysis_pending: builder.is_some(),
         builder,
         events: Some(events),
+        settle: Some(settle),
         ..Default::default()
     };
 
@@ -178,6 +214,21 @@ pub fn run_pending(analysis: Option<Pending>) -> Result<()> {
             }
 
             Event::Analysis(built) => server.take_analysis(built, &mut output)?,
+
+            /*
+            The pause after typing. The held hints are stale by design,
+            and this one refresh makes the editor ask again now that the
+            text stopped moving.
+            */
+            Event::Settled => {
+                if let Some(uri) = server.last_typed.take() {
+                    server.refresh_dependents(&uri, &mut output)?;
+                }
+
+                if server.lsp.inlay_hints.update_delay > 0 {
+                    rpc::request(&mut output, "workspace/inlayHint/refresh", Value::Null)?;
+                }
+            }
 
             Event::Eof => break,
         }
@@ -452,8 +503,21 @@ impl Server {
                     .and_then(|c| c.last())
                     .and_then(|c| c["text"].as_str())
                 {
+                    if let Some(old) = self.documents.get(&uri) {
+                        self.shift_hint_cache(&uri, &old.clone(), change);
+                    }
+
                     self.documents.insert(uri.clone(), change.to_string());
                     self.publish(&uri, out)?;
+
+                    /*
+                    With a hold configured, the dependents wait for the
+                    pause too: a keystroke should not re-check every open
+                    file. Without one, they refresh here and now.
+                    */
+                    if !self.note_typing(&uri) {
+                        self.refresh_dependents(&uri, out)?;
+                    }
                 }
             }
 
@@ -466,6 +530,7 @@ impl Server {
                 let uri = uri_of(&message.params);
 
                 self.publish(&uri, out)?;
+                self.refresh_dependents(&uri, out)?;
             }
 
             // The diagnostics clear with the document, or the editor keeps them on screen.

@@ -193,6 +193,151 @@ fn a_syntax_error_is_the_only_diagnostic_and_is_an_error() {
 }
 
 /*
+The hints hold still while the author types.
+
+A request that lands inside the update delay answers with the last
+settled hints, whatever the text now says. The refresh after the pause
+is what makes the editor ask again.
+*/
+#[test]
+fn hints_hold_still_while_typing() {
+    let mut server = Server {
+        analysis: std::cell::RefCell::new(Some(Box::new(BytecodeAnalysis))),
+        ..Server::default()
+    };
+    server.lsp.inlay_hints.variable_types = true;
+
+    let uri = "file:///t.luau";
+    server.documents.insert(uri.into(), "local a = 1\n".into());
+
+    let params = json!({ "textDocument": { "uri": uri } });
+
+    // settled: computes and caches (the mock analysis answers nothing)
+    let first = server.inlay_hints(&params);
+
+    assert_eq!(first, json!([]));
+
+    // pretend a settled answer was cached, then a keystroke lands
+    server
+        .hint_cache
+        .borrow_mut()
+        .insert(uri.into(), json!([{ "label": ": held" }]));
+    server.note_typing(uri);
+
+    assert_eq!(
+        server.inlay_hints(&params),
+        json!([{ "label": ": held" }]),
+        "mid-typing serves the settled hints"
+    );
+
+    // the pause passed: fresh hints compute again
+    server.hint_hold.insert(
+        uri.into(),
+        std::time::Instant::now() - std::time::Duration::from_secs(5),
+    );
+
+    assert_eq!(server.inlay_hints(&params), json!([]));
+}
+
+/*
+The held hints follow the lines, and leave the edited ones.
+
+An enter moves every hint below the cursor down with its line. The
+rewritten lines themselves drop their hints: a stale character there
+can split a word, and `props: Pr: ()ops` is worse than a hint that
+waits out the pause. An append at the end of the file moves nothing.
+*/
+#[test]
+fn held_hints_follow_the_lines_and_leave_the_edited_ones() {
+    let server = Server::default();
+    let uri = "file:///t.luau";
+
+    let held = json!([
+        { "position": { "line": 0, "character": 11 }, "label": ": number" },
+        { "position": { "line": 1, "character": 20 }, "label": ": ()" },
+        { "position": { "line": 3, "character": 9 }, "label": ": string" },
+    ]);
+
+    // enter pressed at the end of line 1: lines below shift, line 1 keeps
+    server
+        .hint_cache
+        .borrow_mut()
+        .insert(uri.into(), held.clone());
+    server.shift_hint_cache(
+        uri,
+        "local a = 1
+local function t()
+end
+local s = 'x'
+",
+        "local a = 1
+local function t()
+
+end
+local s = 'x'
+",
+    );
+
+    let cache = server.hint_cache.borrow();
+    let shifted = cache.get(uri).unwrap().as_array().unwrap();
+
+    assert_eq!(shifted[0]["position"]["line"], 0);
+    assert_eq!(shifted[1]["position"]["line"], 1);
+    assert_eq!(shifted[2]["position"]["line"], 4, "{shifted:?}");
+    drop(cache);
+
+    // typing inside line 1: that line's hint drops, the rest hold
+    server
+        .hint_cache
+        .borrow_mut()
+        .insert(uri.into(), held.clone());
+    server.shift_hint_cache(
+        uri,
+        "local a = 1
+local function t()
+end
+local s = 'x'
+",
+        "local a = 1
+local function te()
+end
+local s = 'x'
+",
+    );
+
+    let cache = server.hint_cache.borrow();
+    let edited = cache.get(uri).unwrap().as_array().unwrap();
+
+    assert_eq!(edited.len(), 2, "{edited:?}");
+    assert_eq!(edited[0]["position"]["line"], 0);
+    assert_eq!(edited[1]["position"]["line"], 3);
+    drop(cache);
+
+    // an append at the end moves nothing
+    server.hint_cache.borrow_mut().insert(uri.into(), held);
+    server.shift_hint_cache(
+        uri,
+        "local a = 1
+local function t()
+end
+local s = 'x'
+",
+        "local a = 1
+local function t()
+end
+local s = 'x'
+return t
+",
+    );
+
+    let cache = server.hint_cache.borrow();
+    let appended = cache.get(uri).unwrap().as_array().unwrap();
+
+    assert_eq!(appended.len(), 3);
+    assert_eq!(appended[2]["position"]["line"], 3, "{appended:?}");
+}
+
+/*
 A module a worm refuses to lower says why, at the require.
 
 The load hook records the refusal keyed by the file, and the publish

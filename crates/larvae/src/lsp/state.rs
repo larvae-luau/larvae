@@ -196,6 +196,10 @@ impl Server {
             self.lsp.inlay_hints.function_return_types = on;
         }
 
+        if let Some(n) = editor(&["inlayHints", "updateDelay"]).as_u64() {
+            self.lsp.inlay_hints.update_delay = n;
+        }
+
         if let Some(text) = editor(&["completion", "imports", "requireStyle"]).as_str() {
             use crate::config::lsp::RequireStyle;
 
@@ -672,6 +676,141 @@ impl Server {
         for decl in self.worms.lsp_declarations() {
             analysis.definitions(&decl.name, &decl.source);
         }
+    }
+
+    /*
+    The held hints follow the lines as they move.
+
+    The hold serves cached hints while the author types, and a pressed
+    enter moves every line below the cursor. Served at their old lines,
+    the hints sat one line up from the code they described until the
+    pause. The editor sends whole texts, so the shift is the line delta
+    from the first line the two texts disagree on. Hints above the edit
+    hold still, and character drift within the edited line itself waits
+    for the settle like everything else.
+    */
+    pub(super) fn shift_hint_cache(&self, uri: &str, old: &str, new: &str) {
+        let mut cache = self.hint_cache.borrow_mut();
+
+        let Some(held) = cache.get_mut(uri) else {
+            return;
+        };
+
+        let old_lines: Vec<&str> = old.lines().collect();
+        let new_lines: Vec<&str> = new.lines().collect();
+
+        let from = old_lines
+            .iter()
+            .zip(&new_lines)
+            .take_while(|(a, b)| a == b)
+            .count();
+
+        let tail = old_lines[from..]
+            .iter()
+            .rev()
+            .zip(new_lines[from..].iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+
+        // The lines the edit rewrote, in the old text's numbering.
+        let changed_end = old_lines.len().saturating_sub(tail).max(from) as i64;
+        let delta = new_lines.len() as i64 - old_lines.len() as i64;
+        let from = from as i64;
+
+        if let Some(hints) = held.as_array_mut() {
+            hints.retain_mut(|hint| {
+                let Some(line) = hint["position"]["line"].as_i64() else {
+                    return false;
+                };
+
+                if line < from {
+                    return true;
+                }
+
+                /*
+                A hint inside the rewritten lines is at a character that
+                may now split a word, and `props: Pr: ()ops` is worse
+                than a hint that waits out the pause. It drops; the ones
+                below follow their lines.
+                */
+                if line < changed_end {
+                    return false;
+                }
+
+                hint["position"]["line"] = (line + delta).max(from).into();
+
+                true
+            });
+        }
+    }
+
+    /*
+    A keystroke: stamp the document and wake the settle thread.
+
+    Answers whether a pause is coming, so the caller knows the work it
+    would do now happens at the pause instead. Without a delay, or
+    without the thread, there is no pause to wait for.
+    */
+    pub(super) fn note_typing(&mut self, uri: &str) -> bool {
+        let delay = self.lsp.inlay_hints.update_delay;
+
+        if delay == 0 {
+            return false;
+        }
+
+        self.hint_hold
+            .insert(uri.to_string(), std::time::Instant::now());
+        self.last_typed = Some(uri.to_string());
+
+        match &self.settle {
+            Some(settle) => settle
+                .send(std::time::Instant::now() + std::time::Duration::from_millis(delay))
+                .is_ok(),
+
+            None => false,
+        }
+    }
+
+    /*
+    The open documents that require a changed module republish now.
+
+    Editing a claimed file invalidates its module, and every dependent
+    re-checks on its next question. A hover asks its own question, so it
+    was already fresh; the diagnostics and the inlay hints on screen
+    asked nothing and stayed stale until their own file changed. The
+    fan-out republishes the other open documents that name the changed
+    file's stem, and one refresh tells the editor to ask for hints
+    again. The stem filter keeps a keystroke from re-checking every open
+    file: a document that never says `App` did not require App.luaux.
+    */
+    pub(super) fn refresh_dependents(&mut self, uri: &str, out: &mut impl Write) -> Result<()> {
+        if !self.lsp.analyzer || self.analysis.borrow().is_none() {
+            return Ok(());
+        }
+
+        let Some(stem) = crate::lsp::uri::path_of_uri(uri)
+            .as_deref()
+            .and_then(|p| p.file_stem().and_then(|s| s.to_str()).map(str::to_string))
+        else {
+            return Ok(());
+        };
+
+        let dependents: Vec<String> = self
+            .documents
+            .iter()
+            .filter(|(other, text)| *other != uri && text.contains(&stem))
+            .map(|(other, _)| other.clone())
+            .collect();
+
+        for other in &dependents {
+            self.publish(other, out)?;
+        }
+
+        if !dependents.is_empty() {
+            super::rpc::request(out, "workspace/inlayHint/refresh", serde_json::Value::Null)?;
+        }
+
+        Ok(())
     }
 
     /*

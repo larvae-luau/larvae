@@ -342,7 +342,13 @@ impl Server {
             .map(|s| render(s, src, &lines))
             .collect();
 
-        json!(out)
+        let answer = json!(out);
+
+        self.hint_cache
+            .borrow_mut()
+            .insert(uri.to_string(), answer.clone());
+
+        answer
     }
 }
 
@@ -497,6 +503,22 @@ impl Server {
 
         if !cfg.variable_types && !cfg.parameter_types && !cfg.function_return_types && names == 0 {
             return json!([]);
+        }
+
+        /*
+        While the author types, the hints hold still. A request that
+        lands mid-edit answers with the last settled hints, so the text
+        does not jump under the cursor, and the refresh after the pause
+        makes the editor ask again for fresh ones.
+        */
+        let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+        let typing = cfg.update_delay > 0
+            && self.hint_hold.get(uri).is_some_and(|at| {
+                at.elapsed() < std::time::Duration::from_millis(cfg.update_delay)
+            });
+
+        if typing && let Some(held) = self.hint_cache.borrow().get(uri) {
+            return held.clone();
         }
 
         let hints = self

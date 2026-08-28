@@ -278,6 +278,20 @@ pub struct InlayHintsConfig {
     /// The name of each parameter, before the argument that fills it
     #[serde(default)]
     pub parameter_names: ParameterNames,
+
+    /*
+    How long the hints hold still while the author types, in milliseconds.
+
+    A hint request that lands mid-edit answers with the last settled
+    hints, and one refresh follows the pause, so the text stops jumping
+    under the cursor. Zero turns the hold off and every request computes.
+    */
+    #[serde(default = "update_delay")]
+    pub update_delay: u64,
+}
+
+fn update_delay() -> u64 {
+    700
 }
 
 /// Which call arguments get a parameter name drawn before them.
