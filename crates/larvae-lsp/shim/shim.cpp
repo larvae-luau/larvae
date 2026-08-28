@@ -283,10 +283,38 @@ static bool usingNewSolver()
     return false;
 }
 
+/*
+The mode a module checks in, by what kind of file it is.
+
+A plain Luau file keeps the platform default: nonstrict, and its own hot
+comment wins over that as always. A worm-lowered module checks strict.
+Its text is generated, so its "mode" was never authored, and nonstrict
+butchered the types the worm worked to carry: a zero-parameter function
+in a nonstrict module reads as `(...any) -> T`, because a nonstrict
+function accepts anything. The data worm already wrote `--!strict` into
+its lowering for exactly this reason; deciding it here covers every
+resolving worm, and a hot comment in the source still wins.
+*/
+struct LarvaeConfigResolver : Luau::ConfigResolver
+{
+    Luau::Config defaultConfig;
+    Luau::Config strictConfig;
+
+    const Luau::Config& getConfig(const Luau::ModuleName& name, const Luau::TypeCheckLimits& limits) const override
+    {
+        (void)limits;
+
+        const bool luau = name.size() >= 5 && name.compare(name.size() - 5, 5, ".luau") == 0;
+        const bool lua = name.size() >= 4 && name.compare(name.size() - 4, 4, ".lua") == 0;
+
+        return (luau || lua) ? defaultConfig : strictConfig;
+    }
+};
+
 struct LarvaeSession
 {
     RustFileResolver files;
-    Luau::NullConfigResolver configs;
+    LarvaeConfigResolver configs;
     Luau::Frontend frontend;
 
     std::map<std::string, std::string> open;
@@ -332,6 +360,7 @@ struct LarvaeSession
     {
         files.open = &open;
         configs.defaultConfig.mode = Luau::Mode::Nonstrict;
+        configs.strictConfig.mode = Luau::Mode::Strict;
         applyRequiredFlags();
 
         Luau::registerBuiltinGlobals(frontend, frontend.globals, false);
