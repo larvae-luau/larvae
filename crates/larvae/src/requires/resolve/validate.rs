@@ -453,6 +453,18 @@ mod tests {
             ("/proj/src/client/main.luau", "/proj/src/shared/util.luau"),
             // shared -> shared
             ("/proj/src/shared/util.luau", "/proj/src/shared/math.luau"),
+            /*
+            The suffix decides the runtime side before the container does.
+
+            A `.server.luau` in a replicated folder is a Script with a
+            server RunContext: it runs on the server whatever its parent
+            replicates, so a require into a server container is its right.
+            luau-lsp fixed the same classification in its pull 1595.
+            */
+            (
+                "/proj/src/shared/boot.server.luau",
+                "/proj/src/server/keys.luau",
+            ),
         ] {
             assert!(check(from, to).is_empty(), "{from} -> {to}");
         }
