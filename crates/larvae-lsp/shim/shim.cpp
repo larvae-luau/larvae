@@ -265,6 +265,24 @@ static void enableAllFlags()
     }
 }
 
+/*
+Whether the session runs the new solver, read once per question.
+
+The new solver forces `forAutocomplete` off across the frontend, and its
+autocomplete reads the main globals, so the second globals table is never
+read at all. Everything that would fill it skips the work instead: the
+builtin registration, the definition files, and the script bindings. On
+this machine that is half the session build.
+*/
+static bool usingNewSolver()
+{
+    for (Luau::FValue<bool>* it = Luau::FValue<bool>::list; it; it = it->next)
+        if (strcmp(it->name, "LuauSolverV2") == 0)
+            return it->value;
+
+    return false;
+}
+
 struct LarvaeSession
 {
     RustFileResolver files;
@@ -302,6 +320,13 @@ struct LarvaeSession
     /* The declared type of `script`, per module. See larvae_set_script_type. */
     std::map<std::string, std::string> scriptTypes;
 
+    /*
+    Which solver this session was built for, read once. The flag is set
+    before the session is built and a later flip must not make the calls
+    below disagree with what the constructor registered.
+    */
+    const bool newSolver = usingNewSolver();
+
     LarvaeSession()
         : frontend(&files, &configs, options())
     {
@@ -310,9 +335,13 @@ struct LarvaeSession
         applyRequiredFlags();
 
         Luau::registerBuiltinGlobals(frontend, frontend.globals, false);
-        Luau::registerBuiltinGlobals(frontend, frontend.globalsForAutocomplete, true);
         Luau::freeze(frontend.globals.globalTypes);
-        Luau::freeze(frontend.globalsForAutocomplete.globalTypes);
+
+        if (!newSolver)
+        {
+            Luau::registerBuiltinGlobals(frontend, frontend.globalsForAutocomplete, true);
+            Luau::freeze(frontend.globalsForAutocomplete.globalTypes);
+        }
 
         /*
         `script` is bound per module, because it names a different instance in
@@ -689,26 +718,38 @@ not here.
 int larvae_set_definitions(LarvaeSession* s, const char* name, const char* source)
 {
     Luau::unfreeze(s->frontend.globals.globalTypes);
-    Luau::unfreeze(s->frontend.globalsForAutocomplete.globalTypes);
 
     Luau::LoadDefinitionFileResult result = s->frontend.loadDefinitionFile(
         s->frontend.globals, s->frontend.globals.globalScope, source, name, false, false);
 
-    Luau::LoadDefinitionFileResult forAutocomplete = s->frontend.loadDefinitionFile(
-        s->frontend.globalsForAutocomplete, s->frontend.globalsForAutocomplete.globalScope, source, name, false, true);
-
-    /*
-    Both tables get the handler, and the autocomplete one matters most: a
-    hover reads that table, so a handler only on the other one would leave
-    the card saying `Instance` while a completion knew better.
-    */
     attachServiceLookup(s->frontend.globals);
-    attachServiceLookup(s->frontend.globalsForAutocomplete);
     attachInstanceNew(s->frontend.globals);
-    attachInstanceNew(s->frontend.globalsForAutocomplete);
 
     Luau::freeze(s->frontend.globals.globalTypes);
-    Luau::freeze(s->frontend.globalsForAutocomplete.globalTypes);
+
+    /*
+    The second world exists for the old solver alone. There, a hover reads
+    the autocomplete table, so both take the same text and the same
+    handlers, or a card and a completion would disagree about what exists.
+    The new solver reads the main table for both and the second load would
+    be half the session build for nothing.
+    */
+    bool autocompleteOk = true;
+
+    if (!s->newSolver)
+    {
+        Luau::unfreeze(s->frontend.globalsForAutocomplete.globalTypes);
+
+        autocompleteOk = s->frontend
+                             .loadDefinitionFile(s->frontend.globalsForAutocomplete,
+                                 s->frontend.globalsForAutocomplete.globalScope, source, name, false, true)
+                             .success;
+
+        attachServiceLookup(s->frontend.globalsForAutocomplete);
+        attachInstanceNew(s->frontend.globalsForAutocomplete);
+
+        Luau::freeze(s->frontend.globalsForAutocomplete.globalTypes);
+    }
 
     if (!result.success && getenv("LARVAE_DEFS_DEBUG"))
     {
@@ -740,7 +781,7 @@ int larvae_set_definitions(LarvaeSession* s, const char* name, const char* sourc
         }
     }
 
-    return result.success && forAutocomplete.success ? 0 : 1;
+    return result.success && autocompleteOk ? 0 : 1;
 }
 
 void larvae_open(LarvaeSession* s, const char* path, const char* text)
@@ -789,13 +830,16 @@ rig keeps the old answer until something asks it to check again.
 void larvae_set_character_type(LarvaeSession* s, int kind)
 {
     Luau::unfreeze(s->frontend.globals.globalTypes);
-    Luau::unfreeze(s->frontend.globalsForAutocomplete.globalTypes);
-
     applyCharacterType(s->frontend.globals, kind);
-    applyCharacterType(s->frontend.globalsForAutocomplete, kind);
-
     Luau::freeze(s->frontend.globals.globalTypes);
-    Luau::freeze(s->frontend.globalsForAutocomplete.globalTypes);
+
+    // The second world exists for the old solver alone.
+    if (!s->newSolver)
+    {
+        Luau::unfreeze(s->frontend.globalsForAutocomplete.globalTypes);
+        applyCharacterType(s->frontend.globalsForAutocomplete, kind);
+        Luau::freeze(s->frontend.globalsForAutocomplete.globalTypes);
+    }
 
     /*
     A module that was already checked holds the answer the old rig gave. The
