@@ -859,9 +859,27 @@ The type graph is retained, because everything a hover reads lives in it. A
 module checked once without it keeps an empty arena, so the module is marked
 dirty first or the second check gives the same empty answer back.
 */
+/*
+The checked module for a path, wherever the solver put it.
+
+The old solver keeps a second module set for autocomplete, and the hover
+path reads that one for its retained type graphs. The new solver forces
+`forAutocomplete` off inside the frontend, so everything lands in the main
+resolver and the autocomplete set stays empty. Reading only the second set
+answered every hover with nothing the moment a project turned the new
+solver on, while completions kept working through Luau's own path.
+*/
+static Luau::ModulePtr checkedModule(LarvaeSession* s, const Luau::ModuleName& name)
+{
+    if (Luau::ModulePtr module = s->frontend.moduleResolverForAutocomplete.getModule(name))
+        return module;
+
+    return s->frontend.moduleResolver.getModule(name);
+}
+
 static Luau::ModulePtr strictCheck(LarvaeSession* s, const char* path)
 {
-    Luau::ModulePtr had = s->frontend.moduleResolverForAutocomplete.getModule(path);
+    Luau::ModulePtr had = checkedModule(s, path);
 
     if (had && had->internalTypes->types.empty())
         s->frontend.markDirty(path);
@@ -884,7 +902,7 @@ static Luau::ModulePtr strictCheck(LarvaeSession* s, const char* path)
         return nullptr;
     }
 
-    return s->frontend.moduleResolverForAutocomplete.getModule(path);
+    return checkedModule(s, path);
 }
 
 /*
@@ -1750,7 +1768,7 @@ static std::string documentationOfNode(
         if (imported == walk->importedModules.end())
             continue;
 
-        Luau::ModulePtr other = s->frontend.moduleResolverForAutocomplete.getModule(imported->second);
+        Luau::ModulePtr other = checkedModule(s, imported->second);
 
         if (!other)
             return {};

@@ -1238,6 +1238,35 @@ mod flags {
         );
     }
 
+    /*
+    A hover answers under the new solver.
+
+    The new solver forces `forAutocomplete` off inside the frontend, so
+    every checked module lands in the main resolver and the autocomplete
+    set stays empty. The hover path read only the second set, and every
+    hover answered nothing the moment a project turned the solver on,
+    while completions kept working through Luau's own path.
+    */
+    #[test]
+    fn a_hover_answers_under_the_new_solver() {
+        let _flags = Flags::hold();
+
+        let mut flags = FFlagsConfig::default();
+        flags.enable_new_solver = true;
+
+        apply_flags(&flags);
+
+        let mut analysis = LuauAnalysis::new();
+        let path = std::path::Path::new("/t.luau");
+
+        analysis.open(path, "--!strict\nlocal total = 1 + 2\nreturn total\n");
+
+        assert_eq!(
+            analysis.hover(path, 16, false, false).as_deref(),
+            Some("local total: number")
+        );
+    }
+
     /// Turning every flag on must not stop the types loading.
     #[test]
     fn every_flag_on_still_loads_the_types() {
