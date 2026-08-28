@@ -99,14 +99,30 @@ impl Server {
 
                 // A syntax error is one diagnostic, and it stops the other checks.
                 Err(e) => {
-                    let at = e.offset as u32;
+                    /*
+                    One break, one message, and Luau's own words where the
+                    analyzer is landed: its parse errors ride the check
+                    below, spelled the way every Luau reader knows them.
+                    larvae's spelling stands in while the session loads,
+                    and for the files no analyzer reads.
+                    */
+                    let luau_speaks =
+                        self.lsp.analyzer && path.is_some() && self.analysis.borrow().is_some();
 
-                    vec![json!({
-                        "range": lines.range(src, (at, at + 1)),
-                        "severity": 1,
-                        "source": "larvae",
-                        "message": e.message,
-                    })]
+                    match luau_speaks {
+                        true => Vec::new(),
+
+                        false => {
+                            let at = e.offset as u32;
+
+                            vec![json!({
+                                "range": lines.range(src, (at, at + 1)),
+                                "severity": 1,
+                                "source": "larvae",
+                                "message": e.message,
+                            })]
+                        }
+                    }
                 }
             },
         };

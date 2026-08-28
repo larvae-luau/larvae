@@ -198,6 +198,40 @@ fn a_clean_document_produces_no_diagnostics() {
 }
 
 /*
+With an analyzer landed, the syntax error is Luau's to report.
+
+Luau's parse errors ride its check in Luau's own words, so larvae's
+spelling would say the same break twice. larvae speaks only while the
+session is loading, and for the files no analyzer reads.
+*/
+#[test]
+fn the_analyzer_speaks_the_syntax_error_alone() {
+    let mut server = Server {
+        analysis: std::cell::RefCell::new(Some(Box::new(BytecodeAnalysis))),
+        ..Server::default()
+    };
+    let mut out = Vec::new();
+
+    server
+        .handle(
+            &message(
+                "textDocument/didOpen",
+                None,
+                json!({ "textDocument": { "uri": "file:///t.luau", "text": "local a =\n" } }),
+            ),
+            &mut out,
+        )
+        .unwrap();
+
+    let published = String::from_utf8(out).unwrap();
+
+    assert!(
+        !published.contains("syntax error"),
+        "larvae repeats the break Luau reports: {published}"
+    );
+}
+
+/*
 The server must publish an excluded file as empty and not skip it.
 Otherwise the old diagnostics would stay on screen until the editor
 closed the file.
