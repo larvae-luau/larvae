@@ -83,10 +83,16 @@ pub fn for_range(uri: &str, text: &str, range: &Value, cfg: &LintConfig) -> Vec<
         out.push(json!({
             "title": title,
             "kind": "quickfix",
+            /*
+            A diagnostic requires its message. The entry shipped without
+            one, and the editor's client threw converting it, which failed
+            the whole code action reply rather than one entry.
+            */
             "diagnostics": [{
                 "range": lines.range(text, finding.span),
                 "source": "larvae",
                 "code": finding.lint,
+                "message": finding.message,
             }],
             "edit": { "changes": { uri: edits } },
         }));
