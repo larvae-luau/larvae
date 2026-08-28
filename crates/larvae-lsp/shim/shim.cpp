@@ -512,7 +512,7 @@ struct MagicNamedType : Luau::MagicFunction
         return true;
     }
 
-    std::optional<Luau::TypeId> named(Luau::Scope* scope, const Luau::AstExprCall& call) const
+    virtual std::optional<Luau::TypeId> named(Luau::Scope* scope, const Luau::AstExprCall& call) const
     {
         if (call.args.size < 1)
             return std::nullopt;
@@ -3035,11 +3035,10 @@ struct HintCollector : Luau::AstVisitor
         value expression cannot answer for every binding: one call fills
         several variables, and the call is one expression with one entry
         in the type map, so `local buf, rest = f()` hinted the first name
-        and went quiet on the rest.
+        and went quiet on the rest. The old solver's check retains no
+        scopes at all, and each binding falls back to its value there.
         */
         Luau::ScopePtr scope = Luau::findScopeAtPosition(*module, node->location.begin);
-        if (!scope)
-            return true;
 
         for (size_t i = 0; i < node->vars.size; ++i)
         {
@@ -3053,8 +3052,23 @@ struct HintCollector : Luau::AstVisitor
             if (strcmp(local->name.value, "_") == 0)
                 continue;
 
-            std::optional<Luau::TypeId> type = scope->lookup(local);
-            if (!type)
+            std::optional<Luau::TypeId> type = scope ? scope->lookup(local) : std::nullopt;
+
+            /*
+            The scope speaks first and the value expression covers what it
+            cannot say. The old solver's plain check keeps no scopes, and
+            its nonstrict scope binds a local as `any` even where the
+            value's type is known, so a scope answer that renders to
+            nothing hands over rather than going quiet.
+            */
+            std::optional<std::string> text = type ? render(*type) : std::nullopt;
+
+            if (!text && i < node->values.size)
+                if (auto* fallback = module->astTypes.find(node->values.data[i]))
+                    text = render(Luau::follow(*fallback));
+
+
+            if (!text)
                 continue;
 
             /*
@@ -3066,18 +3080,15 @@ struct HintCollector : Luau::AstVisitor
                 && Luau::get<Luau::FunctionType>(Luau::follow(*type)))
                 continue;
 
-            if (auto text = render(*type))
-            {
-                /*
-                Luau names a table type after the binding that holds it,
-                so `const EmptyStats = { ... }` rendered as `EmptyStats`.
-                A hint that repeats the variable's own name says nothing.
-                */
-                if (*text == local->name.value)
-                    continue;
+            /*
+            Luau names a table type after the binding that holds it, so
+            `const EmptyStats = { ... }` rendered as `EmptyStats`. A hint
+            that repeats the variable's own name says nothing.
+            */
+            if (*text == local->name.value)
+                continue;
 
-                found.push_back({local->location.end, {": " + *text, 1}});
-            }
+            found.push_back({local->location.end, {": " + *text, 1}});
         }
 
         return true;
@@ -3262,6 +3273,7 @@ struct HintCollector : Luau::AstVisitor
 size_t larvae_inlay_hints(LarvaeSession* s, const char* path, LarvaeHint* out, size_t cap,
                           int want_variables, int want_parameters, int want_returns, int name_mode)
 {
+
     auto it = s->open.find(path);
     if (it == s->open.end())
         return 0;
