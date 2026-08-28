@@ -906,6 +906,7 @@ impl crate::lsp::analysis::Analysis for BytecodeAnalysis {
 struct MockAnalysis {
     hooks: std::sync::Arc<std::sync::Mutex<Option<crate::lsp::analysis::ModuleHooks>>>,
     defs: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
+    invalidated: std::sync::Arc<std::sync::Mutex<Vec<std::path::PathBuf>>>,
 }
 
 impl crate::lsp::analysis::Analysis for MockAnalysis {
@@ -940,7 +941,9 @@ impl crate::lsp::analysis::Analysis for MockAnalysis {
         Vec::new()
     }
 
-    fn invalidate(&mut self, _: &std::path::Path) {}
+    fn invalidate(&mut self, path: &std::path::Path) {
+        self.invalidated.lock().unwrap().push(path.to_path_buf());
+    }
 }
 
 #[cfg(unix)]
@@ -950,22 +953,68 @@ type SharedDefs = std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>;
 
 #[cfg(unix)]
 fn server_with_lsp_worm(dir: &std::path::Path) -> (Server, SharedHooks, SharedDefs) {
+    server_with_lsp_worm_tracked(dir).0
+}
+
+type SharedPaths = std::sync::Arc<std::sync::Mutex<Vec<std::path::PathBuf>>>;
+
+#[cfg(unix)]
+fn server_with_lsp_worm_tracked(
+    dir: &std::path::Path,
+) -> ((Server, SharedHooks, SharedDefs), SharedPaths) {
     lsp_worm_that(dir);
 
     let hooks: SharedHooks = std::sync::Arc::new(std::sync::Mutex::new(None));
     let defs: SharedDefs = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let invalidated: SharedPaths = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
 
     let mut server = Server {
         analysis: std::cell::RefCell::new(Some(Box::new(MockAnalysis {
             hooks: hooks.clone(),
             defs: defs.clone(),
+            invalidated: invalidated.clone(),
         }))),
         ..Default::default()
     };
     server.worms = Pool::new(vec![spec(LSP_WORM, dir)], 1);
     server.install_lsp_hooks();
 
-    (server, hooks, defs)
+    ((server, hooks, defs), invalidated)
+}
+
+/*
+An edit to a claimed file reaches the analyzer as an invalidation.
+
+A plain Luau file requires the claimed one through the worm's lowering, and
+the analyzer caches that lowering by path. Without the invalidation, a
+saved data file kept every dependent on the old shape until a restart.
+*/
+#[cfg(unix)]
+#[test]
+fn a_claimed_file_edit_invalidates_the_analyzer() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let ((mut server, _hooks, _defs), invalidated) = server_with_lsp_worm_tracked(dir.path());
+    let mut out = Vec::new();
+
+    let uri = format!("file://{}/thing.x", dir.path().display());
+
+    server
+        .handle(
+            &message(
+                "textDocument/didOpen",
+                None,
+                json!({ "textDocument": { "uri": uri, "text": "data" } }),
+            ),
+            &mut out,
+        )
+        .unwrap();
+
+    let paths = invalidated.lock().unwrap();
+
+    assert!(
+        paths.iter().any(|p| p.ends_with("thing.x")),
+        "the claimed file never invalidated: {paths:?}"
+    );
 }
 
 /// Tier 1: the analyzer's resolution asks the worm first, over the pipe.

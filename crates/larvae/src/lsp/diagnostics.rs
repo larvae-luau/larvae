@@ -67,6 +67,21 @@ impl Server {
             );
         }
 
+        /*
+        A claimed file is a module of the analyzer too: a plain Luau file
+        requires it through the worm's lowering, and the analyzer caches
+        that lowering by path. Without the invalidation here, an edit to a
+        data file kept every dependent on the old shape until a restart:
+        the author saved a new field and the require still typed the old
+        table.
+        */
+        if let Some((path, _)) = claimed
+            && self.lsp.analyzer
+            && let Some(analysis) = self.analysis.borrow_mut().as_mut()
+        {
+            analysis.invalidate(path);
+        }
+
         let mut diagnostics = match claimed {
             Some((path, index)) => self.claimed_diagnostics(path, index, src, &lines),
 
