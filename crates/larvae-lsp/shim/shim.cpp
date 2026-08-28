@@ -2996,6 +2996,17 @@ struct HintCollector : Luau::AstVisitor
         if (!wantVariables)
             return true;
 
+        /*
+        The types come from the scope, the way luau-lsp reads them. The
+        value expression cannot answer for every binding: one call fills
+        several variables, and the call is one expression with one entry
+        in the type map, so `local buf, rest = f()` hinted the first name
+        and went quiet on the rest.
+        */
+        Luau::ScopePtr scope = Luau::findScopeAtPosition(*module, node->location.begin);
+        if (!scope)
+            return true;
+
         for (size_t i = 0; i < node->vars.size; ++i)
         {
             Luau::AstLocal* local = node->vars.data[i];
@@ -3004,15 +3015,21 @@ struct HintCollector : Luau::AstVisitor
             if (!local || local->annotation)
                 continue;
 
-            if (i >= node->values.size)
-                break;
+            // A discard is a discard. luau-lsp leaves `_` bare too.
+            if (strcmp(local->name.value, "_") == 0)
+                continue;
 
-            auto* type = module->astTypes.find(node->values.data[i]);
+            std::optional<Luau::TypeId> type = scope->lookup(local);
             if (!type)
                 continue;
 
-            // A discard is a discard. luau-lsp leaves `_` bare too.
-            if (strcmp(local->name.value, "_") == 0)
+            /*
+            A function written out in place carries its whole signature on
+            screen already, so a hint would repeat the line it sits on.
+            luau-lsp skips the same case.
+            */
+            if (i < node->values.size && node->values.data[i]->is<Luau::AstExprFunction>()
+                && Luau::get<Luau::FunctionType>(Luau::follow(*type)))
                 continue;
 
             if (auto text = render(*type))

@@ -2296,6 +2296,35 @@ mod inlay_hints {
         );
     }
 
+    /// One call fills several bindings, and every one hints its own type.
+    #[test]
+    fn a_multi_return_call_hints_every_binding() {
+        let src = "--!strict\nlocal function two(): (number, string)\n\treturn 1, \"x\"\nend\nlocal a, b = two()\nreturn { a, b }\n";
+        let found = labels(src);
+
+        assert!(
+            found.contains(&(4, ": number".to_owned())),
+            "the first binding hints: {found:?}"
+        );
+        assert!(
+            found.contains(&(4, ": string".to_owned())),
+            "the second binding hints: {found:?}"
+        );
+    }
+
+    /// A function written out in place carries its signature on screen already.
+    #[test]
+    fn a_literal_function_stays_bare() {
+        let src = "--!strict\nlocal f = function(n: number): number\n\treturn n\nend\nreturn f\n";
+        let found = labels(src);
+
+        assert_eq!(
+            found.iter().filter(|(l, _)| *l == 1).count(),
+            0,
+            "{found:?}"
+        );
+    }
+
     /// A discarded loop variable stays bare, the way luau-lsp leaves it.
     #[test]
     fn an_underscore_hints_nothing() {
