@@ -360,7 +360,14 @@ mod tests {
             root.join("pkg/helper.luau").to_str().unwrap(),
         )]);
 
-        let plan = plan(&root, &root.join("pkg/init.luau"), &g, true, ModuleIds::Paths).unwrap();
+        let plan = plan(
+            &root,
+            &root.join("pkg/init.luau"),
+            &g,
+            true,
+            ModuleIds::Paths,
+        )
+        .unwrap();
 
         assert_eq!(plan.entry, root.join("pkg"));
         assert_eq!(plan.modules.len(), 2, "{:?}", plan.modules);
