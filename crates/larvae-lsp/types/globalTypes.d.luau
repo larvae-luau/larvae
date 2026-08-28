@@ -65,7 +65,9 @@ type OpenCloudModel = any
 type ProductIdentifierArray = any
 type RankedItemArray = any
 type ReplicationPV = any
-type ScopedInstanceIdentity = any
+declare extern type ScopedInstanceIdentity with
+	function ResolveInstance(self, scope: Instance): Instance?
+end
 type SharedString = any
 type SystemAddress = any
 type UniqueId = any

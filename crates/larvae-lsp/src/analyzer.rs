@@ -2184,6 +2184,36 @@ mod type_completions {
         );
     }
 
+    /*
+    The identity type carries its one method, not `any`.
+
+    Upstream's dump stubs `ScopedInstanceIdentity`, and the patch script
+    gives it the shape luau-lsp's pull 1587 declares. `any` here would
+    mean the patch stopped applying.
+    */
+    #[test]
+    fn scoped_instance_identity_resolves_an_instance() {
+        let _luau = super::luau_globals::shared();
+
+        let mut analysis = LuauAnalysis::new();
+        let src = "--!strict\nlocal function f(id: ScopedInstanceIdentity, scope: Instance)\n\treturn id:ResolveInstance(scope)\nend\nreturn f\n";
+        let path = std::path::Path::new("/t.luau");
+
+        analysis.open(path, src);
+
+        let errors: Vec<String> = analysis
+            .check(path)
+            .into_iter()
+            .map(|d| d.message)
+            .collect();
+
+        assert_eq!(errors, Vec::<String>::new());
+
+        let at = src.find("ResolveInstance").expect("the call") as u32 + 3;
+        let card = analysis.hover(path, at, false, false).expect("a hover");
+
+        assert!(card.contains("Instance?"), "{card}");
+    }
 
     /*
     GetService answers with the sourcemap's service, children and all.
