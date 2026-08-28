@@ -301,6 +301,65 @@ fn visible_docs(docs: &str) -> String {
 }
 
 /*
+A key a dot cannot reach rewrites itself into brackets on accept.
+
+`t.Jump Force` is not Luau, so accepting `Jump Force` after a dot has
+to write `t["Jump Force"]`: the edit replaces what was typed with the
+bracketed key, in the quote `[fmt] quote_style` keeps, and one more
+edit removes the dot the author already wrote. The label stays as the
+key, so typing `Jum` keeps matching it.
+*/
+fn bracket_member_offers(items: &mut [Value], src: &str, at: u32, quote: char) {
+    let at = (at as usize).min(src.len());
+    let bytes = src.as_bytes();
+    let mut prefix = at;
+
+    while prefix > 0 && (bytes[prefix - 1].is_ascii_alphanumeric() || bytes[prefix - 1] == b'_') {
+        prefix -= 1;
+    }
+
+    // Only after a member dot; `..` is concatenation, not access.
+    if prefix == 0 || bytes[prefix - 1] != b'.' || (prefix >= 2 && bytes[prefix - 2] == b'.') {
+        return;
+    }
+
+    let lines = rpc::Lines::new(src);
+    let dot = (prefix - 1) as u32;
+
+    for item in items {
+        let Some(label) = item["label"].as_str().map(str::to_string) else {
+            continue;
+        };
+        let label = label.as_str();
+
+        let identifier = !label.is_empty()
+            && label
+                .chars()
+                .enumerate()
+                .all(|(i, c)| c == '_' || c.is_ascii_alphabetic() || (i > 0 && c.is_ascii_digit()));
+
+        // 14 is Keyword; a keyword after a dot is not a key of anything.
+        if identifier || item["kind"] == 14 {
+            continue;
+        }
+
+        let escaped = label
+            .replace('\\', "\\\\")
+            .replace(quote, &format!("\\{quote}"));
+
+        item["textEdit"] = json!({
+            "range": lines.range(src, (prefix as u32, at as u32)),
+            "newText": format!("[{quote}{escaped}{quote}]"),
+        });
+        item["additionalTextEdits"] = json!([{
+            "range": lines.range(src, (dot, dot + 1)),
+            "newText": "",
+        }]);
+        item["filterText"] = json!(label);
+    }
+}
+
+/*
 The binding name a module auto-import offers, or nothing.
 
 A name has to be writable as a Luau identifier to bind, a script is not
@@ -714,7 +773,13 @@ impl Server {
                 _ => Vec::new(),
             };
 
-            let base: Vec<Value> = items.drain(..).map(|c| completion_item(&c)).collect();
+            let mut base: Vec<Value> = items
+                .drain(..)
+                .filter(|c| !self.lsp.completion.hide_deprecated || !c.deprecated)
+                .map(|c| completion_item(&c))
+                .collect();
+
+            bracket_member_offers(&mut base, src, at, self.insert_quote());
 
             return self.worms.lsp_respond("completions", &context, json!(base));
         }
@@ -740,6 +805,7 @@ impl Server {
             .into_iter()
             // 14 is Keyword. A project that finds them noisy turns them off.
             .filter(|c| self.lsp.completion.show_keywords || c.kind != 14)
+            .filter(|c| !self.lsp.completion.hide_deprecated || !c.deprecated)
             .map(|c| {
                 let mut item = completion_item(&c);
 
@@ -775,12 +841,7 @@ impl Server {
             never needs an escape, so the two auto styles read as their
             preference alone, and `preserve` writes the default.
             */
-            let quote = match self.fmt.quote_style {
-                crate::fmt::config::QuoteStyle::AutoPreferSingle
-                | crate::fmt::config::QuoteStyle::ForceSingle => '\'',
-
-                _ => '"',
-            };
+            let quote = self.insert_quote();
 
             for service in analysis.services() {
                 if !service.starts_with(prefix.as_str())
@@ -860,6 +921,8 @@ impl Server {
             let _ = lines;
         }
 
+        bracket_member_offers(&mut items, src, at, self.insert_quote());
+
         // Tier 3: the worms that transform completions see the list first.
         self.worms
             .lsp_respond("completions", &context, json!(items))
@@ -906,6 +969,16 @@ impl Server {
             RequireStyle::NearestAbsolute => alias().or_else(game),
         }
         .unwrap_or_else(|| super::renames::relative_spec(requirer, spoken))
+    }
+
+    /// The quote an inserted string takes, from `[fmt] quote_style`.
+    fn insert_quote(&self) -> char {
+        match self.fmt.quote_style {
+            crate::fmt::config::QuoteStyle::AutoPreferSingle
+            | crate::fmt::config::QuoteStyle::ForceSingle => '\'',
+
+            _ => '"',
+        }
     }
 
     /// Reports if the `[lsp]` mode leaves this file to another server

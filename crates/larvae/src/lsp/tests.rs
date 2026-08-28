@@ -193,6 +193,281 @@ fn a_syntax_error_is_the_only_diagnostic_and_is_an_error() {
 }
 
 /*
+A deprecated use publishes as a struck-through hint, and the list can
+drop deprecated entries whole.
+
+Severity 4 draws no squiggle, tag 2 is the strikethrough. The hide is
+off by default: the strikethrough already says what the platform
+thinks, and hiding is a stance a project takes on purpose.
+*/
+#[test]
+fn deprecated_marks_publish_and_the_list_can_hide_them() {
+    struct Deprecating;
+
+    impl crate::lsp::analysis::Analysis for Deprecating {
+        fn open(&mut self, _: &std::path::Path, _: &str) {}
+
+        fn check(&mut self, _: &std::path::Path) -> Vec<crate::lsp::analysis::AnalysisDiag> {
+            Vec::new()
+        }
+
+        fn hover(&mut self, _: &std::path::Path, _: u32, _: bool, _: bool) -> Option<String> {
+            None
+        }
+
+        fn invalidate(&mut self, _: &std::path::Path) {}
+
+        fn deprecated_uses(
+            &mut self,
+            _: &std::path::Path,
+        ) -> Vec<crate::lsp::analysis::AnalysisDiag> {
+            vec![crate::lsp::analysis::AnalysisDiag {
+                span: (2, 8),
+                severity: 4,
+                message: "Member 'Instance.Remove' is deprecated".into(),
+                code: None,
+            }]
+        }
+
+        fn completions(
+            &mut self,
+            _: &std::path::Path,
+            _: u32,
+        ) -> Vec<crate::lsp::analysis::AnalysisCompletion> {
+            [("Remove", true), ("Destroy", false)]
+                .into_iter()
+                .map(
+                    |(label, deprecated)| crate::lsp::analysis::AnalysisCompletion {
+                        label: label.into(),
+                        kind: 3,
+                        detail: None,
+                        label_detail: None,
+                        insert_text: None,
+                        documentation: None,
+                        deprecated,
+                        type_correct: 0,
+                        wrong_index_type: false,
+                    },
+                )
+                .collect()
+        }
+    }
+
+    let mut server = Server {
+        analysis: std::cell::RefCell::new(Some(Box::new(Deprecating))),
+        ..Server::default()
+    };
+
+    let mut out = Vec::new();
+    server
+        .handle(
+            &message(
+                "textDocument/didOpen",
+                None,
+                json!({ "textDocument": { "uri": "file:///t.luau", "text": "p:Remove()\n" } }),
+            ),
+            &mut out,
+        )
+        .unwrap();
+
+    let published = String::from_utf8(out).unwrap();
+
+    assert!(
+        published.contains("\"tags\":[2]") && published.contains("deprecated"),
+        "{published}"
+    );
+
+    let items = server.completions(&json!({
+        "textDocument": { "uri": "file:///t.luau" },
+        "position": { "line": 0, "character": 0 },
+    }));
+
+    assert!(
+        items
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["label"] == "Remove"),
+        "listed by default: {items}"
+    );
+
+    server.lsp.completion.hide_deprecated = true;
+
+    let items = server.completions(&json!({
+        "textDocument": { "uri": "file:///t.luau" },
+        "position": { "line": 0, "character": 0 },
+    }));
+    let items = items.as_array().unwrap();
+
+    assert!(!items.iter().any(|i| i["label"] == "Remove"), "{items:?}");
+    assert!(items.iter().any(|i| i["label"] == "Destroy"), "{items:?}");
+}
+
+/*
+One deprecation, one voice.
+
+The platform's mark is the precise one, so a larvae `deprecated`
+finding that overlaps it stands down. A name only the project marked
+gets no platform mark, and larvae still speaks for it.
+*/
+#[test]
+fn the_platform_mark_wins_where_the_two_overlap() {
+    struct MarksChildren;
+
+    impl crate::lsp::analysis::Analysis for MarksChildren {
+        fn open(&mut self, _: &std::path::Path, _: &str) {}
+
+        fn check(&mut self, _: &std::path::Path) -> Vec<crate::lsp::analysis::AnalysisDiag> {
+            Vec::new()
+        }
+
+        fn hover(&mut self, _: &std::path::Path, _: u32, _: bool, _: bool) -> Option<String> {
+            None
+        }
+
+        fn invalidate(&mut self, _: &std::path::Path) {}
+
+        fn completions(
+            &mut self,
+            _: &std::path::Path,
+            _: u32,
+        ) -> Vec<crate::lsp::analysis::AnalysisCompletion> {
+            Vec::new()
+        }
+
+        fn deprecated_uses(
+            &mut self,
+            _: &std::path::Path,
+        ) -> Vec<crate::lsp::analysis::AnalysisDiag> {
+            // The span of `children` in the document below.
+            vec![crate::lsp::analysis::AnalysisDiag {
+                span: (2, 10),
+                severity: 4,
+                message:
+                    "Member 'Instance.children' is deprecated, use 'Instance.GetChildren' instead"
+                        .into(),
+                code: None,
+            }]
+        }
+    }
+
+    let mut server = Server {
+        analysis: std::cell::RefCell::new(Some(Box::new(MarksChildren))),
+        ..Server::default()
+    };
+    server.lint.std = crate::lint::config::StdLib::Roblox;
+
+    let mut out = Vec::new();
+    server
+        .handle(
+            &message(
+                "textDocument/didOpen",
+                None,
+                json!({ "textDocument": { "uri": "file:///t.luau", "text": "p:children()\n" } }),
+            ),
+            &mut out,
+        )
+        .unwrap();
+
+    let published = String::from_utf8(out).unwrap();
+
+    assert!(
+        published.contains("Instance.children"),
+        "the platform speaks: {published}"
+    );
+    assert!(
+        !published.contains("\"code\":\"deprecated\""),
+        "larvae's overlapping finding stands down: {published}"
+    );
+}
+
+/*
+A key a dot cannot reach rewrites itself into brackets on accept.
+
+`t.Jump Force` is not Luau: the offer's edit writes the bracketed key
+in the project's quote, and one more edit removes the dot the author
+typed. An ordinary identifier key keeps its plain insert.
+*/
+#[test]
+fn a_space_named_key_accepts_as_a_bracket_access() {
+    struct SpacedFields;
+
+    impl crate::lsp::analysis::Analysis for SpacedFields {
+        fn open(&mut self, _: &std::path::Path, _: &str) {}
+
+        fn check(&mut self, _: &std::path::Path) -> Vec<crate::lsp::analysis::AnalysisDiag> {
+            Vec::new()
+        }
+
+        fn hover(&mut self, _: &std::path::Path, _: u32, _: bool, _: bool) -> Option<String> {
+            None
+        }
+
+        fn invalidate(&mut self, _: &std::path::Path) {}
+
+        fn completions(
+            &mut self,
+            _: &std::path::Path,
+            _: u32,
+        ) -> Vec<crate::lsp::analysis::AnalysisCompletion> {
+            ["Jump Force", "Strength"]
+                .into_iter()
+                .map(|label| crate::lsp::analysis::AnalysisCompletion {
+                    label: label.into(),
+                    kind: 5,
+                    detail: None,
+                    label_detail: None,
+                    insert_text: None,
+                    documentation: None,
+                    deprecated: false,
+                    type_correct: 0,
+                    wrong_index_type: false,
+                })
+                .collect()
+        }
+    }
+
+    let mut server = Server {
+        analysis: std::cell::RefCell::new(Some(Box::new(SpacedFields))),
+        ..Server::default()
+    };
+    server.fmt.quote_style = crate::fmt::config::QuoteStyle::AutoPreferSingle;
+
+    let src = "local t = stats\nlocal x = t.Jum\n";
+    server.documents.insert("file:///t.luau".into(), src.into());
+
+    let items = server.completions(&json!({
+        "textDocument": { "uri": "file:///t.luau" },
+        "position": { "line": 1, "character": 15 },
+    }));
+    let items = items.as_array().cloned().unwrap_or_default();
+
+    let spaced = items
+        .iter()
+        .find(|i| i["label"] == "Jump Force")
+        .unwrap_or_else(|| panic!("the key offers: {items:?}"));
+
+    assert_eq!(spaced["textEdit"]["newText"], "['Jump Force']", "{spaced}");
+    assert_eq!(
+        spaced["textEdit"]["range"],
+        json!({ "start": { "line": 1, "character": 12 }, "end": { "line": 1, "character": 15 } }),
+        "{spaced}"
+    );
+    assert_eq!(
+        spaced["additionalTextEdits"][0]["range"],
+        json!({ "start": { "line": 1, "character": 11 }, "end": { "line": 1, "character": 12 } }),
+        "the dot goes: {spaced}"
+    );
+
+    let plain = items
+        .iter()
+        .find(|i| i["label"] == "Strength")
+        .expect("the plain key offers");
+
+    assert!(plain.get("textEdit").is_none(), "{plain}");
+}
+
+/*
 The hints hold still while the author types.
 
 A request that lands inside the update delay answers with the last
