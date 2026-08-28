@@ -494,6 +494,94 @@ pub fn apply_flags(flags: &larvae::config::lsp::FFlagsConfig) -> Vec<String> {
     unknown
 }
 
+/// What the config wrap inserts after `return `.
+const CONFIG_WRAP: &str = "_larvae_config_check(";
+
+/// The mode the view forces, so a wrong value errors instead of passing.
+const CONFIG_MODE: &str = "--!strict\n";
+
+/*
+The config view: strict mode on top, and `return <value>` wrapped in the
+check. The insertions come back sorted, in the file's own coordinates,
+and the shift helpers speak both directions from them.
+
+The last `return` of the file is the module's: a config file is one table
+returned at the end. A file still being typed may have none, and then
+nothing wraps and nothing shifts. A file that states its own mode keeps
+it, and only the wrap inserts.
+*/
+fn config_wrap(text: &str) -> Option<(String, Vec<(u32, u32)>)> {
+    let at = text
+        .match_indices("return")
+        .filter(|(i, _)| {
+            let before = text[..*i].chars().next_back();
+            let after = text[*i + 6..].chars().next();
+
+            before.is_none_or(|c| c.is_whitespace() || c == ';')
+                && after.is_none_or(|c| c.is_whitespace() || c == '(' || c == '{')
+        })
+        .map(|(i, _)| i)
+        .last()?;
+
+    let value_at = (at + "return".len() + 1).min(text.len()) as u32;
+    let (head, value) = text.split_at(value_at as usize);
+
+    let mut view = String::with_capacity(text.len() + 40);
+    let mut inserted = Vec::new();
+
+    if !text.trim_start().starts_with("--!") {
+        view.push_str(CONFIG_MODE);
+        inserted.push((0, CONFIG_MODE.len() as u32));
+    }
+
+    view.push_str(head);
+    view.push_str(CONFIG_WRAP);
+    inserted.push((value_at, CONFIG_WRAP.len() as u32));
+    view.push_str(value.trim_end());
+    view.push_str("\n)\n");
+
+    Some((view, inserted))
+}
+
+/// A position of the wrapped view, spoken in the file's own bytes.
+fn unwrapped(byte: u32, inserted: Option<&Vec<(u32, u32)>>) -> u32 {
+    let Some(inserted) = inserted else {
+        return byte;
+    };
+
+    let mut shifted = 0u32;
+
+    for (at, len) in inserted {
+        let start = at + shifted;
+
+        if byte < start {
+            break;
+        }
+
+        if byte < start + len {
+            return *at;
+        }
+
+        shifted += len;
+    }
+
+    byte - shifted
+}
+
+/// A position of the file, spoken in the wrapped view's bytes.
+fn wrapped(byte: u32, inserted: Option<&Vec<(u32, u32)>>) -> u32 {
+    let Some(inserted) = inserted else {
+        return byte;
+    };
+
+    inserted
+        .iter()
+        .filter(|(at, _)| byte >= *at)
+        .map(|(_, len)| len)
+        .sum::<u32>()
+        + byte
+}
+
 pub struct LuauAnalysis {
     session: *mut c_void,
     /// Owned by the session for its lifetime; the shim only borrows it
@@ -504,6 +592,15 @@ pub struct LuauAnalysis {
     services: Vec<String>,
     /// The Roblox reference, by documentation symbol
     docs: HashMap<String, DocEntry>,
+    /*
+    Where the `.config.luau` wrap sits, per open config file.
+
+    The session checks `return _larvae_config_check(<value>)`, so the
+    file's return typechecks against the config shape. Every position
+    after the insertion moved by the wrap's length, and these entries
+    are what moves them back and forth.
+    */
+    config_wraps: HashMap<PathBuf, Vec<(u32, u32)>>,
 }
 
 // One session, used from the one server thread; the raw pointer is why
@@ -537,6 +634,7 @@ impl LuauAnalysis {
             keys: HashMap::new(),
             services: Vec::new(),
             docs: read_api_docs(),
+            config_wraps: HashMap::new(),
         };
 
         /*
@@ -629,6 +727,8 @@ impl Analysis for LuauAnalysis {
         path: &Path,
         at: u32,
     ) -> Option<larvae::lsp::analysis::AnalysisLocation> {
+        let at = wrapped(at, self.config_wraps.get(path));
+
         self.locate(larvae_definition, path, at)
     }
 
@@ -637,6 +737,8 @@ impl Analysis for LuauAnalysis {
         path: &Path,
         at: u32,
     ) -> Option<larvae::lsp::analysis::AnalysisLocation> {
+        let at = wrapped(at, self.config_wraps.get(path));
+
         self.locate(larvae_type_definition, path, at)
     }
 
@@ -645,6 +747,7 @@ impl Analysis for LuauAnalysis {
         path: &Path,
         at: u32,
     ) -> Option<larvae::lsp::analysis::AnalysisSignature> {
+        let at = wrapped(at, self.config_wraps.get(path));
         let key = self.key(path);
 
         let mut sig = RawSignature {
@@ -700,6 +803,12 @@ impl Analysis for LuauAnalysis {
         returns: bool,
         names: u8,
     ) -> Vec<larvae::lsp::analysis::AnalysisHint> {
+        // A config file is data with a shape; a type hint there is noise,
+        // and the wrap would shift every column on the return line.
+        if self.config_wraps.contains_key(path) {
+            return Vec::new();
+        }
+
         let key = self.key(path);
 
         /*
@@ -827,7 +936,32 @@ impl Analysis for LuauAnalysis {
     }
 
     fn open(&mut self, path: &Path, text: &str) {
-        let Ok(text) = CString::new(text) else {
+        /*
+        `.config.luau` checks against its declared shape. The wrap turns
+        `return <value>` into `return _larvae_config_check(<value>)`, so
+        Luau validates the keys and offers them, the way luau-lsp's pull
+        1532 wires the same file. The closing brace goes on its own line,
+        so a comment trailing the value cannot eat it.
+        */
+        let viewed = match path.file_name().and_then(|n| n.to_str()) {
+            Some(".config.luau") => match config_wrap(text) {
+                Some((wrapped, inserted)) => {
+                    self.config_wraps.insert(path.to_path_buf(), inserted);
+
+                    Some(wrapped)
+                }
+
+                None => {
+                    self.config_wraps.remove(path);
+
+                    None
+                }
+            },
+
+            _ => None,
+        };
+
+        let Ok(text) = CString::new(viewed.as_deref().unwrap_or(text)) else {
             return;
         };
 
@@ -843,9 +977,11 @@ impl Analysis for LuauAnalysis {
 
         unsafe { raw.set_len(n) };
 
+        let wrap = self.config_wraps.get(path);
+
         raw.iter()
             .map(|d| AnalysisDiag {
-                span: (d.start, d.end),
+                span: (unwrapped(d.start, wrap), unwrapped(d.end, wrap)),
                 severity: d.severity,
                 message: unsafe { CStr::from_ptr(d.message) }
                     .to_string_lossy()
@@ -862,6 +998,7 @@ impl Analysis for LuauAnalysis {
         show_table_kinds: bool,
         include_string_length: bool,
     ) -> Option<String> {
+        let at = wrapped(at, self.config_wraps.get(path));
         let key = self.key(path);
 
         let text = unsafe {
@@ -886,6 +1023,7 @@ impl Analysis for LuauAnalysis {
     }
 
     fn completions(&mut self, path: &Path, at: u32) -> Vec<AnalysisCompletion> {
+        let at = wrapped(at, self.config_wraps.get(path));
         let key = self.key(path);
 
         /*
@@ -906,6 +1044,17 @@ impl Analysis for LuauAnalysis {
         let docs = &self.docs;
 
         raw.iter()
+            /*
+            The hidden namespace stays hidden here too. The sourcemap
+            types and the config check function spell themselves
+            `_larvae_`, no reader can write one, and a list that showed
+            them would bury the names the project wrote.
+            */
+            .filter(|c| {
+                !unsafe { CStr::from_ptr(c.label) }
+                    .to_string_lossy()
+                    .starts_with("_larvae_")
+            })
             .map(|c| AnalysisCompletion {
                 label: unsafe { CStr::from_ptr(c.label) }
                     .to_string_lossy()
@@ -944,6 +1093,7 @@ impl Analysis for LuauAnalysis {
     two answers belong to each other.
     */
     fn hover_documentation(&mut self, path: &Path, at: u32) -> Option<String> {
+        let at = wrapped(at, self.config_wraps.get(path));
         let key = self.key(path);
 
         let page = text(unsafe { larvae_documentation_symbol(self.session, key, at) })
@@ -1964,6 +2114,76 @@ mod type_completions {
                 .collect::<Vec<_>>()
         );
     }
+
+    /*
+    `.config.luau` checks against its shape and offers its keys.
+
+    The wrap happens in the session, so a wrong key errors, a wrong value
+    errors at the value's own bytes, and a completion inside the table
+    offers the config keys. The check function itself stays out of every
+    list, because its name is larvae's hidden spelling.
+    */
+    #[test]
+    fn a_config_file_speaks_its_own_shape() {
+        let _luau = super::luau_globals::shared();
+
+        let mut analysis = LuauAnalysis::new();
+        let path = std::path::Path::new("/proj/.config.luau");
+
+        let good = "return {\n\tlanguagemode = \"strict\",\n\tlint = { LocalUnused = false },\n}\n";
+        analysis.open(path, good);
+
+        let errors: Vec<String> = analysis
+            .check(path)
+            .into_iter()
+            .map(|d| d.message)
+            .collect();
+
+        assert_eq!(errors, Vec::<String>::new());
+
+        let bad = "return {\n\tlanguagemode = \"stric\",\n}\n";
+        analysis.open(path, bad);
+
+        let diags = analysis.check(path);
+
+        assert!(!diags.is_empty(), "a wrong mode has to error");
+
+        /*
+        Luau anchors the mismatch on the table argument, so the span is
+        the value after `return `, spoken in the file's own bytes. A span
+        still in view coordinates would start inside the wrap, before the
+        value, or run past the end of the file.
+        */
+        let (start, end) = diags[0].span;
+        let value_at = bad.find('{').expect("the table") as u32;
+
+        assert!(
+            start >= value_at && end <= bad.len() as u32,
+            "the span speaks the file's bytes: {start}..{end}"
+        );
+        assert!(
+            diags[0].message.contains("languagemode") || diags[0].message.contains("stric"),
+            "{}",
+            diags[0].message
+        );
+
+        let at = bad.find("languagemode").expect("inside the table") as u32;
+        let offered: Vec<String> = analysis
+            .completions(path, at)
+            .into_iter()
+            .map(|c| c.label)
+            .collect();
+
+        assert!(
+            offered.iter().any(|l| l == "typeerrors"),
+            "the config keys offer: {offered:?}"
+        );
+        assert!(
+            !offered.iter().any(|l| l.starts_with("_larvae_")),
+            "the hidden namespace leaked: {offered:?}"
+        );
+    }
+
 
     /*
     GetService answers with the sourcemap's service, children and all.

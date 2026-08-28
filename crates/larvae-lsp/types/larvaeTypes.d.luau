@@ -68,3 +68,55 @@ export type R6Character = Model & {
 	Animate: LocalScript,
 	Health: Script,
 }
+
+--[[
+The shape of `.config.luau`, Luau's config as code.
+
+The session wraps the file's return in `_larvae_config_check`, so the
+keys typecheck and the editor offers them. The names live in larvae's
+hidden spelling, and no completion list shows them. luau-lsp wires the
+same file the same way in its pull 1532.
+]]
+type _larvae_config_lints = {
+	["*"]: boolean?,
+	UnknownGlobal: boolean?,
+	DeprecatedGlobal: boolean?,
+	GlobalUsedAsLocal: boolean?,
+	LocalShadow: boolean?,
+	SameLineStatement: boolean?,
+	MultiLineStatement: boolean?,
+	LocalUnused: boolean?,
+	FunctionUnused: boolean?,
+	ImportUnused: boolean?,
+	BuiltinGlobalWrite: boolean?,
+	PlaceholderRead: boolean?,
+	UnreachableCode: boolean?,
+	UnknownType: boolean?,
+	ForRange: boolean?,
+	UnbalancedAssignment: boolean?,
+	ImplicitReturn: boolean?,
+	DuplicateLocal: boolean?,
+	FormatString: boolean?,
+	TableLiteral: boolean?,
+	UninitializedLocal: boolean?,
+	DuplicateFunction: boolean?,
+	DeprecatedApi: boolean?,
+	TableOperations: boolean?,
+	DuplicateCondition: boolean?,
+	MisleadingAndOr: boolean?,
+	CommentDirective: boolean?,
+	IntegerParsing: boolean?,
+	ComparisonPrecedence: boolean?,
+	RedundantNativeAttribute: boolean?,
+}
+
+type _larvae_config_file = {
+	languagemode: ("strict" | "nonstrict" | "nocheck")?,
+	lint: _larvae_config_lints?,
+	linterrors: boolean?,
+	typeerrors: boolean?,
+	globals: { string }?,
+	aliases: { [string]: string }?,
+}
+
+declare function _larvae_config_check(config: _larvae_config_file): _larvae_config_file
