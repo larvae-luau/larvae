@@ -212,6 +212,13 @@ Notable changes land here. Format follows
   purpose: a hash of a path is deterministic, so a list of likely paths
   recovers the names, and a number carries nothing to recover. The
   numbering follows the sorted paths, so a rebundle emits the same bytes
+- The server runs `rojo sourcemap --watch` itself, so the map follows
+  every file the project adds or moves, and `script.Parent.` completes
+  on a file made a minute ago. `[lsp] sourcemap_autogenerate` turns it
+  off, and `[lsp] rojo_project_file` names the project. The watch needs
+  rojo on the path; without it the server says so once and serves the
+  map it has. The watch dies with the server, on Linux even when the
+  editor kills it
 
 ### Changed
 

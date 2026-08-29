@@ -2310,6 +2310,17 @@
           "default": "sourcemap.json",
           "description": "The rojo sourcemap to read, relative to the root of the project. It gives every script the type of its own instance, so script.Parent and its neighbours resolve. A project without the file gets no instance tree and no message."
         },
+        "sourcemap_autogenerate": {
+          "type": "boolean",
+          "enum": [true, false],
+          "default": true,
+          "description": "The server runs rojo sourcemap --watch itself, so the map follows every file the project adds or moves. It needs rojo on the path and a rojo project file; without either the server says so once and serves the map it has."
+        },
+        "rojo_project_file": {
+          "type": "string",
+          "default": "default.project.json",
+          "description": "The rojo project the sourcemap watch reads, relative to the root of the project."
+        },
         "completion": {
           "$ref": "#/$defs/lsp_completion"
         },

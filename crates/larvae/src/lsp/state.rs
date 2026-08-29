@@ -244,6 +244,14 @@ impl Server {
             self.lsp.sourcemap = text.to_owned();
         }
 
+        if let Some(on) = editor(&["sourcemapAutogenerate"]).as_bool() {
+            self.lsp.sourcemap_autogenerate = on;
+        }
+
+        if let Some(text) = editor(&["rojoProjectFile"]).as_str() {
+            self.lsp.rojo_project_file = text.to_owned();
+        }
+
         /*
         Both spellings of each value are read, because the editor writes
         camelCase and the project file writes snake_case, and a value is
@@ -335,6 +343,9 @@ impl Server {
         */
         self.start_analysis();
         mark("analysis started");
+
+        self.ensure_sourcemap_watch(out)?;
+        mark("sourcemap watch");
 
         /*
         The analyzer receives the DataModel map, so `@game` resolves.
@@ -548,6 +559,102 @@ impl Server {
         }
 
         self.instances = read;
+    }
+
+    /*
+    Keep rojo writing the sourcemap, the way luau-lsp does.
+
+    The server only ever reads the file, so a project where nobody runs
+    `rojo sourcemap --watch` types a tree that stops matching the disk
+    the moment a file is added. With the setting on, the watch is the
+    server's own child: spawned once the config names a project file
+    that exists, respawned when the names change, killed with the
+    server. rojo missing from the path is said once and costs the
+    autogeneration alone.
+    */
+    pub(super) fn ensure_sourcemap_watch(&mut self, out: &mut impl Write) -> Result<()> {
+        let wanted = match (&self.root, self.lsp.sourcemap_autogenerate) {
+            (Some(root), true) => {
+                let project = root.join(&self.lsp.rojo_project_file);
+
+                project.is_file().then(|| {
+                    (
+                        root.clone(),
+                        self.lsp.rojo_project_file.clone(),
+                        self.lsp.sourcemap.clone(),
+                    )
+                })
+            }
+
+            _ => None,
+        };
+
+        if wanted == self.rojo_params {
+            // Same command, still running: nothing to do. A dead child restarts.
+            if let Some(child) = &mut self.rojo
+                && child.try_wait().ok().flatten().is_none()
+            {
+                return Ok(());
+            }
+
+            if wanted.is_none() {
+                return Ok(());
+            }
+        }
+
+        if let Some(mut old) = self.rojo.take() {
+            let _ = old.kill();
+            let _ = old.wait();
+        }
+
+        self.rojo_params = wanted.clone();
+
+        let Some((root, project, sourcemap)) = wanted else {
+            return Ok(());
+        };
+
+        let mut command = std::process::Command::new("rojo");
+        command
+            .arg("sourcemap")
+            .arg(&project)
+            .arg("--watch")
+            .arg("--output")
+            .arg(&sourcemap)
+            .current_dir(&root)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+
+        /*
+        The kernel ends the watch when the server dies, however it dies.
+        The event loop kills it on a clean stop, and an editor that kills
+        the server would otherwise leave a rojo behind, once per crash.
+        */
+        #[cfg(target_os = "linux")]
+        unsafe {
+            use std::os::unix::process::CommandExt;
+
+            command.pre_exec(|| {
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                Ok(())
+            });
+        }
+
+        match command.spawn() {
+            Ok(child) => self.rojo = Some(child),
+
+            Err(_) if !self.rojo_missing_said => {
+                self.rojo_missing_said = true;
+                info(
+                    out,
+                    "rojo is not on the path, so the sourcemap will not regenerate; run rojo sourcemap --watch yourself or set [lsp] sourcemap_autogenerate = false",
+                )?;
+            }
+
+            Err(_) => {}
+        }
+
+        Ok(())
     }
 
     /*
@@ -921,6 +1028,14 @@ fn snake(name: &str) -> String {
     }
 
     out
+}
+
+fn info(out: &mut impl Write, message: &str) -> Result<()> {
+    rpc::notify(
+        out,
+        "window/showMessage",
+        serde_json::json!({ "type": 3, "message": message }),
+    )
 }
 
 fn warn(out: &mut impl Write, message: &str) -> Result<()> {

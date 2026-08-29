@@ -142,12 +142,7 @@ fn lsp_subtable_keys_match_the_config() {
     let schema = schema();
 
     let real = |value: toml::Value| -> BTreeSet<String> {
-        value
-            .as_table()
-            .expect("a table")
-            .keys()
-            .cloned()
-            .collect()
+        value.as_table().expect("a table").keys().cloned().collect()
     };
 
     for (def, config) in [

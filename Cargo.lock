@@ -843,6 +843,7 @@ dependencies = [
  "eclipse_luau",
  "globset",
  "json5",
+ "libc",
  "mlua",
  "notify-debouncer-full",
  "rayon",

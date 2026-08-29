@@ -234,6 +234,12 @@ pub fn run_pending(analysis: Option<Pending>) -> Result<()> {
         }
     }
 
+    // The watch is this server's child; an orphan would outlive the editor.
+    if let Some(mut rojo) = server.rojo.take() {
+        let _ = rojo.kill();
+        let _ = rojo.wait();
+    }
+
     Ok(())
 }
 
@@ -325,6 +331,12 @@ struct Server {
     settle: Option<std::sync::mpsc::Sender<std::time::Instant>>,
     /// The document the last keystroke landed in, refreshed at the pause
     last_typed: Option<String>,
+    /// The rojo sourcemap watch this server owns, when the setting spawns one
+    rojo: Option<std::process::Child>,
+    /// What the running watch was spawned with, to respawn only on change
+    rojo_params: Option<(PathBuf, String, String)>,
+    /// The missing-rojo note is said once, not per config load
+    rojo_missing_said: bool,
     /*
     The instance tree of the rojo sourcemap, as types.
 
@@ -383,6 +395,9 @@ impl Default for Server {
             hint_cache: Default::default(),
             settle: None,
             last_typed: None,
+            rojo: None,
+            rojo_params: None,
+            rojo_missing_said: false,
             instances: instances::Instances::default(),
             sourcemap_stamp: None,
             sourcemap_config: String::new(),

@@ -85,6 +85,25 @@ pub struct LspConfig {
     */
     #[serde(default = "sourcemap")]
     pub sourcemap: String,
+
+    /*
+    Keep the sourcemap fresh by running rojo, the way luau-lsp does.
+
+    On, the server spawns `rojo sourcemap <project> --watch` when the
+    project file is there and rojo is on the path, so a new file or
+    folder types without anyone regenerating by hand. A project that
+    runs its own watch turns this off and nothing spawns.
+    */
+    #[serde(default = "on")]
+    pub sourcemap_autogenerate: bool,
+
+    /// The rojo project the sourcemap generates from
+    #[serde(default = "rojo_project")]
+    pub rojo_project_file: String,
+}
+
+fn rojo_project() -> String {
+    "default.project.json".to_string()
 }
 
 fn sourcemap() -> String {
