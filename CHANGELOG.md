@@ -57,7 +57,9 @@ Notable changes land here. Format follows
   instance, ex: `ModuleScript`, and not the name the generator made up. A
   file that a worm claims joins the tree beside the files rojo mapped: rojo
   writes the extensions it knows, and the build makes a module of a
-  `.luaux` all the same. `[lsp] sourcemap` names the file. A rewrite of it
+  `.luaux` all the same. A folder that holds only claimed files joins
+  too: rojo omits the whole folder, so the server synthesizes its node,
+  and the children hang from it. `[lsp] sourcemap` names the file. A rewrite of it
   reloads the tree on the next request
 - Completions inside `require("...")`. The list holds the aliases of
   `.luaurc` and of `larvae.toml`, then `@self/`, `@game/`, and the two

@@ -657,26 +657,45 @@ fn add_claimed(nodes: &mut Vec<Flat>, out: &mut Instances, generation: u64, clai
         return;
     }
 
-    for index in 0..nodes.len() {
+    // A while, not a range: the loop pushes folder nodes as it walks, and
+    // each one has to take its own turn or the walk stops one level deep.
+    let mut index = 0;
+
+    while index < nodes.len() {
         let Some(dir) = nodes[index].dir.clone() else {
+            index += 1;
+
             continue;
         };
 
         let Ok(read) = std::fs::read_dir(&dir) else {
+            index += 1;
+
             continue;
         };
 
-        let mut found: Vec<(String, PathBuf)> = Vec::new();
+        let mut found: Vec<(String, PathBuf, bool)> = Vec::new();
 
         for entry in read.flatten() {
             let path = entry.path();
+
+            /*
+            A directory rojo left out still counts when claimed files live
+            under it: rojo does not know the claimed extensions, so a
+            folder holding only them never reaches the map, and every
+            `script.Parent` walk through it went dark. It becomes a
+            Folder node here, and the loop reaches it later the same way
+            it reaches a mapped one, so the walk goes as deep as the
+            files do.
+            */
+            let folder = path.is_dir() && holds_claimed(&path, claimed, 8);
 
             let claims = path
                 .extension()
                 .and_then(|e| e.to_str())
                 .is_some_and(|ext| claimed.iter().any(|c| c.trim_start_matches('.') == ext));
 
-            if !claims || !path.is_file() {
+            if !(claims && path.is_file()) && !folder {
                 continue;
             }
 
@@ -688,30 +707,71 @@ fn add_claimed(nodes: &mut Vec<Flat>, out: &mut Instances, generation: u64, clai
                 continue;
             }
 
-            found.push((name.to_owned(), path));
+            found.push((name.to_owned(), path, folder));
         }
 
         // The order of a directory read is the filesystem's, and a tree is not.
         found.sort();
 
-        for (name, path) in found {
+        for (name, path, folder) in found {
             let child = nodes.len();
 
             nodes.push(Flat {
-                // The build makes a module of it, whatever the worm reads.
-                class_name: "ModuleScript".to_owned(),
+                // The build makes a module of a file, whatever the worm reads.
+                class_name: match folder {
+                    true => "Folder".to_owned(),
+
+                    false => "ModuleScript".to_owned(),
+                },
                 parent: Some(index),
                 fields: BTreeMap::new(),
-                dir: None,
+                dir: folder.then(|| path.clone()),
             });
 
-            out.script_types.insert(path, type_name(generation, child));
+            let class = if folder { "Folder" } else { "ModuleScript" };
+
+            if !folder {
+                out.script_types.insert(path, type_name(generation, child));
+            }
+
             out.classes
-                .insert(type_name(generation, child), "ModuleScript".to_owned());
+                .insert(type_name(generation, child), class.to_owned());
 
             nodes[index].fields.insert(name, child);
         }
+
+        index += 1;
     }
+}
+
+/// Whether any claimed file lives under `dir`, a few levels deep at most.
+fn holds_claimed(dir: &Path, claimed: &[String], depth: u8) -> bool {
+    if depth == 0 {
+        return false;
+    }
+
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return false;
+    };
+
+    for entry in read.flatten() {
+        let path = entry.path();
+
+        if path.is_file()
+            && path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|ext| claimed.iter().any(|c| c.trim_start_matches('.') == ext))
+        {
+            return true;
+        }
+
+        if path.is_dir() && holds_claimed(&path, claimed, depth - 1) {
+            return true;
+        }
+    }
+
+    false
 }
 
 /*
@@ -881,6 +941,44 @@ mod tests {
             read.definitions.contains("Providers:"),
             "{}",
             read.definitions
+        );
+    }
+
+    /*
+    A folder rojo never saw still reaches the tree when claimed files
+    live in it, however deep.
+    */
+    #[test]
+    fn a_claimed_only_folder_joins_the_tree() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        std::fs::create_dir_all(dir.path().join("src/Interface/Deep")).expect("makes it");
+        std::fs::write(dir.path().join("src/init.luau"), "return {}\n").expect("writes");
+        std::fs::write(dir.path().join("src/Interface/App.luaux"), "return 1\n").expect("writes");
+        std::fs::write(
+            dir.path().join("src/Interface/Deep/Leaf.luaux"),
+            "return 1\n",
+        )
+        .expect("writes");
+
+        let map = "{\"name\": \"game\", \"className\": \"DataModel\", \"children\": [{\
+             \"name\": \"app\", \"className\": \"ModuleScript\", \"filePaths\": [\"src/init.luau\"]}]}";
+        let path = write(dir.path(), map);
+
+        let read = read(&path, dir.path(), 3, &["luaux".into()]);
+
+        assert!(
+            read.definitions.contains("Interface"),
+            "the folder joins: {}",
+            read.definitions
+        );
+        assert!(
+            read.definitions.contains("Deep") && read.definitions.contains("Leaf"),
+            "the walk goes as deep as the files do: {}",
+            read.definitions
+        );
+        assert!(
+            read.script_types.keys().any(|p| p.ends_with("App.luaux")),
+            "the module under the folder gets its script type"
         );
     }
 
