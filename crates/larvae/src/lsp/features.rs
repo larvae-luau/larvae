@@ -281,6 +281,150 @@ the interesting line uses. luau-lsp hides a fence line that starts with
 `$`, so a doc written for either server renders the same. Only a `luau`
 fence hides them: a dollar elsewhere in prose is a dollar.
 */
+/*
+Where a hover on a declaration keyword should point instead.
+
+`const`, `local`, and `export` declare something, and a hover on the
+keyword should answer with what they declare, so the redirect returns
+the offset of the bound name. `export` redirects only while the session
+parses value exports; switched off, the analyzer's own error-type
+answer stands, which is the true state of that file.
+*/
+pub(super) fn dialect_target(src: &str, at: u32, export_values: bool) -> Option<u32> {
+    use crate::syntax::lexer::TokKind;
+
+    let lexed = crate::syntax::lexer::lex(src).ok()?;
+    let toks = &lexed.toks;
+
+    let k = toks
+        .iter()
+        .position(|t| t.start <= at && at < t.end && matches!(t.kind, TokKind::Ident))?;
+
+    let name_after = |mut j: usize| -> Option<u32> {
+        if toks.get(j).is_some_and(|t| t.text(src) == "function") {
+            j += 1;
+        }
+
+        let t = toks.get(j)?;
+
+        matches!(t.kind, TokKind::Ident).then_some(t.start)
+    };
+
+    match toks[k].text(src) {
+        "const" | "local" => name_after(k + 1),
+
+        "export" if export_values => match toks.get(k + 1)?.text(src) {
+            "local" | "const" => name_after(k + 2),
+            "function" => name_after(k + 1),
+
+            _ => None,
+        },
+
+        _ => None,
+    }
+}
+
+/*
+The author's own spelling on a hover card.
+
+The analyzer reads `local` where the file says `const` or
+`export local`, so its card starts with `local`. This looks up the
+declaration of the hovered name in the file and puts the dialect's
+words back. The nearest declaration at or above the hover wins, so a
+shadowing `local` inside a function keeps its own plain card.
+*/
+pub(super) fn dialect_label(src: &str, at: u32, text: &str) -> Option<String> {
+    use crate::syntax::lexer::TokKind;
+
+    let is_function = text.starts_with("function ");
+    let after = text
+        .strip_prefix("local ")
+        .or_else(|| text.strip_prefix("function "))?;
+
+    let name: String = after
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+
+    if name.is_empty() {
+        return None;
+    }
+
+    let lexed = crate::syntax::lexer::lex(src).ok()?;
+    let toks = &lexed.toks;
+
+    // Every declaration of the name: (keyword offset, const, exported)
+    let mut decls: Vec<(u32, bool, bool)> = Vec::new();
+
+    for (k, t) in toks.iter().enumerate() {
+        if !matches!(t.kind, TokKind::Ident) {
+            continue;
+        }
+
+        let exported = k > 0 && toks[k - 1].text(src) == "export";
+
+        match t.text(src) {
+            word @ ("const" | "local") => {
+                let mut j = k + 1;
+
+                if toks.get(j).is_some_and(|n| n.text(src) == "function") {
+                    j += 1;
+                }
+
+                // The binding list: plain names over commas, until anything else.
+                while let Some(n) = toks.get(j) {
+                    if !matches!(n.kind, TokKind::Ident) {
+                        break;
+                    }
+
+                    if n.text(src) == name {
+                        decls.push((t.start, word == "const", exported));
+                        break;
+                    }
+
+                    match toks.get(j + 1).map(|s| s.text(src)) {
+                        Some(",") => j += 2,
+
+                        _ => break,
+                    }
+                }
+            }
+
+            "function"
+                if exported
+                    && toks.get(k + 1).is_some_and(|n| {
+                        matches!(n.kind, TokKind::Ident) && n.text(src) == name
+                    }) =>
+            {
+                decls.push((t.start, false, true));
+            }
+
+            _ => {}
+        }
+    }
+
+    let &(_, is_const, exported) = decls
+        .iter()
+        .rfind(|d| d.0 <= at)
+        .or_else(|| decls.first())?;
+
+    if !is_const && !exported {
+        return None;
+    }
+
+    let mut out = text.to_string();
+
+    if is_const && !is_function {
+        out = out.replacen("local ", "const ", 1);
+    }
+
+    if exported {
+        out = format!("export {out}");
+    }
+
+    Some(out)
+}
+
 fn visible_docs(docs: &str) -> String {
     let mut out = String::with_capacity(docs.len());
     let mut in_luau_fence = false;
@@ -635,6 +779,21 @@ impl Server {
         let context = json!({ "path": path, "text": src, "offset": at });
 
         /*
+        A hover on `const`, `local`, or `export` answers with what the
+        keyword declares. The analyzer is asked at the bound name; the
+        context keeps the real cursor, so a worm's markup answer stays
+        where the author points.
+        */
+        let export_values = self
+            .lsp
+            .fflags
+            .over
+            .get("LuauExportValueSyntax")
+            .is_none_or(|v| v == "true");
+
+        let ask = dialect_target(src, at, export_values).unwrap_or(at);
+
+        /*
         A claimed file gets both halves, in the order the completions
         take: the analyzer answers first, over the worm's lowering with
         positions mapped by line, and the worm's respond hook sees that
@@ -656,12 +815,14 @@ impl Server {
 
                             a.hover(
                                 &path,
-                                lowered_offset(src, &lowered, at),
+                                lowered_offset(src, &lowered, ask),
                                 self.lsp.hover.show_table_kinds,
                                 self.lsp.hover.include_string_length,
                             )
                         })
                         .map(|text| {
+                            let text = dialect_label(src, ask, &text).unwrap_or(text);
+
                             json!({
                                 "contents": {
                                     "kind": "markdown",
@@ -686,15 +847,17 @@ impl Server {
 
             let text = a.hover(
                 &path,
-                at,
+                ask,
                 self.lsp.hover.show_table_kinds,
                 self.lsp.hover.include_string_length,
             )?;
 
-            Some((text, a.hover_documentation(&path, at)))
+            Some((text, a.hover_documentation(&path, ask)))
         }) else {
             return Value::Null;
         };
+
+        let text = dialect_label(src, ask, &text).unwrap_or(text);
 
         drop(analysis);
 
@@ -1156,5 +1319,120 @@ impl Server {
         }
 
         json!(out)
+    }
+}
+#[cfg(test)]
+mod dialect_hovers {
+    use super::{dialect_label, dialect_target};
+
+    fn at(src: &str, what: &str) -> u32 {
+        src.find(what).expect("the probe text is present") as u32
+    }
+
+    /// A hover on the keyword answers at the name it binds.
+    #[test]
+    fn keywords_point_at_their_binding() {
+        let src = "export local test = 3\n";
+
+        assert_eq!(
+            dialect_target(src, at(src, "export"), true),
+            Some(at(src, "test"))
+        );
+        assert_eq!(
+            dialect_target(src, at(src, "local"), true),
+            Some(at(src, "test"))
+        );
+
+        let src = "const t = 3\n";
+        assert_eq!(
+            dialect_target(src, at(src, "const"), true),
+            Some(at(src, "t ="))
+        );
+
+        let src = "local function f() end\n";
+        assert_eq!(dialect_target(src, 0, true), Some(at(src, "f()")));
+
+        let src = "export function go() end\n";
+        assert_eq!(dialect_target(src, 0, true), Some(at(src, "go")));
+    }
+
+    /*
+    With value exports off, `export` stays what the analyzer says it is,
+    which is an error. The flag is the author's choice, and the hover
+    does not paper over it.
+    */
+    #[test]
+    fn export_stays_alone_when_the_flag_is_off() {
+        let src = "export local test = 3\n";
+
+        assert_eq!(dialect_target(src, at(src, "export"), false), None);
+    }
+
+    /// `export type` is stock Luau, and the analyzer already answers it.
+    #[test]
+    fn export_type_is_not_redirected() {
+        let src = "export type T = number\n";
+
+        assert_eq!(dialect_target(src, 0, true), None);
+    }
+
+    /// The card reads `const` where the author wrote `const`.
+    #[test]
+    fn a_const_card_says_const() {
+        let src = "const t = 3\nprint(t)\n";
+
+        assert_eq!(
+            dialect_label(src, at(src, "t = 3"), "local t: number").as_deref(),
+            Some("const t: number")
+        );
+
+        // At the use site too: the declaration above the hover decides.
+        assert_eq!(
+            dialect_label(src, at(src, "t)"), "local t: number").as_deref(),
+            Some("const t: number")
+        );
+    }
+
+    /// The exported spellings come back whole.
+    #[test]
+    fn exported_cards_carry_the_export() {
+        let src = "export local test = 3\n";
+        assert_eq!(
+            dialect_label(src, at(src, "test"), "local test: number").as_deref(),
+            Some("export local test: number")
+        );
+
+        let src = "export const x = 1\n";
+        assert_eq!(
+            dialect_label(src, at(src, "x"), "local x: number").as_deref(),
+            Some("export const x: number")
+        );
+
+        let src = "export function go() end\n";
+        assert_eq!(
+            dialect_label(src, at(src, "go"), "function go(): ()").as_deref(),
+            Some("export function go(): ()")
+        );
+    }
+
+    /// A shadowing plain `local` keeps its plain card.
+    #[test]
+    fn a_shadow_keeps_its_own_card() {
+        let src = "const x = 1\nlocal function f()\n\tlocal x = 2\n\treturn x\nend\n";
+
+        assert_eq!(
+            dialect_label(src, at(src, "x = 2"), "local x: number"),
+            None
+        );
+        assert_eq!(
+            dialect_label(src, at(src, "x = 1"), "local x: number").as_deref(),
+            Some("const x: number")
+        );
+    }
+
+    /// A plain local needs no rewrite at all.
+    #[test]
+    fn a_plain_local_stays() {
+        assert_eq!(dialect_label("local y = 1\n", 6, "local y: number"), None);
     }
 }

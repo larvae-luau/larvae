@@ -212,6 +212,14 @@ Notable changes land here. Format follows
   purpose: a hash of a path is deterministic, so a list of likely paths
   recovers the names, and a number carries nothing to recover. The
   numbering follows the sorted paths, so a rebundle emits the same bytes
+- `export local x = 3` parses, types, and hovers. The syntax is Luau's,
+  behind its LuauExportValueSyntax flag, and larvae turns the flag on
+  because the dialect owns the spelling; `[lsp.fflags]` with
+  `LuauExportValueSyntax = "false"` restores stock parsing, and the
+  keyword then hovers as the error it is. A hover on `export`, `local`,
+  or `const` answers with the declaration itself, and the card speaks
+  the author's words: `export local test: number`, `const t: number`,
+  never a bare `local` for a binding the author spelled otherwise
 - Instance-form requires resolve: `require(script.Parent.Widget)`,
   `require(game.ReplicatedStorage.App)`, and the call spellings
   `GetService`, `FindFirstChild`, and `WaitForChild`. The chain maps

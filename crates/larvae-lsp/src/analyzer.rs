@@ -525,6 +525,18 @@ pub fn apply_flags(flags: &larvae::config::lsp::FFlagsConfig) -> Vec<String> {
         unsafe { larvae_set_flag(name.as_ptr(), on.as_ptr()) };
     }
 
+    /*
+    `export local x = 3` is part of larvae's dialect: the formatter lays
+    it out and the bundler keeps it. Luau parses it behind this flag, so
+    the flag goes on by default. It sits before the overrides, so
+    `LuauExportValueSyntax = "false"` still restores stock parsing.
+    */
+    if let Ok(name) = CString::new("LuauExportValueSyntax")
+        && let Ok(on) = CString::new("true")
+    {
+        unsafe { larvae_set_flag(name.as_ptr(), on.as_ptr()) };
+    }
+
     let mut unknown = Vec::new();
 
     for (name, value) in &flags.over {
@@ -1336,6 +1348,44 @@ mod studio_definitions {
         assert!(
             complaints.is_empty(),
             "GetService did not type check, so the platform types are not in: {complaints:?}"
+        );
+    }
+
+    /*
+    `export local x = 3` parses and types with larvae's default flags.
+
+    The syntax is larvae's dialect and Luau gates it behind
+    LuauExportValueSyntax, so apply_flags turns the flag on. Without it,
+    `export` reads as an expression and every hover on the line answered
+    `*error-type*`.
+    */
+    #[test]
+    fn export_local_type_checks_by_default() {
+        let _luau = super::luau_globals::shared();
+
+        apply_flags(&larvae::config::lsp::FFlagsConfig::default());
+
+        let mut analysis = LuauAnalysis::new();
+        let path = std::path::Path::new("/exports.luau");
+
+        analysis.open(path, "--!strict\nexport local test = 3\nprint(test)\n");
+
+        let complaints: Vec<String> = analysis
+            .check(path)
+            .into_iter()
+            .map(|d| d.message)
+            .collect();
+
+        assert!(
+            complaints.is_empty(),
+            "export local did not type check: {complaints:?}"
+        );
+
+        let hover = analysis.hover(path, "--!strict\nexport local ".len() as u32, false, false);
+
+        assert!(
+            hover.as_deref().is_some_and(|t| t.contains("test")),
+            "the binding does not hover: {hover:?}"
         );
     }
 
