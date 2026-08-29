@@ -96,19 +96,96 @@ struct RustFileResolver : Luau::FileResolver
     std::optional<Luau::ModuleInfo> resolveModule(
         const Luau::ModuleInfo* context, Luau::AstExpr* node, const Luau::TypeCheckLimits&) override
     {
-        if (!resolve || !context)
+        if (!resolve)
             return std::nullopt;
 
-        auto* expr = node->as<Luau::AstExprConstantString>();
-        if (!expr)
+        if (auto* expr = node->as<Luau::AstExprConstantString>())
+        {
+            if (!context)
+                return std::nullopt;
+
+            std::string spec(expr->value.data, expr->value.size);
+            const char* target = resolve(userdata, context->name.c_str(), spec.c_str());
+            if (!target)
+                return std::nullopt;
+
+            return Luau::ModuleInfo{target};
+        }
+
+        /*
+        The instance form arrives one hop at a time. The tracer resolves a
+        chain innermost first and threads each answer into the next call as
+        the context, so `script.Parent.Widget` is three calls, not one.
+
+        A hop appends one segment to a symbolic spec: `\x01game` opens a
+        chain at the DataModel, `\x01script\x02<path>` opens one at a
+        file's own node, and every later segment follows one `\x01`. The
+        resolver on the other side maps the chain through the mounts. A hop
+        it can answer becomes that file's path; a hop it cannot stays
+        symbolic, so a deeper hop can still finish the walk. No path and no
+        require spec starts with that byte, so nothing collides.
+        */
+        if (auto* global = node->as<Luau::AstExprGlobal>())
+        {
+            if (global->name == "game")
+                return Luau::ModuleInfo{"\x01game"};
+
+            // The script's node is the module the tracer already names.
+            if (global->name == "script" && context && !context->name.empty())
+                return Luau::ModuleInfo{context->name};
+
+            return std::nullopt;
+        }
+
+        std::string segment;
+
+        if (auto* index = node->as<Luau::AstExprIndexName>())
+        {
+            segment = std::string(index->index.value);
+        }
+        else if (auto* index = node->as<Luau::AstExprIndexExpr>())
+        {
+            auto* key = index->index->as<Luau::AstExprConstantString>();
+            if (!key)
+                return std::nullopt;
+
+            segment = std::string(key->value.data, key->value.size);
+        }
+        else if (auto* call = node->as<Luau::AstExprCall>())
+        {
+            auto* method = call->func->as<Luau::AstExprIndexName>();
+            if (!method || call->args.size < 1)
+                return std::nullopt;
+
+            std::string name(method->index.value);
+            if (name != "GetService" && name != "FindFirstChild" && name != "WaitForChild")
+                return std::nullopt;
+
+            auto* arg = call->args.data[0]->as<Luau::AstExprConstantString>();
+            if (!arg)
+                return std::nullopt;
+
+            segment = std::string(arg->value.data, arg->value.size);
+        }
+        else
+        {
+            return std::nullopt;
+        }
+
+        if (!context || context->name.empty() || segment.empty())
             return std::nullopt;
 
-        std::string spec(expr->value.data, expr->value.size);
+        std::string spec = context->name[0] == '\x01'
+            ? context->name
+            : "\x01script\x02" + context->name;
+        spec += '\x01';
+        spec += segment;
+
         const char* target = resolve(userdata, context->name.c_str(), spec.c_str());
-        if (!target)
-            return std::nullopt;
+        if (target)
+            return Luau::ModuleInfo{target};
 
-        return Luau::ModuleInfo{target};
+        return Luau::ModuleInfo{spec};
     }
 };
 

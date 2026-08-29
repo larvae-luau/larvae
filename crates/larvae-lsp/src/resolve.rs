@@ -89,6 +89,57 @@ pub fn resolve_spec(
     as_module_file(&joined, claimed)
 }
 
+/*
+An instance chain against the file that wrote it.
+
+`require(script.Parent.Widget)` and `require(game.ReplicatedStorage.App)`
+name modules by their place in the DataModel, not by a path. The shim walks
+the expression and hands the segments over; this maps them back to a file
+through the same mount table that answers `@game`.
+
+The first segment is the root: `game` starts at the DataModel, `script`
+starts at the requiring file's own node. `Parent` climbs; every other
+segment descends. `GetService`, `FindFirstChild`, and `WaitForChild`
+arrive as their string argument, so a call chain and a dot chain read
+the same here.
+*/
+pub fn resolve_chain(
+    from: &Path,
+    segments: &[String],
+    mounts: Option<&larvae::requires::datamodel::MountTable>,
+    claimed: &[String],
+) -> Option<PathBuf> {
+    let mounts = mounts?;
+    let (root, rest) = segments.split_first()?;
+
+    let mut dm = match root.as_str() {
+        "game" => Vec::new(),
+        "script" => mounts.dm_of(from)?.segments,
+
+        // The shim only sends these two roots; anything else is not a module.
+        _ => return None,
+    };
+
+    for seg in rest {
+        match seg.as_str() {
+            "Parent" => {
+                // A climb above the DataModel names nothing.
+                dm.pop()?;
+            }
+
+            _ => dm.push(seg.clone()),
+        }
+    }
+
+    if dm.is_empty() {
+        return None;
+    }
+
+    let base = mounts.fs_of(&dm)?;
+
+    as_module_file(&base, claimed)
+}
+
 /// The aliases of the nearest .luaurc walking up from the requiring file
 fn lookup_alias(from_dir: &Path, alias: &str) -> Option<PathBuf> {
     let want = alias.to_lowercase();
@@ -312,6 +363,143 @@ mod game_requires {
         assert_eq!(
             resolve_spec(&from, "@self/helper", Some(&table), &[]),
             Some(dir.path().join("tools/helper.luau"))
+        );
+    }
+}
+
+#[cfg(test)]
+mod instance_chains {
+    use super::*;
+    use larvae::requires::datamodel::{Mount, MountTable};
+
+    fn tree(files: &[&str]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("a temp dir");
+
+        for file in files {
+            let path = dir.path().join(file);
+            std::fs::create_dir_all(path.parent().expect("a parent")).expect("makes it");
+            std::fs::write(&path, "return {}\n").expect("writes");
+        }
+
+        dir
+    }
+
+    fn mounts(root: &Path) -> MountTable {
+        MountTable::new(vec![Mount {
+            fs: root.join("src/shared"),
+            dm: vec!["ReplicatedStorage".into()],
+        }])
+    }
+
+    fn segs(chain: &[&str]) -> Vec<String> {
+        chain.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    /// `script.Parent.Widget` finds the sibling file.
+    #[test]
+    fn a_sibling_resolves_through_script_parent() {
+        let dir = tree(&["src/shared/user.luau", "src/shared/Widget.luau"]);
+        let table = mounts(dir.path());
+
+        let found = resolve_chain(
+            &dir.path().join("src/shared/user.luau"),
+            &segs(&["script", "Parent", "Widget"]),
+            Some(&table),
+            &[],
+        );
+
+        assert_eq!(found, Some(dir.path().join("src/shared/Widget.luau")));
+    }
+
+    /// The game root walks from the DataModel, service first.
+    #[test]
+    fn a_game_chain_resolves_from_the_root() {
+        let dir = tree(&["src/shared/Widget.luau", "tools/build.luau"]);
+        let table = mounts(dir.path());
+
+        let found = resolve_chain(
+            &dir.path().join("tools/build.luau"),
+            &segs(&["game", "ReplicatedStorage", "Widget"]),
+            Some(&table),
+            &[],
+        );
+
+        assert_eq!(found, Some(dir.path().join("src/shared/Widget.luau")));
+    }
+
+    /*
+    A worm-claimed file is a module here too.
+
+    This is the shape the request names: `require(script.Parent.App)` where
+    App is App.luaux, or a data file a parse worm claims. The chain maps to
+    the same base path a string require maps to, so the claimed extension
+    probing is one shared rule.
+    */
+    #[test]
+    fn a_claimed_file_answers_the_chain() {
+        let dir = tree(&["src/shared/user.luau", "src/shared/App.luaux"]);
+        let table = mounts(dir.path());
+
+        let found = resolve_chain(
+            &dir.path().join("src/shared/user.luau"),
+            &segs(&["script", "Parent", "App"]),
+            Some(&table),
+            &["luaux".to_owned()],
+        );
+
+        assert_eq!(found, Some(dir.path().join("src/shared/App.luaux")));
+
+        // Without the claim the file is not a module, as with a string spec.
+        assert_eq!(
+            resolve_chain(
+                &dir.path().join("src/shared/user.luau"),
+                &segs(&["script", "Parent", "App"]),
+                Some(&table),
+                &[],
+            ),
+            None
+        );
+    }
+
+    /// An init file is its directory's node, so Parent climbs above the directory.
+    #[test]
+    fn an_init_file_climbs_from_its_directory() {
+        let dir = tree(&["src/shared/Pkg/init.luau", "src/shared/Other.luau"]);
+        let table = mounts(dir.path());
+
+        let found = resolve_chain(
+            &dir.path().join("src/shared/Pkg/init.luau"),
+            &segs(&["script", "Parent", "Other"]),
+            Some(&table),
+            &[],
+        );
+
+        assert_eq!(found, Some(dir.path().join("src/shared/Other.luau")));
+    }
+
+    /// A climb above the DataModel names nothing, and so does an unknown root.
+    #[test]
+    fn over_climbs_and_odd_roots_answer_nothing() {
+        let dir = tree(&["src/shared/user.luau"]);
+        let table = mounts(dir.path());
+        let from = dir.path().join("src/shared/user.luau");
+
+        assert_eq!(
+            resolve_chain(
+                &from,
+                &segs(&["script", "Parent", "Parent", "Parent", "Parent"]),
+                Some(&table),
+                &[],
+            ),
+            None
+        );
+        assert_eq!(
+            resolve_chain(&from, &segs(&["workspace", "Thing"]), Some(&table), &[]),
+            None
+        );
+        assert_eq!(
+            resolve_chain(&from, &segs(&["script", "Parent", "user"]), None, &[]),
+            None
         );
     }
 }

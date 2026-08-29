@@ -212,6 +212,13 @@ Notable changes land here. Format follows
   purpose: a hash of a path is deterministic, so a list of likely paths
   recovers the names, and a number carries nothing to recover. The
   numbering follows the sorted paths, so a rebundle emits the same bytes
+- Instance-form requires resolve: `require(script.Parent.Widget)`,
+  `require(game.ReplicatedStorage.App)`, and the call spellings
+  `GetService`, `FindFirstChild`, and `WaitForChild`. The chain maps
+  through the same mounts that answer `@game`, one hop at a time, the
+  way Luau traces it. A worm-claimed target lowers as it does for a
+  string require, so a `.luaux` component or a data file types through
+  the chain too
 - The server runs `rojo sourcemap --watch` itself, so the map follows
   every file the project adds or moves, and `script.Parent.` completes
   on a file made a minute ago. `[lsp] sourcemap_autogenerate` turns it

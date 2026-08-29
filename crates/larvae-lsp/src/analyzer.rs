@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::path::{Path, PathBuf};
 
-use crate::resolve::resolve_spec;
+use crate::resolve::{resolve_chain, resolve_spec};
 
 /*
 The Roblox global types, vendored beside the crate and refreshed by the
@@ -363,12 +363,60 @@ extern "C" fn resolve_cb(
             .map_or(std::ptr::null(), |c| c.as_ptr());
     }
 
-    let answer = resolve_spec(
-        Path::new(from.as_ref()),
-        &spec,
-        state.mounts.as_ref(),
-        &state.claims,
-    );
+    /*
+    A spec that opens with `\x01` is an instance chain the shim encoded:
+    `\x01game` then one `\x01` per segment, or `\x01script\x02<path>` with
+    the requiring file's own path embedded, because the shim resolves one
+    hop at a time and the hop's context is the only carrier of the origin.
+    No file on disk and no worm spells a require that way, so the marker
+    collides with nothing.
+    */
+    let answer = match spec.strip_prefix('\x01') {
+        Some(chain) => {
+            let decoded = if let Some(rest) = chain.strip_prefix("game") {
+                Some((
+                    Path::new(from.as_ref()).to_path_buf(),
+                    std::iter::once("game".to_owned())
+                        .chain(
+                            rest.split('\x01')
+                                .filter(|s| !s.is_empty())
+                                .map(str::to_owned),
+                        )
+                        .collect::<Vec<String>>(),
+                ))
+            } else {
+                chain.strip_prefix("script\x02").map(|rest| {
+                    let (origin, tail) = match rest.split_once('\x01') {
+                        Some((origin, tail)) => (origin, tail),
+
+                        None => (rest, ""),
+                    };
+
+                    (
+                        Path::new(origin).to_path_buf(),
+                        std::iter::once("script".to_owned())
+                            .chain(
+                                tail.split('\x01')
+                                    .filter(|s| !s.is_empty())
+                                    .map(str::to_owned),
+                            )
+                            .collect::<Vec<String>>(),
+                    )
+                })
+            };
+
+            decoded.and_then(|(origin, segments)| {
+                resolve_chain(&origin, &segments, state.mounts.as_ref(), &state.claims)
+            })
+        }
+
+        None => resolve_spec(
+            Path::new(from.as_ref()),
+            &spec,
+            state.mounts.as_ref(),
+            &state.claims,
+        ),
+    };
 
     if std::env::var_os("LARVAE_RESOLVE_DEBUG").is_some() {
         eprintln!(
@@ -1288,6 +1336,98 @@ mod studio_definitions {
         assert!(
             complaints.is_empty(),
             "GetService did not type check, so the platform types are not in: {complaints:?}"
+        );
+    }
+
+    /*
+    `require(script.Parent.Widget)` types like `require("./Widget")`.
+
+    The build resolves the instance form, and Studio runs it, so the editor
+    must type it. The shim walks the chain, the resolver maps it through the
+    mounts, and the frontend loads the file it names. `*error-type*` on the
+    required value is the failure this test pins down.
+    */
+    #[test]
+    fn an_instance_chain_require_type_checks() {
+        let _luau = super::luau_globals::shared();
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let shared = dir.path().join("src/shared");
+        std::fs::create_dir_all(&shared).expect("makes the tree");
+
+        std::fs::write(shared.join("Widget.luau"), "return { size = 5 }\n").expect("writes");
+
+        let user = shared.join("user.luau");
+        std::fs::write(&user, "").expect("writes");
+
+        let mut analysis = LuauAnalysis::new();
+        analysis.definitions("@roblox", GLOBAL_TYPES);
+        analysis.set_mounts(larvae::requires::datamodel::MountTable::new(vec![
+            larvae::requires::datamodel::Mount {
+                fs: shared.clone(),
+                dm: vec!["ReplicatedStorage".into()],
+            },
+        ]));
+
+        analysis.open(
+            &user,
+            "--!strict\nlocal w = require(script.Parent.Widget)\nlocal n: number = w.size\nreturn n\n",
+        );
+
+        /*
+        Without per-file script types, `script.Parent` is `Instance?` and
+        the value walk complains about that. The server sets those types
+        from the sourcemap; this harness measures require resolution, so
+        only the require and the module's own type matter here.
+        */
+        let complaints: Vec<String> = analysis
+            .check(&user)
+            .into_iter()
+            .map(|d| d.message)
+            .filter(|m| m.contains("require") || m.contains("size"))
+            .collect();
+
+        assert!(
+            complaints.is_empty(),
+            "script.Parent.Widget did not type check: {complaints:?}"
+        );
+    }
+
+    /// The call forms walk the same chain: GetService and WaitForChild.
+    #[test]
+    fn a_get_service_chain_require_type_checks() {
+        let _luau = super::luau_globals::shared();
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let shared = dir.path().join("src/shared");
+        std::fs::create_dir_all(&shared).expect("makes the tree");
+
+        std::fs::write(shared.join("Widget.luau"), "return { size = 5 }\n").expect("writes");
+
+        let user = dir.path().join("src/tool.luau");
+        std::fs::write(&user, "").expect("writes");
+
+        let mut analysis = LuauAnalysis::new();
+        analysis.definitions("@roblox", GLOBAL_TYPES);
+        analysis.set_mounts(larvae::requires::datamodel::MountTable::new(vec![
+            larvae::requires::datamodel::Mount {
+                fs: shared.clone(),
+                dm: vec!["ReplicatedStorage".into()],
+            },
+        ]));
+
+        analysis.open(
+            &user,
+            "--!strict\nlocal w = require(game:GetService(\"ReplicatedStorage\"):WaitForChild(\"Widget\"))\nlocal n: number = w.size\nreturn n\n",
+        );
+
+        let complaints: Vec<String> = analysis
+            .check(&user)
+            .into_iter()
+            .map(|d| d.message)
+            .collect();
+
+        assert!(
+            complaints.is_empty(),
+            "the GetService chain did not type check: {complaints:?}"
         );
     }
 
