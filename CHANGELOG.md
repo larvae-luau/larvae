@@ -6,6 +6,28 @@ Notable changes land here. Format follows
 
 ## Unreleased
 
+### Beyond luau-lsp
+
+The server tracks luau-lsp feature for feature. The points below have no
+counterpart there:
+
+- Worms extend the server itself. A worm lowers the modules it claims,
+  so `require("./data.json")` and a `.luaux` component carry real types.
+  A worm transforms hover, completions, and diagnostics before the
+  editor sees them, and lints plain Luau with its own rules. luau-lsp
+  has no extension point inside the server.
+- larvae's own lints run beside Luau's diagnostics, with levels up to
+  deny, in the editor and in `larvae lint` alike.
+- The dialect is served, not tolerated: `const` and `export local`
+  parse, type, and hover in the author's own words.
+- The oop worm holds the privacy line: an underscore or `@private`
+  member neither completes nor passes the lint outside its class.
+- `Player.Character` types as a real rig, R15 or R6, each part with its
+  own class and no cast.
+- The formatter lives in the same server: format follows `[fmt]`, and a
+  completion that rewrites `t.Jump Force` into bracket access keeps the
+  project's quote style.
+
 ### Added
 
 - larvae-lsp, the language server binary with Luau's analysis frontend
