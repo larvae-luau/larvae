@@ -99,6 +99,11 @@ impl Spec {
         !self.manifest.lints.is_empty()
     }
 
+    /// Report if other worms may serve the files this worm claims
+    pub fn shares(&self) -> bool {
+        self.manifest.frontend.as_ref().is_some_and(|f| f.shared)
+    }
+
     /*
     Report if the lints of larvae also run on the claimed files of this worm.
 
@@ -262,6 +267,21 @@ impl Pool {
     /// The same list, for the lint walk
     pub fn lint_claimed(&self) -> Vec<String> {
         Self::extensions(self.specs.iter().filter(|s| s.lints()))
+    }
+
+    /*
+    The worms whose Lint op reads plain Luau, by index.
+
+    These run over every `.luau` file after the builtin lints, and over
+    the Luau shadow of a claimed file when the claiming worm shares it.
+    */
+    pub fn luau_linters(&self) -> Vec<usize> {
+        self.specs
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.manifest.lints_luau && s.lints())
+            .map(|(index, _)| index)
+            .collect()
     }
 
     /*

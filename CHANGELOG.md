@@ -219,6 +219,14 @@ Notable changes land here. Format follows
   way Luau traces it. A worm-claimed target lowers as it does for a
   string require, so a `.luaux` component or a data file types through
   the chain too
+- Worms reach the files they do not claim. A worm that sets `lints_luau`
+  in its manifest runs its Lint op over every plain Luau file, after the
+  builtin lints and on the same levels and suppressions. A claiming worm
+  that sets `shared` under `[frontend]` consents to the same for its own
+  files: the foreign worm reads the byte-true Luau shadow, so a finding
+  lands on the author's line. The oop worm is the first reader: its
+  class conventions hold in `.luau` files and in shared `.luaux` files
+  alike, while resolve and respond hooks already served both
 - The server runs `rojo sourcemap --watch` itself, so the map follows
   every file the project adds or moves, and `script.Parent.` completes
   on a file made a minute ago. `[lsp] sourcemap_autogenerate` turns it

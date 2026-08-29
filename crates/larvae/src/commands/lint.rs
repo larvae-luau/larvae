@@ -118,7 +118,16 @@ formatter. The linter simply has nothing to report.
 */
 fn one(path: &Path, src: &str, cfg: &LintConfig, pool: &Pool) -> Result<Vec<Diag>, Diag> {
     let Some(index) = pool.frontend_for(path) else {
-        return lint(path, src, cfg);
+        let mut diags = lint(path, src, cfg)?;
+
+        // The worms that lint plain Luau speak after the builtin lints.
+        diags.extend(crate::lint::into_diags(
+            path,
+            src,
+            crate::lint::foreign(path, src, cfg, pool, None)?,
+        ));
+
+        return Ok(diags);
     };
 
     let findings = crate::lint::claimed(path, src, cfg, pool, index)?;

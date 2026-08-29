@@ -1095,6 +1095,14 @@ claims = [".luaux"]
 "#;
 
 fn spec(manifest: &str, dir: &std::path::Path) -> std::sync::Arc<crate::worm::pool::Spec> {
+    spec_with(manifest, dir, vec![".luaux".to_owned()])
+}
+
+fn spec_with(
+    manifest: &str,
+    dir: &std::path::Path,
+    claims: Vec<String>,
+) -> std::sync::Arc<crate::worm::pool::Spec> {
     std::sync::Arc::new(crate::worm::pool::Spec {
         manifest: crate::worm::manifest::Manifest::parse(manifest).unwrap(),
         artifact: Vec::new(),
@@ -1105,7 +1113,7 @@ fn spec(manifest: &str, dir: &std::path::Path) -> std::sync::Arc<crate::worm::po
         inherit_lints: None,
         inherit: Default::default(),
         requires: crate::worm::RequireOwner::Larvae,
-        claims: vec![".luaux".to_owned()],
+        claims,
     })
 }
 
@@ -1653,6 +1661,151 @@ fn a_claimed_file_edit_invalidates_the_analyzer() {
     assert!(
         paths.iter().any(|p| p.ends_with("thing.x")),
         "the claimed file never invalidated: {paths:?}"
+    );
+}
+
+/// A worm that lints plain Luau, over the real transport
+const LUAU_LINTER: &str = r#"
+name = "privy"
+api = 1
+form = "native"
+entry = "lintworm.py"
+lints_luau = true
+
+[lints.always]
+description = "fires once per file, to prove the dispatch"
+default = "warn"
+"#;
+
+/// A claiming worm that shares its files and hands back a byte-true shadow
+const SHARING_WORM: &str = r#"
+name = "markup"
+api = 1
+form = "native"
+entry = "shareworm.py"
+
+[frontend]
+claims = [".luaux"]
+shared = true
+
+[lints.own]
+description = "the claiming worm's own finding"
+default = "warn"
+"#;
+
+#[cfg(unix)]
+fn lint_worm_that(dir: &std::path::Path, script: &str, reply: &str) {
+    let path = dir.join(script);
+
+    std::fs::write(
+        &path,
+        format!(
+            r#"#!/usr/bin/env python3
+import sys, json, struct
+
+def read():
+    n = sys.stdin.buffer.read(4)
+    if len(n) < 4: sys.exit(0)
+    return json.loads(sys.stdin.buffer.read(struct.unpack("<I", n)[0]))
+
+def send(obj):
+    b = json.dumps(obj).encode()
+    sys.stdout.buffer.write(struct.pack("<I", len(b)) + b)
+    sys.stdout.buffer.flush()
+
+while True:
+    req = read()
+    if req["op"] == "init":
+        send({{"ok": True}})
+    elif req["op"] == "transform":
+        send({{"ok": True, "output": req["source"]}})
+    elif req["op"] == "lint":
+        send({reply})
+    else:
+        send({{"ok": False, "error": "unexpected op " + req["op"]}})
+"#
+        ),
+    )
+    .unwrap();
+
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/*
+A worm with `lints_luau` reports inside plain Luau files.
+
+The lint walk only asked the worm that claims a file, so a worm about
+conventions in ordinary code had no way to speak. The manifest key adds
+its Lint op after the builtin lints, on the same levels and suppressions.
+*/
+#[cfg(unix)]
+#[test]
+fn a_luau_linting_worm_reports_in_plain_files() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+
+    lint_worm_that(
+        dir.path(),
+        "lintworm.py",
+        r#"{"ok": True, "findings": [{"span": [0, 6], "lint": "always", "message": "the worm sees this file"}], "comments": []}"#,
+    );
+
+    let mut server = Server::default();
+    server.worms = Pool::new(vec![spec_with(LUAU_LINTER, dir.path(), vec![])], 1);
+
+    let uri = "file:///p/main.luau";
+    server.documents.insert(uri.into(), "return 1\n".into());
+
+    let diagnostics = published(&server, uri);
+    let text = diagnostics.to_string();
+
+    assert!(
+        text.contains("the worm sees this file"),
+        "the foreign finding never published: {text}"
+    );
+}
+
+/*
+A shared claimed file takes foreign findings, on the shadow's offsets.
+
+The claiming worm consents with `shared` and hands back its byte-true
+Luau shadow; a foreign `lints_luau` worm reads that shadow, so its spans
+land on the author's own bytes. Both worms' findings publish together.
+*/
+#[cfg(unix)]
+#[test]
+fn a_shared_claimed_file_takes_foreign_findings() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+
+    lint_worm_that(
+        dir.path(),
+        "shareworm.py",
+        r#"{"ok": True, "findings": [{"span": [0, 5], "lint": "own", "message": "the owner speaks"}], "comments": [], "luau": "local x = 1\n"}"#,
+    );
+    lint_worm_that(
+        dir.path(),
+        "lintworm.py",
+        r#"{"ok": True, "findings": [{"span": [6, 7], "lint": "always", "message": "the guest speaks"}], "comments": []}"#,
+    );
+
+    let mut server = Server::default();
+    server.worms = Pool::new(
+        vec![
+            spec_with(SHARING_WORM, dir.path(), vec![".luaux".to_owned()]),
+            spec_with(LUAU_LINTER, dir.path(), vec![]),
+        ],
+        1,
+    );
+
+    let uri = "file:///p/thing.luaux";
+    server.documents.insert(uri.into(), "local x = 1\n".into());
+
+    let text = published(&server, uri).to_string();
+
+    assert!(
+        text.contains("the owner speaks") && text.contains("the guest speaks"),
+        "expected both worms' findings: {text}"
     );
 }
 

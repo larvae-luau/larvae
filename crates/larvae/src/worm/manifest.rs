@@ -121,6 +121,16 @@ pub struct Frontend {
     */
     #[serde(default)]
     pub inherit_lints: bool,
+    /*
+    If true, other worms may serve the files this worm claims.
+
+    A worm that lints plain Luau can also read the Luau shadow of a
+    claimed file, but only the claiming worm knows whether a foreign
+    reading holds. So the claiming worm consents here, and without the
+    key its files stay its own.
+    */
+    #[serde(default)]
+    pub shared: bool,
 }
 
 /*
@@ -281,6 +291,15 @@ pub struct Manifest {
     /// The lints this worm reports on the files it claims
     #[serde(default)]
     pub lints: BTreeMap<String, LintDecl>,
+    /*
+    If true, the Lint op of this worm also runs over plain Luau files, and
+    over the Luau shadow of files another worm claims when that worm sets
+    `shared`. The findings pass through the same levels and suppressions
+    as every other lint. The worm receives Luau text either way, so one
+    Lint implementation serves both.
+    */
+    #[serde(default)]
+    pub lints_luau: bool,
     /// The settings this worm takes in `[worms.<name>.config]`
     #[serde(default)]
     pub options: BTreeMap<String, OptionDecl>,
@@ -361,19 +380,21 @@ impl Manifest {
             );
         }
 
-        if self.frontend.is_none() && !self.has_rules() && self.lsp.is_empty() {
+        if self.frontend.is_none() && !self.has_rules() && self.lsp.is_empty() && !self.lints_luau
+        {
             bail!(
-                "worm `{}` declares no frontend, no rules, and no [lsp] hooks, so it would never run",
+                "worm `{}` declares no frontend, no rules, no [lsp] hooks, and no lints_luau, so it would never run",
                 self.name
             );
         }
 
         /*
-        Lints run on the files a worm claims. Thus a lint with no claims has no
-        file it can see. Larvae requires the frontend at parse time. This is
-        clearer than a lint that silently does not fire.
+        Lints run on the files a worm claims, or on plain Luau under
+        `lints_luau`. A lint with neither has no file it can see. Larvae
+        requires one at parse time. This is clearer than a lint that
+        silently does not fire.
         */
-        if self.frontend.is_none() && !self.lints.is_empty() {
+        if self.frontend.is_none() && !self.lints.is_empty() && !self.lints_luau {
             bail!(
                 "worm `{}` declares lints but no [frontend], and claims are what say which files its lints run on",
                 self.name

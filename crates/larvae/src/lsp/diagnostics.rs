@@ -104,10 +104,25 @@ impl Server {
                     .map(crate::syntax::parser::ParseOptions::for_path)
                     .unwrap_or_default(),
             ) {
-                Ok(findings) => findings
-                    .into_iter()
-                    .map(|f| diagnostic(src, &lines, f))
-                    .collect::<Vec<_>>(),
+                Ok(mut findings) => {
+                    /*
+                    The worms that lint plain Luau speak after the builtin
+                    lints. A worm that fails stays quiet here, because one
+                    broken worm must not take the diagnostics of every
+                    Luau file down with it.
+                    */
+                    if let Some(path) = path.as_deref()
+                        && let Ok(more) =
+                            lint::foreign(path, src, &self.lint, &self.worms, None)
+                    {
+                        findings.extend(more);
+                    }
+
+                    findings
+                        .into_iter()
+                        .map(|f| diagnostic(src, &lines, f))
+                        .collect::<Vec<_>>()
+                }
 
                 // A syntax error is one diagnostic, and it stops the other checks.
                 Err(e) => {

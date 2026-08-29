@@ -416,6 +416,20 @@ pub fn claimed(
         }
     }
 
+    /*
+    The foreign worms that lint Luau read the shadow, with consent.
+
+    The shadow keeps every byte offset, so a foreign finding lands on the
+    author's own line. The projection does not, and a foreign worm did not
+    choose that view, so a shared file without a shadow gets no foreign
+    findings rather than misplaced ones.
+    */
+    if spec.shares()
+        && let Some(shadow) = reply.as_ref().and_then(|r| r.luau.as_ref())
+    {
+        findings.extend(foreign(path, shadow, cfg, pool, Some(index))?);
+    }
+
     if let Some(reply) = reply {
         findings.extend(worm_findings(
             path,
@@ -429,6 +443,46 @@ pub fn claimed(
 
     // A stable sort keeps an inherited finding before a worm finding on one byte.
     findings.sort_by_key(|f| f.span.0);
+
+    Ok(findings)
+}
+
+/*
+Every finding of the worms that lint plain Luau.
+
+`text` is the file for a `.luau` walk, and the byte-true Luau shadow for a
+shared claimed file, so every span already lies on the author's source.
+`skip` leaves out the claiming worm itself, whose own Lint op already ran.
+*/
+pub fn foreign(
+    path: &Path,
+    text: &str,
+    cfg: &LintConfig,
+    pool: &crate::worm::pool::Pool,
+    skip: Option<usize>,
+) -> Result<Vec<Finding>, Diag> {
+    let mut findings = Vec::new();
+
+    for index in pool.luau_linters() {
+        if Some(index) == skip {
+            continue;
+        }
+
+        let spec = pool.spec(index);
+
+        let reply = pool
+            .lint(index, text)
+            .map_err(|e| Diag::error(path, format!("{e:#}")))?;
+
+        findings.extend(worm_findings(
+            path,
+            text,
+            reply,
+            cfg,
+            &spec.manifest.lints,
+            &spec.manifest.name,
+        )?);
+    }
 
     Ok(findings)
 }
