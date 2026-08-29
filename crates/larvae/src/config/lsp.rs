@@ -11,7 +11,7 @@ the flip will be a stated breaking change.
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub struct LspConfig {
     /// Off answers every request with nothing, so another server owns the files
     #[serde(default = "on")]
@@ -100,6 +100,17 @@ pub struct LspConfig {
     /// The rojo project the sourcemap generates from
     #[serde(default = "rojo_project")]
     pub rojo_project_file: String,
+
+    /*
+    The editor settings of the worms: `[lsp.oop]` holds the settings of
+    the worm named oop. The keys are free here because each worm
+    declares its own under `[options]` in its manifest; the server
+    checks every key against that declaration and says so when one does
+    not fit. A key that names no worm gets the same message, which is
+    what `deny_unknown_fields` used to answer with a parse error.
+    */
+    #[serde(default, flatten)]
+    pub worms: std::collections::BTreeMap<String, toml::Value>,
 }
 
 fn rojo_project() -> String {
@@ -554,8 +565,19 @@ mod tests {
         );
     }
 
+    /*
+    An unknown key parses into the worm-settings map, and the server
+    refuses it there, naming it in a warning. The parse cannot refuse
+    it any more, because `[lsp.oop]` is legal and the worm names are
+    not known until the pool loads.
+    */
     #[test]
-    fn an_unknown_key_is_refused_like_everywhere_else() {
-        assert!(toml::from_str::<LspConfig>("clam_only = true").is_err());
+    fn an_unknown_key_lands_in_the_worm_settings() {
+        let cfg = toml::from_str::<LspConfig>("clam_only = true").expect("parses");
+
+        assert_eq!(
+            cfg.worms.get("clam_only"),
+            Some(&toml::Value::Boolean(true))
+        );
     }
 }

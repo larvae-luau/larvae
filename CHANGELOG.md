@@ -220,6 +220,12 @@ Notable changes land here. Format follows
   or `const` answers with the declaration itself, and the card speaks
   the author's words: `export local test: number`, `const t: number`,
   never a bare `local` for a binding the author spelled otherwise
+- `[lsp.<worm>]` holds the editor settings of one worm: `[lsp.oop]`
+  `hide_private_completions = false` reaches the oop worm as config.
+  Each key checks against the `[options]` the worm declares, so a typo,
+  a wrong type, or a name that is no worm warns instead of doing
+  nothing. An unknown `[lsp]` key warns the same way now, where it used
+  to refuse the whole config at parse
 - Instance-form requires resolve: `require(script.Parent.Widget)`,
   `require(game.ReplicatedStorage.App)`, and the call spellings
   `GetService`, `FindFirstChild`, and `WaitForChild`. The chain maps

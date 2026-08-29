@@ -34,6 +34,7 @@ use super::{Worm, toml_text};
 static NEXT_BUILD: AtomicU64 = AtomicU64::new(1);
 
 /// All the data a worker needs to make its own instance of one worm
+#[derive(Clone)]
 pub struct Spec {
     pub manifest: Manifest,
     /// The Luau source or wasm module. It is kept so a worker does not touch the disk.
@@ -145,6 +146,67 @@ struct Local {
 impl Pool {
     pub fn new(specs: Vec<Arc<Spec>>, native: i64) -> Self {
         Self::with_settings(specs, native, super::Settings::default())
+    }
+
+    /*
+    The pool again, with `[lsp.<worm>]` folded into each worm's config.
+
+    The keys check against the worm's own `[options]`, so a typo or a
+    wrong type says so instead of doing nothing. The build id changes,
+    so every instance restarts and reads the new settings at init.
+    */
+    pub fn with_lsp_settings(
+        self,
+        settings: &BTreeMap<String, toml::Value>,
+        complaints: &mut Vec<String>,
+    ) -> Self {
+        if settings.is_empty() {
+            return self;
+        }
+
+        let mut specs = self.specs.clone();
+
+        for (name, value) in settings {
+            let Some(index) = specs.iter().position(|s| s.manifest.name == *name) else {
+                complaints.push(format!(
+                    "[lsp] has no setting and no worm named `{name}`, so that table does nothing"
+                ));
+
+                continue;
+            };
+
+            let Some(table) = value.as_table() else {
+                complaints.push(format!(
+                    "[lsp.{name}] has to be a table of the settings the worm declares"
+                ));
+
+                continue;
+            };
+
+            let mut spec = (*specs[index]).clone();
+            let mut config = spec.config.as_table().cloned().unwrap_or_default();
+
+            for (key, val) in table {
+                match spec.manifest.options.get(key) {
+                    None => complaints.push(format!(
+                        "worm `{name}` declares no setting `{key}`, so [lsp.{name}] {key} does nothing"
+                    )),
+
+                    Some(decl) if !decl.kind.accepts(val) => complaints.push(format!(
+                        "[lsp.{name}] {key} takes a {}", decl.kind.name()
+                    )),
+
+                    Some(_) => {
+                        config.insert(key.clone(), val.clone());
+                    }
+                }
+            }
+
+            spec.config = toml::Value::Table(config);
+            specs[index] = Arc::new(spec);
+        }
+
+        Self::with_settings(specs, self.native, self.settings)
     }
 
     /// The same, with the settings of the project for the worms that lay out

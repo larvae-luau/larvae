@@ -689,6 +689,14 @@ impl Server {
         // the editor never downloads a worm, because a keystroke cannot wait
         match pool_with(root, None, &mut fmt, crate::worm::registry::Fetch::Quiet) {
             Ok(pool) => {
+                // `[lsp.<worm>]` reaches each worm through its config.
+                let mut complaints = Vec::new();
+                let pool = pool.with_lsp_settings(&self.lsp.worms, &mut complaints);
+
+                for complaint in complaints {
+                    warn(out, &complaint)?;
+                }
+
                 self.fmt = fmt;
                 self.worm_stamp = stamp_of(&pool);
                 self.worms = pool;

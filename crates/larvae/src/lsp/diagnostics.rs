@@ -112,8 +112,7 @@ impl Server {
                     Luau file down with it.
                     */
                     if let Some(path) = path.as_deref()
-                        && let Ok(more) =
-                            lint::foreign(path, src, &self.lint, &self.worms, None)
+                        && let Ok(more) = lint::foreign(path, src, &self.lint, &self.worms, None)
                     {
                         findings.extend(more);
                     }

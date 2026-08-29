@@ -380,8 +380,7 @@ impl Manifest {
             );
         }
 
-        if self.frontend.is_none() && !self.has_rules() && self.lsp.is_empty() && !self.lints_luau
-        {
+        if self.frontend.is_none() && !self.has_rules() && self.lsp.is_empty() && !self.lints_luau {
             bail!(
                 "worm `{}` declares no frontend, no rules, no [lsp] hooks, and no lints_luau, so it would never run",
                 self.name

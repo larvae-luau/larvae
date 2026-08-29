@@ -1734,6 +1734,78 @@ while True:
 }
 
 /*
+`[lsp.<worm>]` reaches the worm as config, checked against its options.
+
+The worm declares what it takes under `[options]`; a key outside that
+list, a wrong type, or a name that is no worm each say so, instead of
+doing nothing in silence.
+*/
+#[test]
+fn lsp_worm_settings_merge_into_the_config() {
+    const CONFIGURED: &str = r#"
+name = "privy"
+api = 1
+form = "native"
+entry = "lintworm.py"
+lints_luau = true
+
+[lints.always]
+description = "fires once per file"
+default = "warn"
+
+[options.strictness]
+type = "boolean"
+default = true
+description = "how hard the worm squints"
+"#;
+
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let pool = Pool::new(vec![spec_with(CONFIGURED, dir.path(), vec![])], 1);
+
+    let lsp: crate::config::lsp::LspConfig =
+        toml::from_str("sourcemap = \"map.json\"\n\n[privy]\nstrictness = false\n")
+            .expect("the worm table parses beside the typed keys");
+
+    assert_eq!(lsp.sourcemap, "map.json");
+
+    let mut complaints = Vec::new();
+    let pool = pool.with_lsp_settings(&lsp.worms, &mut complaints);
+
+    assert_eq!(complaints, Vec::<String>::new());
+    assert_eq!(
+        pool.spec(0).config.get("strictness"),
+        Some(&toml::Value::Boolean(false))
+    );
+
+    // The three refusals, each with its own words.
+    let bad: crate::config::lsp::LspConfig =
+        toml::from_str("[nobody]\nx = 1\n\n[privy]\nmystery = 1\nstrictness = \"loud\"\n")
+            .expect("parses");
+
+    let mut complaints = Vec::new();
+    let _ = pool.with_lsp_settings(&bad.worms, &mut complaints);
+
+    assert!(
+        complaints
+            .iter()
+            .any(|c| c.contains("no worm named `nobody`")),
+        "{complaints:?}"
+    );
+    assert!(
+        complaints
+            .iter()
+            .any(|c| c.contains("no setting `mystery`")),
+        "{complaints:?}"
+    );
+    assert!(
+        complaints
+            .iter()
+            .any(|c| c.contains("strictness takes a boolean")),
+        "{complaints:?}"
+    );
+}
+
+/*
 A worm with `lints_luau` reports inside plain Luau files.
 
 The lint walk only asked the worm that claims a file, so a worm about
@@ -1751,8 +1823,10 @@ fn a_luau_linting_worm_reports_in_plain_files() {
         r#"{"ok": True, "findings": [{"span": [0, 6], "lint": "always", "message": "the worm sees this file"}], "comments": []}"#,
     );
 
-    let mut server = Server::default();
-    server.worms = Pool::new(vec![spec_with(LUAU_LINTER, dir.path(), vec![])], 1);
+    let mut server = Server {
+        worms: Pool::new(vec![spec_with(LUAU_LINTER, dir.path(), vec![])], 1),
+        ..Default::default()
+    };
 
     let uri = "file:///p/main.luau";
     server.documents.insert(uri.into(), "return 1\n".into());
@@ -1789,14 +1863,16 @@ fn a_shared_claimed_file_takes_foreign_findings() {
         r#"{"ok": True, "findings": [{"span": [6, 7], "lint": "always", "message": "the guest speaks"}], "comments": []}"#,
     );
 
-    let mut server = Server::default();
-    server.worms = Pool::new(
-        vec![
-            spec_with(SHARING_WORM, dir.path(), vec![".luaux".to_owned()]),
-            spec_with(LUAU_LINTER, dir.path(), vec![]),
-        ],
-        1,
-    );
+    let mut server = Server {
+        worms: Pool::new(
+            vec![
+                spec_with(SHARING_WORM, dir.path(), vec![".luaux".to_owned()]),
+                spec_with(LUAU_LINTER, dir.path(), vec![]),
+            ],
+            1,
+        ),
+        ..Default::default()
+    };
 
     let uri = "file:///p/thing.luaux";
     server.documents.insert(uri.into(), "local x = 1\n".into());
