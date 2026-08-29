@@ -263,13 +263,15 @@ counterpart there:
   lands on the author's line. The oop worm is the first reader: its
   class conventions hold in `.luau` files and in shared `.luaux` files
   alike, while resolve and respond hooks already served both
-- The server runs `rojo sourcemap --watch` itself, so the map follows
+- The server runs the sourcemap generator itself, so the map follows
   every file the project adds or moves, and `script.Parent.` completes
-  on a file made a minute ago. `[lsp] sourcemap_autogenerate` turns it
-  off, and `[lsp] rojo_project_file` names the project. The watch needs
-  rojo on the path; without it the server says so once and serves the
-  map it has. The watch dies with the server, on Linux even when the
-  editor kills it
+  on a file made a minute ago. `[lsp] sourcemap_command` names the
+  generator for any sync tool, run through the shell in the project
+  root; empty infers rojo from `[lsp] rojo_project_file` and runs
+  `rojo sourcemap --watch`. `[lsp] sourcemap_autogenerate` turns the
+  whole thing off. A generator that does not start is said once and
+  costs the autogeneration alone. The generator and everything it
+  started die with the server, on Unix even when the editor kills it
 
 ### Changed
 

@@ -234,10 +234,9 @@ pub fn run_pending(analysis: Option<Pending>) -> Result<()> {
         }
     }
 
-    // The watch is this server's child; an orphan would outlive the editor.
-    if let Some(mut rojo) = server.rojo.take() {
-        let _ = rojo.kill();
-        let _ = rojo.wait();
+    // The generator is this server's child; an orphan would outlive the editor.
+    if let Some(mut watch) = server.sourcemap_watch.take() {
+        state::stop_watch(&mut watch);
     }
 
     Ok(())
@@ -331,12 +330,12 @@ struct Server {
     settle: Option<std::sync::mpsc::Sender<std::time::Instant>>,
     /// The document the last keystroke landed in, refreshed at the pause
     last_typed: Option<String>,
-    /// The rojo sourcemap watch this server owns, when the setting spawns one
-    rojo: Option<std::process::Child>,
-    /// What the running watch was spawned with, to respawn only on change
-    rojo_params: Option<(PathBuf, String, String)>,
-    /// The missing-rojo note is said once, not per config load
-    rojo_missing_said: bool,
+    /// The sourcemap generator this server owns, when the setting spawns one
+    sourcemap_watch: Option<std::process::Child>,
+    /// What the running generator was spawned with, to respawn only on change
+    sourcemap_watch_params: Option<(PathBuf, Vec<String>)>,
+    /// The did-not-start note is said once, not per config load
+    sourcemap_watch_said: bool,
     /*
     The instance tree of the rojo sourcemap, as types.
 
@@ -395,9 +394,9 @@ impl Default for Server {
             hint_cache: Default::default(),
             settle: None,
             last_typed: None,
-            rojo: None,
-            rojo_params: None,
-            rojo_missing_said: false,
+            sourcemap_watch: None,
+            sourcemap_watch_params: None,
+            sourcemap_watch_said: false,
             instances: instances::Instances::default(),
             sourcemap_stamp: None,
             sourcemap_config: String::new(),

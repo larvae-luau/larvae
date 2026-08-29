@@ -87,19 +87,31 @@ pub struct LspConfig {
     pub sourcemap: String,
 
     /*
-    Keep the sourcemap fresh by running rojo, the way luau-lsp does.
+    Keep the sourcemap fresh by running its generator, the way luau-lsp
+    runs rojo.
 
-    On, the server spawns `rojo sourcemap <project> --watch` when the
-    project file is there and rojo is on the path, so a new file or
+    On, the server spawns the sourcemap command, so a new file or
     folder types without anyone regenerating by hand. A project that
     runs its own watch turns this off and nothing spawns.
     */
     #[serde(default = "on")]
     pub sourcemap_autogenerate: bool,
 
-    /// The rojo project the sourcemap generates from
+    /// The rojo project the inferred sourcemap command reads from
     #[serde(default = "rojo_project")]
     pub rojo_project_file: String,
+
+    /*
+    The command that generates the sourcemap, run through the shell in
+    the project root. Empty means infer: with a rojo project file in
+    the root, larvae runs `rojo sourcemap <project> --watch --output
+    <sourcemap>`; without one, nothing runs. A project on another sync
+    tool names its own generator here, ideally one that watches. A
+    command that generates once and exits runs at session start and
+    again on each config change.
+    */
+    #[serde(default)]
+    pub sourcemap_command: String,
 
     /*
     The editor settings of the worms: `[lsp.oop]` holds the settings of

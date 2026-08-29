@@ -252,6 +252,10 @@ impl Server {
             self.lsp.rojo_project_file = text.to_owned();
         }
 
+        if let Some(text) = editor(&["sourcemapCommand"]).as_str() {
+            self.lsp.sourcemap_command = text.to_owned();
+        }
+
         /*
         Both spellings of each value are read, because the editor writes
         camelCase and the project file writes snake_case, and a value is
@@ -562,36 +566,26 @@ impl Server {
     }
 
     /*
-    Keep rojo writing the sourcemap, the way luau-lsp does.
+    Keep the generator writing the sourcemap, the way luau-lsp keeps
+    rojo doing it.
 
     The server only ever reads the file, so a project where nobody runs
-    `rojo sourcemap --watch` types a tree that stops matching the disk
-    the moment a file is added. With the setting on, the watch is the
-    server's own child: spawned once the config names a project file
-    that exists, respawned when the names change, killed with the
-    server. rojo missing from the path is said once and costs the
+    a watch types a tree that stops matching the disk the moment a file
+    is added. With the setting on, the generator is the server's own
+    child: spawned with the argv the plan below picks, respawned when
+    that argv changes or the child dies, killed with the server. A
+    generator that does not start is said once and costs the
     autogeneration alone.
     */
     pub(super) fn ensure_sourcemap_watch(&mut self, out: &mut impl Write) -> Result<()> {
-        let wanted = match (&self.root, self.lsp.sourcemap_autogenerate) {
-            (Some(root), true) => {
-                let project = root.join(&self.lsp.rojo_project_file);
+        let wanted = self
+            .root
+            .clone()
+            .and_then(|root| sourcemap_watch_argv(&self.lsp, &root).map(|argv| (root, argv)));
 
-                project.is_file().then(|| {
-                    (
-                        root.clone(),
-                        self.lsp.rojo_project_file.clone(),
-                        self.lsp.sourcemap.clone(),
-                    )
-                })
-            }
-
-            _ => None,
-        };
-
-        if wanted == self.rojo_params {
+        if wanted == self.sourcemap_watch_params {
             // Same command, still running: nothing to do. A dead child restarts.
-            if let Some(child) = &mut self.rojo
+            if let Some(child) = &mut self.sourcemap_watch
                 && child.try_wait().ok().flatten().is_none()
             {
                 return Ok(());
@@ -602,52 +596,57 @@ impl Server {
             }
         }
 
-        if let Some(mut old) = self.rojo.take() {
-            let _ = old.kill();
-            let _ = old.wait();
+        if let Some(mut old) = self.sourcemap_watch.take() {
+            stop_watch(&mut old);
         }
 
-        self.rojo_params = wanted.clone();
+        self.sourcemap_watch_params = wanted.clone();
 
-        let Some((root, project, sourcemap)) = wanted else {
+        let Some((root, argv)) = wanted else {
             return Ok(());
         };
 
-        let mut command = std::process::Command::new("rojo");
+        let mut command = std::process::Command::new(&argv[0]);
         command
-            .arg("sourcemap")
-            .arg(&project)
-            .arg("--watch")
-            .arg("--output")
-            .arg(&sourcemap)
+            .args(&argv[1..])
             .current_dir(&root)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
 
         /*
-        The kernel ends the watch when the server dies, however it dies.
-        The event loop kills it on a clean stop, and an editor that kills
-        the server would otherwise leave a rojo behind, once per crash.
+        The child leads its own process group, so the stop reaches the
+        grandchildren a shell command starts; `sh -c` does not forward a
+        signal. On Linux the kernel also ends the child when the server
+        dies, however it dies. The event loop covers a clean stop, and an
+        editor that kills the server would otherwise leave a generator
+        behind, once per crash.
         */
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         unsafe {
             use std::os::unix::process::CommandExt;
 
             command.pre_exec(|| {
+                libc::setpgid(0, 0);
+
+                #[cfg(target_os = "linux")]
                 libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+
                 Ok(())
             });
         }
 
         match command.spawn() {
-            Ok(child) => self.rojo = Some(child),
+            Ok(child) => self.sourcemap_watch = Some(child),
 
-            Err(_) if !self.rojo_missing_said => {
-                self.rojo_missing_said = true;
+            Err(_) if !self.sourcemap_watch_said => {
+                self.sourcemap_watch_said = true;
                 info(
                     out,
-                    "rojo is not on the path, so the sourcemap will not regenerate; run rojo sourcemap --watch yourself or set [lsp] sourcemap_autogenerate = false",
+                    &format!(
+                        "`{}` did not start, so the sourcemap will not regenerate; fix [lsp] sourcemap_command, or set sourcemap_autogenerate = false",
+                        watch_display(&argv)
+                    ),
                 )?;
             }
 
@@ -1038,6 +1037,87 @@ fn snake(name: &str) -> String {
     out
 }
 
+/*
+The argv of the sourcemap generator.
+
+A configured command runs through the shell in the project root, so a
+project on any sync tool names its own generator. An empty command
+infers rojo: with a project file in the root, larvae runs `rojo
+sourcemap <project> --watch --output <sourcemap>`, and without one,
+nothing runs, because there is nothing to infer from.
+*/
+fn sourcemap_watch_argv(lsp: &crate::config::lsp::LspConfig, root: &Path) -> Option<Vec<String>> {
+    if !lsp.sourcemap_autogenerate {
+        return None;
+    }
+
+    let command = lsp.sourcemap_command.trim();
+
+    if !command.is_empty() {
+        /*
+        The trap is the cleanup for a server that dies without its exit
+        path: the kernel TERMs the shell, the trap signals the whole
+        group, and the generator dies with it. `sh` alone forwards no
+        signal, and the generator would survive every editor crash.
+        Windows has no group signal here, and a crash there can leave
+        the generator; the clean stop still ends it.
+        */
+        if cfg!(windows) {
+            return Some(vec!["cmd".into(), "/C".into(), command.into()]);
+        }
+
+        return Some(vec![
+            "sh".into(),
+            "-c".into(),
+            // The trap resets first, or its own group signal re-enters it.
+            format!("trap 'trap - TERM INT; kill 0' TERM INT; ({command}) & wait $!"),
+        ]);
+    }
+
+    let project = root.join(&lsp.rojo_project_file);
+
+    project.is_file().then(|| {
+        vec![
+            "rojo".into(),
+            "sourcemap".into(),
+            lsp.rojo_project_file.clone(),
+            "--watch".into(),
+            "--output".into(),
+            lsp.sourcemap.clone(),
+        ]
+    })
+}
+
+/*
+End the generator and everything it started.
+
+The child leads its own process group, so the group signal reaches the
+grandchildren of a shell command. The direct kill stays for the child
+itself and for the platforms with no groups.
+*/
+pub(super) fn stop_watch(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(child.id() as i32), libc::SIGTERM);
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// The command as the author knows it, for the message when it fails
+fn watch_display(argv: &[String]) -> String {
+    match argv {
+        [shell, _, script] if shell == "sh" || shell == "cmd" => script
+            .split_once('(')
+            .and_then(|(_, rest)| rest.rsplit_once(')'))
+            .map(|(command, _)| command.to_owned())
+            .unwrap_or_else(|| script.clone()),
+
+        whole => whole.join(" "),
+    }
+}
+
 fn info(out: &mut impl Write, message: &str) -> Result<()> {
     rpc::notify(
         out,
@@ -1201,5 +1281,66 @@ impl Server {
     /// True while the session is still being built, so a reply can say so
     pub(super) fn analysis_loading(&self) -> bool {
         self.lsp.analyzer && self.analysis.borrow().is_none() && self.analysis_pending
+    }
+}
+#[cfg(test)]
+mod sourcemap_watch {
+    use super::{sourcemap_watch_argv, watch_display};
+
+    fn lsp(command: &str) -> crate::config::lsp::LspConfig {
+        let mut cfg: crate::config::lsp::LspConfig = toml::from_str("").expect("defaults parse");
+        cfg.sourcemap_command = command.to_owned();
+
+        cfg
+    }
+
+    /// A configured command wins, whatever tool it names.
+    #[test]
+    fn a_configured_command_runs_through_the_shell() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let argv = sourcemap_watch_argv(&lsp("argon sourcemap -w -o sourcemap.json"), dir.path())
+            .expect("the command spawns");
+
+        assert_eq!(argv.len(), 3);
+        assert!(
+            argv[2].contains("(argon sourcemap -w -o sourcemap.json)"),
+            "{argv:?}"
+        );
+        assert_eq!(watch_display(&argv), "argon sourcemap -w -o sourcemap.json");
+    }
+
+    /// With no command, a rojo project file infers the rojo watch.
+    #[test]
+    fn rojo_is_inferred_from_its_project_file() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        std::fs::write(dir.path().join("default.project.json"), "{}").expect("writes");
+
+        let argv = sourcemap_watch_argv(&lsp(""), dir.path()).expect("rojo is inferred");
+
+        assert_eq!(
+            argv,
+            vec![
+                "rojo",
+                "sourcemap",
+                "default.project.json",
+                "--watch",
+                "--output",
+                "sourcemap.json"
+            ]
+        );
+    }
+
+    /// No command and no rojo project file: there is nothing to infer.
+    #[test]
+    fn nothing_runs_with_nothing_to_infer() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+
+        assert_eq!(sourcemap_watch_argv(&lsp(""), dir.path()), None);
+
+        // And the master switch turns even a configured command off.
+        let mut off = lsp("argon sourcemap -w");
+        off.sourcemap_autogenerate = false;
+
+        assert_eq!(sourcemap_watch_argv(&off, dir.path()), None);
     }
 }
