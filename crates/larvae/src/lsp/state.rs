@@ -1302,8 +1302,9 @@ mod sourcemap_watch {
             .expect("the command spawns");
 
         assert_eq!(argv.len(), 3);
+        // Unix wraps the command in a cleanup trap; Windows sends it bare.
         assert!(
-            argv[2].contains("(argon sourcemap -w -o sourcemap.json)"),
+            argv[2].contains("argon sourcemap -w -o sourcemap.json"),
             "{argv:?}"
         );
         assert_eq!(watch_display(&argv), "argon sourcemap -w -o sourcemap.json");

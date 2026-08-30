@@ -602,6 +602,70 @@ fn drop_empty_worms(text: &str) -> String {
     format!("{keep_before}{}", &text[end..])
 }
 
+/*
+What the worms of this project claim, as JSON on stdout.
+
+An editor has to know which files larvae answers for before it starts the
+server, because a language client fixes the files it serves at the moment it
+starts. Reading `larvae.toml` itself would make the editor guess at the
+install layout and at what a manifest means, and the guess would be wrong the
+first time either one changed. This answers instead, from the same manifests
+the server reads.
+
+Nothing here starts a worm. The claims are a line of the manifest, so the
+answer costs a directory read and the editor pays it once per start.
+*/
+pub fn claims(config: Option<PathBuf>) -> Result<ExitCode> {
+    let path = match config {
+        Some(path) => path,
+
+        None => std::env::current_dir()?.join("larvae.toml"),
+    };
+
+    // No project, so no worm, and an editor reads an empty list as "serve
+    // nothing extra" rather than as a failure.
+    if !path.exists() {
+        println!("{}", empty());
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let root = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let config = crate::config::Config::load(&path)?;
+
+    // Quiet, because this runs while an editor waits and a download does not
+    // belong on that path. A worm the cache does not hold claims nothing yet.
+    let registry = crate::worm::registry::Registry::for_project_cached(&root, &config)?;
+
+    let mut worms = Vec::new();
+    let mut every: Vec<String> = Vec::new();
+
+    for spec in registry.specs() {
+        let Some(frontend) = spec.manifest.frontend.as_ref() else {
+            continue;
+        };
+
+        every.extend(frontend.claims.iter().cloned());
+
+        worms.push(serde_json::json!({
+            "name": spec.manifest.name,
+            "claims": frontend.claims,
+            "serves_luau": spec.manifest.lsp.serves_luau,
+        }));
+    }
+
+    every.sort();
+    every.dedup();
+
+    println!("{}", serde_json::json!({ "claims": every, "worms": worms }));
+
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The answer of a directory that holds no project.
+fn empty() -> serde_json::Value {
+    serde_json::json!({ "claims": [], "worms": [] })
+}
+
 #[cfg(test)]
 mod worm_management {
     use super::*;
@@ -750,68 +814,4 @@ mod worm_management {
         assert!(already_named("[worms.a]\nrepo = \"o/a\"\n", "a"));
         assert!(!already_named("[worms]\nb = { repo = \"o/b\" }\n", "a"));
     }
-}
-
-/*
-What the worms of this project claim, as JSON on stdout.
-
-An editor has to know which files larvae answers for before it starts the
-server, because a language client fixes the files it serves at the moment it
-starts. Reading `larvae.toml` itself would make the editor guess at the
-install layout and at what a manifest means, and the guess would be wrong the
-first time either one changed. This answers instead, from the same manifests
-the server reads.
-
-Nothing here starts a worm. The claims are a line of the manifest, so the
-answer costs a directory read and the editor pays it once per start.
-*/
-pub fn claims(config: Option<PathBuf>) -> Result<ExitCode> {
-    let path = match config {
-        Some(path) => path,
-
-        None => std::env::current_dir()?.join("larvae.toml"),
-    };
-
-    // No project, so no worm, and an editor reads an empty list as "serve
-    // nothing extra" rather than as a failure.
-    if !path.exists() {
-        println!("{}", empty());
-        return Ok(ExitCode::SUCCESS);
-    }
-
-    let root = path.parent().unwrap_or(Path::new(".")).to_path_buf();
-    let config = crate::config::Config::load(&path)?;
-
-    // Quiet, because this runs while an editor waits and a download does not
-    // belong on that path. A worm the cache does not hold claims nothing yet.
-    let registry = crate::worm::registry::Registry::for_project_cached(&root, &config)?;
-
-    let mut worms = Vec::new();
-    let mut every: Vec<String> = Vec::new();
-
-    for spec in registry.specs() {
-        let Some(frontend) = spec.manifest.frontend.as_ref() else {
-            continue;
-        };
-
-        every.extend(frontend.claims.iter().cloned());
-
-        worms.push(serde_json::json!({
-            "name": spec.manifest.name,
-            "claims": frontend.claims,
-            "serves_luau": spec.manifest.lsp.serves_luau,
-        }));
-    }
-
-    every.sort();
-    every.dedup();
-
-    println!("{}", serde_json::json!({ "claims": every, "worms": worms }));
-
-    Ok(ExitCode::SUCCESS)
-}
-
-/// The answer of a directory that holds no project.
-fn empty() -> serde_json::Value {
-    serde_json::json!({ "claims": [], "worms": [] })
 }

@@ -3063,8 +3063,10 @@ fn a_require_offer_carries_the_range_it_replaces() {
     .expect("writes");
     std::fs::write(dir.path().join("src/util.luau"), "return {}\n").expect("writes");
 
-    let mut server = Server::default();
-    server.root = Some(dir.path().to_path_buf());
+    let mut server = Server {
+        root: Some(dir.path().to_path_buf()),
+        ..Default::default()
+    };
     let mut out = Vec::new();
 
     let uri = format!("file://{}/src/main.luau", dir.path().display());
