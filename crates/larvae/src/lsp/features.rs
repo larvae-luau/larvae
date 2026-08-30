@@ -425,6 +425,54 @@ pub(super) fn dialect_label(src: &str, at: u32, text: &str) -> Option<String> {
     Some(out)
 }
 
+/*
+The member's name on its hover card.
+
+A hover on `t.hp` answered `number` alone, and a bare identifier in a
+luau fence takes no color at all. luau-lsp prints `hp: number`, which
+reads as what it is and colors as a property and a type. The name goes
+on when the cursor sits on a member access or a key and the analyzer
+answered with a bare shape; a card that already starts with a keyword
+keeps its own words.
+*/
+pub(super) fn member_label(src: &str, at: u32, text: &str) -> Option<String> {
+    for prefix in ["local ", "function", "type ", "export ", "const "] {
+        if text.starts_with(prefix) {
+            return None;
+        }
+    }
+
+    let b = src.as_bytes();
+    let at = (at as usize).min(b.len());
+
+    let mut start = at;
+    while start > 0 && (b[start - 1].is_ascii_alphanumeric() || b[start - 1] == b'_') {
+        start -= 1;
+    }
+
+    let mut end = at;
+    while end < b.len() && (b[end].is_ascii_alphanumeric() || b[end] == b'_') {
+        end += 1;
+    }
+
+    if start == end || b[start].is_ascii_digit() {
+        return None;
+    }
+
+    let name = &src[start..end];
+
+    let before = src[..start].trim_end().chars().next_back();
+    let after = src[end..].trim_start().chars().next();
+
+    let member = matches!(before, Some('.') | Some(':')) || matches!(after, Some(':') | Some('='));
+
+    if !member || text.starts_with(name) {
+        return None;
+    }
+
+    Some(format!("{name}: {text}"))
+}
+
 fn visible_docs(docs: &str) -> String {
     let mut out = String::with_capacity(docs.len());
     let mut in_luau_fence = false;
@@ -823,6 +871,7 @@ impl Server {
                         })
                         .map(|text| {
                             let text = dialect_label(src, ask, &text).unwrap_or(text);
+                            let text = member_label(src, ask, &text).unwrap_or(text);
 
                             json!({
                                 "contents": {
@@ -859,6 +908,7 @@ impl Server {
         };
 
         let text = dialect_label(src, ask, &text).unwrap_or(text);
+        let text = member_label(src, ask, &text).unwrap_or(text);
 
         drop(analysis);
 
@@ -1435,5 +1485,49 @@ mod dialect_hovers {
     #[test]
     fn a_plain_local_stays() {
         assert_eq!(dialect_label("local y = 1\n", 6, "local y: number"), None);
+    }
+}
+#[cfg(test)]
+mod member_labels {
+    use super::member_label;
+
+    fn at(src: &str, what: &str) -> u32 {
+        src.find(what).expect("the probe text is present") as u32
+    }
+
+    /// A member hover carries its name, so the card colors.
+    #[test]
+    fn a_member_gains_its_name() {
+        let src = "local v = t.hp\n";
+
+        assert_eq!(
+            member_label(src, at(src, "hp"), "number").as_deref(),
+            Some("hp: number")
+        );
+
+        let src = "type Props = { test: number }\n";
+        assert_eq!(
+            member_label(src, at(src, "test"), "number").as_deref(),
+            Some("test: number")
+        );
+
+        let src = "local t = { hp = 10 }\n";
+        assert_eq!(
+            member_label(src, at(src, "hp"), "number").as_deref(),
+            Some("hp: number")
+        );
+    }
+
+    /// Everything that already reads whole stays untouched.
+    #[test]
+    fn whole_cards_stay() {
+        let src = "local v = t.hp\n";
+
+        assert_eq!(member_label(src, at(src, "v ="), "local v: number"), None);
+        assert_eq!(member_label(src, at(src, "hp"), "hp: number"), None);
+
+        // A bare global is not a member, and its card stays as it was.
+        let src = "local w = game\n";
+        assert_eq!(member_label(src, at(src, "game"), "DataModel"), None);
     }
 }

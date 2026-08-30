@@ -293,6 +293,10 @@ counterpart there:
   `Loading...` spells came from
 - The `Loading...` hover card stops coloring its dots; the fence is
   plain text now, because luau read `...` as its vararg token
+- A member hover carries its name: `t.hp` answers `hp: number` where it
+  answered `number` alone, which no theme colored. The name goes on for
+  member accesses and keys; every card that already starts with its own
+  keyword keeps its words
 - The editor reports a cross-realm require, the same finding `larvae
   check` reports and with the same words: the resolver validation runs
   over every open file, on the string forms and the instance forms
