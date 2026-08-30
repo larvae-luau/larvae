@@ -55,13 +55,16 @@ jobs:
           # turns it off still ships a server: `larvae lsp` lints and formats,
           # and the editor falls back to it. Turning one off is one line here
           # and costs that platform hover and completion, not the release.
+          # gnu and not musl: the analyzer is a shared library the server
+          # opens at runtime, and a static musl binary cannot dlopen. The
+          # build passed and the carries-the-analyzer check caught it.
           - asset: larvae-linux-x86_64
-            target: x86_64-unknown-linux-musl
+            target: x86_64-unknown-linux-gnu
             runs-on: ubuntu-latest
             analyzer: true
             native: true
           - asset: larvae-linux-aarch64
-            target: aarch64-unknown-linux-musl
+            target: aarch64-unknown-linux-gnu
             runs-on: ubuntu-24.04-arm
             analyzer: true
             native: true
@@ -84,10 +87,13 @@ jobs:
           # to cross compile the whole Luau tree. It is the least proven of the
           # six; turn it off here if it breaks and the platform keeps the
           # fallback server.
+          # The analyzer is off here: the cross link of the sealed dll
+          # runs with x64 defaults and drops every export. The platform
+          # keeps the fallback server, as the note above says.
           - asset: larvae-windows-aarch64
             target: aarch64-pc-windows-msvc
             runs-on: windows-latest
-            analyzer: true
+            analyzer: false
             native: false
     runs-on: ${{ matrix.runs-on }}
     steps:

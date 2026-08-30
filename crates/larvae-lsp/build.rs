@@ -472,6 +472,18 @@ fn patch_vendored(luau: &std::path::Path) {
         }
         else if (state.opts.functionTypeArguments)";
 
+    /*
+    A Windows checkout carries CRLF, and an anchor written with bare
+    newlines then never matches, so the patch silently stayed out of
+    the Windows builds. The anchor adapts to the file's own endings.
+    */
+    let anchor = match text.contains("\r\n") {
+        true => anchor.replace('\n', "\r\n"),
+
+        false => anchor.to_string(),
+    };
+    let anchor = anchor.as_str();
+
     let Some(_) = text.find(anchor) else {
         println!(
             "cargo:warning=larvae: the ToString.cpp patch anchor is gone; zero-argument \
