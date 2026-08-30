@@ -543,7 +543,21 @@ impl Server {
             .into_iter()
             .filter(|h| from.is_none_or(|f| h.line >= f) && to.is_none_or(|t| h.line <= t))
             .map(|h| {
-                let text = self.instances.readable(&h.label).into_owned();
+                let mut text = self.instances.readable(&h.label).into_owned();
+
+                /*
+                A types-only module hints as `{ }`, which is true and
+                says nothing. The view names its exports instead:
+                `{ type PlayerData }`. Display speech, not syntax, so
+                the accept gate keeps it out of the file.
+                */
+                if h.kind == 1
+                    && super::features::empty_table_label(&text).is_some()
+                    && let Some(src) = self.documents.get(uri)
+                    && let Some(view) = self.type_export_view(src, &path, h.line)
+                {
+                    text = format!(": {view}");
+                }
 
                 // A hint longer than the code it annotates hides the code.
                 let label = match text.chars().count() > cfg.type_hint_max_length {

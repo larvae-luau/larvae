@@ -473,6 +473,61 @@ pub(super) fn member_label(src: &str, at: u32, text: &str) -> Option<String> {
     Some(format!("{name}: {text}"))
 }
 
+/*
+The view of a module that carries only types.
+
+`const T = require('@shared/Types/PlayerData')` returns `{ }`, which is
+true and says nothing: the module exists for its `export type` lines.
+The card and the hint say that instead: `{ type PlayerData }`. The view
+is display speech, not type syntax, so the accept gate already keeps it
+out of the file.
+*/
+pub(super) fn empty_table_label(text: &str) -> Option<&str> {
+    let trimmed = text.trim_end();
+
+    for tail in ["{ }", "{}", "{  }"] {
+        if let Some(prefix) = trimmed.strip_suffix(tail) {
+            // The empty table is the whole annotation, not a nested piece.
+            if prefix.is_empty() || prefix.trim_end().ends_with(':') {
+                return Some(prefix);
+            }
+        }
+    }
+
+    None
+}
+
+/// The exported type names of one module's text, in the order written
+pub(super) fn export_type_names(text: &str) -> Vec<String> {
+    use crate::syntax::lexer::TokKind;
+
+    let Ok(lexed) = crate::syntax::lexer::lex(text) else {
+        return Vec::new();
+    };
+
+    let toks = &lexed.toks;
+    let mut names = Vec::new();
+
+    for k in 0..toks.len() {
+        if toks[k].kind != TokKind::Ident || toks[k].text(text) != "export" {
+            continue;
+        }
+
+        if toks.get(k + 1).is_some_and(|t| t.text(text) == "type")
+            && let Some(name) = toks.get(k + 2)
+            && name.kind == TokKind::Ident
+        {
+            let name = name.text(text).to_string();
+
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+
+    names
+}
+
 fn visible_docs(docs: &str) -> String {
     let mut out = String::with_capacity(docs.len());
     let mut in_luau_fence = false;
@@ -667,6 +722,45 @@ fn completion_item(c: &crate::lsp::analysis::AnalysisCompletion) -> Value {
 }
 
 impl Server {
+    /*
+    The `{ type ... }` view for one line's require, when it has one.
+
+    The empty answer means the line requires nothing, the target cannot
+    be read, or the target exports no types, and the caller keeps the
+    card it had.
+    */
+    pub(super) fn type_export_view(
+        &self,
+        src: &str,
+        path: &std::path::Path,
+        line: u32,
+    ) -> Option<String> {
+        let root = self.root.as_deref()?;
+        let claimed = self.worms.claimed();
+
+        let target = super::decorate::require_target_on_line(
+            src,
+            path,
+            root,
+            &self.aliases,
+            &claimed,
+            &self.mounts,
+            line,
+        )?;
+
+        let text = super::uri::uri_of_path(&target)
+            .and_then(|uri| self.documents.get(&uri).cloned())
+            .or_else(|| std::fs::read_to_string(&target).ok())?;
+
+        let names = export_type_names(&text);
+
+        match names.is_empty() {
+            true => None,
+
+            false => Some(format!("{{ type {} }}", names.join(", type "))),
+        }
+    }
+
     /*
     The compiled form of one open document, for `larvae/bytecode` and
     `larvae/compilerRemarks`.
@@ -872,6 +966,18 @@ impl Server {
                         .map(|text| {
                             let text = dialect_label(src, ask, &text).unwrap_or(text);
                             let text = member_label(src, ask, &text).unwrap_or(text);
+                            let text = match empty_table_label(&text) {
+                                Some(prefix) => {
+                                    let line = src[..ask as usize].matches('\n').count() as u32;
+
+                                    match self.type_export_view(src, &path, line) {
+                                        Some(view) => format!("{prefix}{view}"),
+                                        None => text,
+                                    }
+                                }
+
+                                None => text,
+                            };
 
                             json!({
                                 "contents": {
@@ -909,6 +1015,18 @@ impl Server {
 
         let text = dialect_label(src, ask, &text).unwrap_or(text);
         let text = member_label(src, ask, &text).unwrap_or(text);
+        let text = match empty_table_label(&text) {
+            Some(prefix) => {
+                let line = src[..ask as usize].matches('\n').count() as u32;
+
+                match self.type_export_view(src, &path, line) {
+                    Some(view) => format!("{prefix}{view}"),
+                    None => text,
+                }
+            }
+
+            None => text,
+        };
 
         drop(analysis);
 
@@ -1529,5 +1647,36 @@ mod member_labels {
         // A bare global is not a member, and its card stays as it was.
         let src = "local w = game\n";
         assert_eq!(member_label(src, at(src, "game"), "DataModel"), None);
+    }
+}
+#[cfg(test)]
+mod type_export_views {
+    use super::{empty_table_label, export_type_names};
+
+    /// Only a whole empty-table annotation takes the view.
+    #[test]
+    fn the_empty_table_is_recognized_whole() {
+        assert_eq!(empty_table_label(": { }"), Some(": "));
+        assert_eq!(empty_table_label("const T: { }"), Some("const T: "));
+        assert_eq!(empty_table_label("local t: {}"), Some("local t: "));
+
+        // A nested empty table is part of a bigger type, and it stays.
+        assert_eq!(empty_table_label("local t: { x: { } }"), None);
+        assert_eq!(empty_table_label(": number"), None);
+    }
+
+    /// The exports read in order, once each, and values do not count.
+    #[test]
+    fn exports_read_in_order() {
+        let src = "\
+export type PlayerData = { hp: number }
+export type Slot = number
+type Hidden = string
+local x = 1
+export type PlayerData = { hp: number }
+return {}
+";
+
+        assert_eq!(export_type_names(src), vec!["PlayerData", "Slot"]);
     }
 }

@@ -113,6 +113,53 @@ pub fn links_with_claims(
     toml_aliases: &HashMap<String, String>,
     claimed: &[String],
 ) -> Vec<Link> {
+    links_with(
+        src,
+        path,
+        root,
+        toml_aliases,
+        claimed,
+        &MountTable::default(),
+    )
+}
+
+/*
+The module one require line binds, through the same resolution links use.
+
+The card and the hint views ask per line, and they carry the project's
+real mount table so `@game` resolves the way every other reader
+resolves it.
+*/
+pub(super) fn require_target_on_line(
+    src: &str,
+    path: &Path,
+    root: &Path,
+    toml_aliases: &HashMap<String, String>,
+    claimed: &[String],
+    mounts: &MountTable,
+    line: u32,
+) -> Option<PathBuf> {
+    let starts: Vec<usize> = std::iter::once(0)
+        .chain(src.match_indices('\n').map(|(i, _)| i + 1))
+        .collect();
+
+    let from = *starts.get(line as usize)?;
+    let to = starts.get(line as usize + 1).copied().unwrap_or(src.len());
+
+    links_with(src, path, root, toml_aliases, claimed, mounts)
+        .into_iter()
+        .find(|link| (link.range.0 as usize) >= from && (link.range.0 as usize) < to)
+        .map(|link| link.target)
+}
+
+fn links_with(
+    src: &str,
+    path: &Path,
+    root: &Path,
+    toml_aliases: &HashMap<String, String>,
+    claimed: &[String],
+    mounts: &MountTable,
+) -> Vec<Link> {
     let Ok(lexed) = lexer::lex(src) else {
         return Vec::new();
     };
@@ -126,7 +173,6 @@ pub fn links_with_claims(
     let scanned = crate::syntax::scan::scan(src, &lexed.toks);
 
     let luaurc = luaurc_upward(path, root);
-    let mounts = MountTable::default();
 
     /*
     The path target, because it is the one form that needs no DataModel.
@@ -141,7 +187,7 @@ pub fn links_with_claims(
         root,
         toml_aliases,
         luaurc: &luaurc,
-        mounts: &mounts,
+        mounts,
         target: Target::Path,
         style: IndexingStyle::default(),
         quote: '"',
@@ -151,7 +197,7 @@ pub fn links_with_claims(
         client_relative_requires: false,
     };
 
-    let file = FileCtx::new(path, &mounts, Target::Path, IndexingStyle::default());
+    let file = FileCtx::new(path, mounts, Target::Path, IndexingStyle::default());
     let mut out = Vec::new();
 
     for site in &scanned.sites {

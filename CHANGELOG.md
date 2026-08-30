@@ -156,6 +156,11 @@ counterpart there:
   name it annotates, through `inlayHint/resolve`. A hint on a linted
   require showed the lint alone, because an editor never sends a hover
   for the hint's own pixels
+- A types-only module says what it is for. A require of a module that
+  returns `{ }` and carries `export type` lines hinted and hovered as
+  the empty table, which is true and says nothing. The card and the
+  hint read `{ type PlayerData, type Slot }` instead. The view is
+  display speech, not type syntax, so a double click never writes it
 
 ### Changed
 
