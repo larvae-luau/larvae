@@ -282,6 +282,17 @@ counterpart there:
 
 ### Fixed
 
+- An edit crosses files without a restart. `./test2` resolved to
+  `Data/./test2.luau`, the frontend keys modules by the path string, and
+  the same file lived as two modules: the open buffer under the clean
+  name, the disk text under the dotted one. A require read the disk
+  twin, so removing the `return` of a module never reached the file
+  requiring it until a restart. Resolved paths now fold `.` and `..`
+  away. The dotted twins also duplicated whole package graphs, each
+  checked on its own, which is where the slow session and the long
+  `Loading...` spells came from
+- The `Loading...` hover card stops coloring its dots; the fence is
+  plain text now, because luau read `...` as its vararg token
 - The editor reports a cross-realm require, the same finding `larvae
   check` reports and with the same words: the resolver validation runs
   over every open file, on the string forms and the instance forms

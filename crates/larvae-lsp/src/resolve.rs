@@ -185,6 +185,8 @@ an unsupported path, which is what a require of a text file deserves.
 empty for a project with no such worm, and then Luau alone is a module.
 */
 fn as_module_file(path: &Path, claimed: &[String]) -> Option<PathBuf> {
+    let path = &normalize(path);
+
     let loadable = |path: &Path| {
         path.extension()
             .and_then(|e| e.to_str())
@@ -224,6 +226,43 @@ fn as_module_file(path: &Path, claimed: &[String]) -> Option<PathBuf> {
     }
 
     None
+}
+
+/*
+The path without `.` and `..`, in the spelling the open documents use.
+
+The editor opens `/a/b/test2.luau`, and `./test2` resolved to
+`/a/b/./test2.luau`. The frontend keys modules by the string, so one
+file lived as two modules: the open buffer under the clean name, the
+disk text under the dotted one. An edit in the editor never reached the
+module the require read, and the types moved only on a restart. The
+normalization is lexical, like every other path rule here.
+*/
+fn normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut out = PathBuf::new();
+
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+
+            Component::ParentDir => match out.components().next_back() {
+                Some(Component::Normal(_)) => {
+                    out.pop();
+                }
+
+                // The root has no parent, and a lexical walk keeps the rest.
+                Some(Component::RootDir | Component::Prefix(_)) => {}
+
+                _ => out.push(".."),
+            },
+
+            other => out.push(other),
+        }
+    }
+
+    out
 }
 
 #[cfg(test)]
@@ -346,6 +385,28 @@ mod game_requires {
                 &[]
             ),
             None
+        );
+    }
+
+    /*
+    The resolved path spells itself the way the editor opens it.
+
+    `./` and `../` fold away, because the frontend keys modules by the
+    path string and the open buffer holds the clean spelling. The dotted
+    spelling made the same file a second module that read the disk.
+    */
+    #[test]
+    fn a_relative_spec_resolves_to_a_clean_path() {
+        let dir = tree(&["src/Shared/Widget.luau", "src/Shared/deep/user.luau"]);
+        let from = dir.path().join("src/Shared/deep/user.luau");
+
+        let found = resolve_spec(&from, "./../Widget", None, &[]).expect("resolves");
+        let text = found.display().to_string();
+
+        assert_eq!(found, dir.path().join("src/Shared/Widget.luau"));
+        assert!(
+            !text.contains("/./") && !text.contains(".."),
+            "the path keeps its dots: {text}"
         );
     }
 

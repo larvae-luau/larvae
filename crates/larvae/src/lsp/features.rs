@@ -763,7 +763,8 @@ impl Server {
         */
         if self.analysis_loading() {
             return json!({
-                "contents": { "kind": "markdown", "value": "```luau\nLoading...\n```" },
+                // A text fence keeps the card shape without luau coloring the dots.
+                "contents": { "kind": "markdown", "value": "```text\nLoading...\n```" },
             });
         }
 
