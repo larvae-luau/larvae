@@ -123,6 +123,14 @@ fn build_analyzer() {
         harden(&mut vendor);
 
         for dir in [
+            /*
+            Common/src is load bearing: TimeTrace and hashRange live
+            there. A Linux shared library links with the symbols
+            missing and resolves lazily, so the gap stayed silent;
+            macOS and MSVC refuse the link, which is how the release
+            found it.
+            */
+            "Common/src",
             "Ast/src",
             "Config/src",
             "Bytecode/src",
