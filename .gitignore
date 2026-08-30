@@ -23,3 +23,5 @@ larvae.toml
 !README.md
 
 .vscode/*
+# The shared clippy cache the CI-repair worktrees use
+target-ci/
