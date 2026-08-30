@@ -52,13 +52,22 @@ pub fn format(src: &str, cfg: &FmtConfig) -> Result<String> {
     }
 
     let trivia = trivia::Trivia::new(src, &lexed.comments);
-    let rebindings = rebind::plan(
+    let mut rebindings = rebind::plan(
         src,
         &lexed.toks,
         &chunk,
         cfg.require_binding,
         &cfg.prefer_const,
     );
+
+    // `function_style` speaks about the function declarations, and the
+    // plan above about the bindings; one map carries both answers.
+    rebindings.extend(rebind::function_plan(
+        src,
+        &lexed.toks,
+        &chunk,
+        cfg.function_style,
+    ));
     /*
     The removal pass reads the rebindings, so it runs second. A declaration
     that `require_binding` or `prefer_const` decided to rewrite stays, and

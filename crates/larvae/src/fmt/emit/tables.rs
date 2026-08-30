@@ -55,9 +55,19 @@ impl<'a> Emitter<'a> {
             || self.newline_between(open, open + 1)
             || (self.cfg.magic_trailing_comma && self.has_trailing_comma(close));
 
+        /*
+        `sort_tables` reorders the fields before the layout reads them.
+        The emitter writes every separator itself, commas whatever the
+        author used, so the moved fields cannot leave a `;` behind or
+        drop the trailing comma the magic option reads: that signal is
+        the source's, and the source does not move.
+        */
+        let fields = self.sorted_fields(fields, commented);
+        let fields = fields.as_slice();
+
         let each: Vec<Doc<'a>> = fields
             .iter()
-            .map(|f| match f {
+            .map(|f| match *f {
                 TableField::Positional(e) => self.expr(e),
 
                 TableField::Named { name, value } => Doc::concat([
@@ -83,7 +93,7 @@ impl<'a> Emitter<'a> {
             let mut parts = Vec::with_capacity(each.len() * 5 + 2);
             let mut cursor = self.tok_end(open);
 
-            for (field, doc) in fields.iter().zip(each) {
+            for (field, doc) in fields.iter().copied().zip(each) {
                 let start = self.tok_start(self.field_span(field).start);
                 let att = self.trivia.split(cursor, start);
 
@@ -141,5 +151,73 @@ impl<'a> Emitter<'a> {
         ]);
 
         self.bracketed("{", "}", inner, self.cfg.space_inside_braces)
+    }
+
+    /*
+    The fields in the order `sort_tables` asks for, or as written.
+
+    The guards keep the sort away from every table it cannot read
+    whole. A comment cannot move with its field, a positional field is
+    order as data, and a computed key that is not a plain string names
+    nothing to sort by. Any one of them keeps the whole table as
+    written, the same all-or-nothing rule the type sort holds.
+    */
+    fn sorted_fields<'f>(&self, fields: &'f [TableField], commented: bool) -> Vec<&'f TableField> {
+        let order = self.cfg.sort_tables.order;
+
+        if order == crate::fmt::config::PropertyOrder::None || fields.len() < 2 || commented {
+            return fields.iter().collect();
+        }
+
+        let mut named: Vec<(std::borrow::Cow<'_, str>, usize, &TableField)> =
+            Vec::with_capacity(fields.len());
+
+        for field in fields {
+            let name = match field {
+                TableField::Named { name, .. } => std::borrow::Cow::Borrowed(self.one(*name)),
+
+                TableField::Computed {
+                    key: Expr::String(span),
+                    ..
+                } => {
+                    let text = self.one(*span);
+
+                    std::borrow::Cow::Owned(text.trim_matches(['"', '\'']).to_owned())
+                }
+
+                _ => return fields.iter().collect(),
+            };
+
+            // The size orders measure the whole field, not the key.
+            let span = self.field_span(field);
+            let (lo, hi) = self.byte_span(span);
+            let width = self.src[lo as usize..hi as usize].chars().count();
+
+            named.push((name, width, field));
+        }
+
+        /*
+        The order is total: the measure first, then the name, and the
+        sort is stable under that. So a second format finds the fields
+        in the order the first one left them, and two fields that
+        measure the same never trade places from run to run.
+        */
+        named.sort_by(|(a, a_width, _), (b, b_width, _)| {
+            use crate::fmt::config::PropertyOrder;
+
+            let (a_len, b_len) = (a.chars().count(), b.chars().count());
+
+            match order {
+                PropertyOrder::Descending => b_len.cmp(&a_len),
+                PropertyOrder::Alphabetical => std::cmp::Ordering::Equal,
+                PropertyOrder::SizeAscending => a_width.cmp(b_width),
+                PropertyOrder::SizeDescending => b_width.cmp(a_width),
+
+                _ => a_len.cmp(&b_len),
+            }
+            .then_with(|| a.cmp(b))
+        });
+
+        named.into_iter().map(|(_, _, field)| field).collect()
     }
 }

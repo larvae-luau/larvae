@@ -1181,7 +1181,10 @@
               "enum": [
                 "none",
                 "ascending",
-                "descending"
+                "descending",
+                "alphabetical",
+                "size-ascending",
+                "size-descending"
               ],
               "default": "none",
               "description": "The order of the properties. \"none\" keeps the order the author wrote, which is the default: a formatter that reorders code nobody asked it to reorder loses the order the author chose. \"ascending\" puts the shortest name first and \"descending\" the longest. Two names of one length sort alphabetically, so the output does not depend on the order of the input.\n\n[sort_table_types.order \u2192](https://larvae-luau.github.io/docs/reference/formatting#sort-table-types-order)"
@@ -1193,7 +1196,17 @@
                 false
               ],
               "default": true,
-              "description": "An indexer such as [number]: any goes above the named properties, because it states the shape of every key instead of one key. Off puts it in its sorted position: an indexer names nothing, so it measures zero and lands first under \"ascending\" anyway, and last under \"descending\". This does nothing until \"order\" asks for a sort.\n\n[sort_table_types.indexer_first \u2192](https://larvae-luau.github.io/docs/reference/formatting#sort-table-types-indexer-first)"
+              "description": "The older spelling of indexer, kept so a config written for it still means what it meant: true is first and false is sorted. See https://larvae-luau.github.io/docs/reference/formatting#sort-table-types-indexer-first"
+            },
+            "indexer": {
+              "type": "string",
+              "enum": [
+                "first",
+                "last",
+                "sorted"
+              ],
+              "default": "first",
+              "description": "Where an indexer such as [number]: any lands when the sort runs. first reads it as the heading of the table, last as the footnote, and sorted gives it no special place. See https://larvae-luau.github.io/docs/reference/formatting#sort-table-types-indexer"
             }
           }
         },
@@ -1230,6 +1243,37 @@
           ],
           "default": "ignore",
           "description": "What to do with a required module that nothing uses. \"ignore\" leaves it as written. \"underscore\" renames it to `_Name`, which keeps the module and silences the lint. \"remove\" deletes the declaration.\n\nThe default is \"ignore\" for a reason worth knowing: `require` runs a module the first time a file asks for it, so a module can do its work by being required at all, and deleting the line stops that work while the file still compiles. A name that only a type reads counts as used, so `const jecs = require(\"@pkg/jecs\")` with `type C = jecs.Component` below it survives both modes. A name that already opens with `_` is left alone, and a statement inside a `fmt off` region is never removed.\n\n[unused_imports \u2192](https://larvae-luau.github.io/docs/reference/formatting#unused-imports)"
+        },
+        "sort_tables": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "order": {
+              "type": "string",
+              "enum": [
+                "none",
+                "ascending",
+                "descending",
+                "alphabetical",
+                "size-ascending",
+                "size-descending"
+              ],
+              "default": "none",
+              "description": "Sorts the fields of a value table. Off by default: a value table is data, and the sort moves each value with its key. A table with a comment, a positional field, or a computed key that is not a plain string stays as written. See https://larvae-luau.github.io/docs/reference/formatting#sort-tables-order"
+            }
+          },
+          "description": "How the formatter orders the fields of a value table. See https://larvae-luau.github.io/docs/reference/formatting#sort-tables"
+        },
+        "function_style": {
+          "type": "string",
+          "enum": [
+            "preserve",
+            "local",
+            "const",
+            "global"
+          ],
+          "default": "preserve",
+          "description": "The keyword a top-level function declaration takes. A dotted or method name has no local form and stays as written, an anonymous function declares nothing, and const applies only where nothing reassigns the name. See https://larvae-luau.github.io/docs/reference/formatting#function-style"
         }
       }
     },

@@ -348,6 +348,19 @@ impl<'a> Emitter<'a> {
     }
 
     fn function(&self, n: &Function) -> Doc<'a> {
+        /*
+        A bare declaration takes a keyword when `function_style` asks
+        for one; the plan only ever offers it where the name is one
+        word, because a dotted or method name has no local form.
+        */
+        let keyword = self
+            .rebindings
+            .get(&n.span.start)
+            .copied()
+            .filter(|word| !word.is_empty())
+            .map(|word| Doc::text(format!("{word} ")))
+            .unwrap_or(Doc::Nil);
+
         let mut path = String::new();
 
         for (i, part) in n.path.iter().enumerate() {
@@ -362,6 +375,7 @@ impl<'a> Emitter<'a> {
 
         Doc::concat([
             self.attributes(&n.attributes),
+            keyword,
             Doc::text("function "),
             Doc::text(path),
             self.function_body(&n.body),
@@ -369,13 +383,31 @@ impl<'a> Emitter<'a> {
     }
 
     fn local_function(&self, n: &LocalFunction) -> Doc<'a> {
+        /*
+        `function_style` may rewrite the keyword, and the empty string
+        is the global form: the declaration then opens on `function`.
+        */
+        let written = match n.is_const {
+            true => "const",
+
+            false => "local",
+        };
+
+        let keyword = self
+            .rebindings
+            .get(&n.span.start)
+            .copied()
+            .unwrap_or(written);
+
+        let head = match keyword.is_empty() {
+            true => String::from("function "),
+
+            false => format!("{keyword} function "),
+        };
+
         Doc::concat([
             self.attributes(&n.attributes),
-            Doc::text(if n.is_const {
-                "const function "
-            } else {
-                "local function "
-            }),
+            Doc::text(head),
             Doc::text(self.one(n.name)),
             self.function_body(&n.body),
         ])

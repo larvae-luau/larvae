@@ -4,6 +4,48 @@ Notable changes land here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow
 [semver](https://semver.org/spec/v2.0.0.html).
 
+## 0.7.3 - 2026-08-30
+
+### Added
+
+- `[fmt] sort_table_types` takes three more orders: `alphabetical`, and
+  `size-ascending` and `size-descending`, which measure the whole field
+  instead of the name. Two fields that measure the same are ordered by
+  name, so the order is total and a second format finds the file as the
+  first one left it
+- `[fmt] sort_table_types.indexer` says where an indexer lands: `first`
+  as the heading of the table, `last` as the footnote, or `sorted` in
+  the place the order gives it. `indexer_first` still works and means
+  what it meant
+- `[fmt] sort_tables` orders the fields of a value table the same six
+  ways, and stays off by default: a value table is data, and the sort
+  moves each value with its key. A comment, a positional field, or a
+  computed key that is no plain string keeps the table as written. The
+  separators are the formatter's, so a sorted table cannot leave a `;`
+  behind, and the magic trailing comma still reads the source's own
+- `[fmt] function_style` picks the keyword a top-level function
+  declaration takes: `local`, `const`, `global`, or `preserve`. A field
+  of a table, a method, and an anonymous function take none and are
+  left as written, and `const` applies only where nothing reassigns the
+  name
+
+### Fixed
+
+- The Windows analyzer links the C runtime statically. With the dynamic
+  runtime the library needed the Visual C++ redistributable, and a
+  machine without it could not start the server at all, because the
+  server links against the library rather than loading it late
+- `[lsp] enabled` in `larvae.toml` reaches the editor. The extension
+  read its own setting alone to decide whether to start the server, and
+  a server that never starts reads no project config, so a project that
+  turned the server on stayed dark. The two keys the client acts on,
+  `enabled` and `claim_only`, now read the project first, which is the
+  rule the server already followed for every other key
+- A removed import leaves no gap. The line went and its newline stayed,
+  so the file kept a blank line nobody wrote. The cursor moves past the
+  dead line where the whole gap holds no comment, and where one does the
+  comments still reach the next statement
+
 ## 0.7.2 - 2026-08-30
 
 ### Added

@@ -433,19 +433,44 @@ impl<'a> Emitter<'a> {
         The sort is stable, so two properties that measure the same and
         carry the same name keep the order the author gave them.
         */
-        named.sort_by(|(a, _), (b, _)| {
-            let rank = |name: &Property<'_>| match cfg.indexer_first && name.indexer {
-                true => 0u8,
+        named.sort_by(|(a, a_span), (b, b_span)| {
+            let (a_span, b_span) = (*a_span, *b_span);
 
-                false => 1,
+            let place = cfg.indexer_position();
+
+            let rank = |name: &Property<'_>| match name.indexer {
+                false => 1u8,
+
+                true => match place {
+                    crate::fmt::config::IndexerPosition::First => 0,
+                    crate::fmt::config::IndexerPosition::Last => 2,
+                    crate::fmt::config::IndexerPosition::Sorted => 1,
+                },
             };
 
             let (a_len, b_len) = (a.text.chars().count(), b.text.chars().count());
+
+            // The size orders measure the whole field, not the name.
+            let width = |(from, to): (u32, u32)| {
+                let (lo, hi) = self.byte_span(TokSpan {
+                    start: from,
+                    end: to,
+                });
+
+                self.src[lo as usize..hi as usize].chars().count()
+            };
 
             rank(a)
                 .cmp(&rank(b))
                 .then_with(|| match cfg.order {
                     PropertyOrder::Descending => b_len.cmp(&a_len),
+
+                    // Alphabetical ignores the lengths; the final
+                    // tiebreak below is already the whole order.
+                    PropertyOrder::Alphabetical => std::cmp::Ordering::Equal,
+
+                    PropertyOrder::SizeAscending => width(a_span).cmp(&width(b_span)),
+                    PropertyOrder::SizeDescending => width(b_span).cmp(&width(a_span)),
 
                     _ => a_len.cmp(&b_len),
                 })

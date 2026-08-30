@@ -224,6 +224,21 @@ spelling drops it instead of failing.
 fn harden(build: &mut cc::Build) {
     build.flag_if_supported("/EHsc");
     build.define("_CRT_SECURE_NO_WARNINGS", None);
+
+    /*
+    The MSVC runtime links statically, so the library carries what it
+    needs. With the dynamic runtime the DLL depends on the Visual C++
+    redistributable, and a Windows machine without it cannot load the
+    library at all: the server is implicitly linked against it, so the
+    process fails to start rather than falling back, and the editor
+    reports a server that does nothing.
+
+    Nothing allocated on one side is freed on the other. The exports
+    hand back pointers into storage the library owns, and the resolver
+    callbacks hand back pointers into storage larvae owns, so the two
+    runtimes never share an allocation.
+    */
+    build.static_crt(true);
 }
 
 /*

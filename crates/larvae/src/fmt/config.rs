@@ -552,6 +552,19 @@ pub enum PropertyOrder {
     Ascending,
     /// The longest name first.
     Descending,
+    /// A to z by name, whatever the lengths.
+    Alphabetical,
+    /*
+    The narrowest field first, by the width of the whole field.
+
+    `ascending` measures the name, which reads a list of keys down one
+    edge. This measures what the line takes: the name, the value or the
+    type, and the separator between them. A table sorted this way opens
+    with its short entries and widens.
+    */
+    SizeAscending,
+    /// The widest field first, by the same measure.
+    SizeDescending,
 }
 
 /*
@@ -569,34 +582,104 @@ so `table_types.enabled = false` leaves every order as written.
 /*
 Keys stay snake case here, which is larvae's rule for a key.
 */
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/*
+Where an indexer such as `[number]: any` lands when the sort runs.
+
+An indexer states the shape of every key instead of one key, so `first`
+reads it as the heading of the table and `last` as the footnote.
+`sorted` gives it no special place and lets `order` decide, which for
+the size orders means it sits where its width puts it.
+*/
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum IndexerPosition {
+    /// Above the named properties.
+    #[default]
+    First,
+    /// Below the named properties.
+    Last,
+    /// In the position `order` gives it.
+    Sorted,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SortTableTypes {
     #[serde(default)]
     pub order: PropertyOrder,
 
     /*
-    An indexer such as `[number]: any` goes above the named properties.
-
-    On by default, and it costs nothing until `order` asks for a sort. An
-    indexer states the shape of every key instead of one key, so it reads as
-    the heading of the table.
-
-    Off puts the indexer in its sorted position. An indexer names nothing, so
-    it measures zero: it lands first under `ascending`, which is where
-    `indexer_first` puts it anyway, and last under `descending`.
+    Where an indexer lands. `first` by default, and it costs nothing
+    until `order` asks for a sort.
     */
-    #[serde(default = "default_true")]
-    pub indexer_first: bool,
+    #[serde(default)]
+    pub indexer: IndexerPosition,
+
+    /*
+    The older spelling of the key above, kept so a config written for
+    it still means what it meant. `true` is `first` and `false` is
+    `sorted`; a file that writes `indexer` uses that instead.
+    */
+    #[serde(default)]
+    pub indexer_first: Option<bool>,
 }
 
-impl Default for SortTableTypes {
-    fn default() -> Self {
-        Self {
-            order: PropertyOrder::default(),
-            indexer_first: default_true(),
+impl SortTableTypes {
+    /// The position the two keys agree on, the newer one first
+    pub fn indexer_position(&self) -> IndexerPosition {
+        match self.indexer_first {
+            Some(true) if self.indexer == IndexerPosition::First => IndexerPosition::First,
+            Some(false) if self.indexer == IndexerPosition::First => IndexerPosition::Sorted,
+
+            _ => self.indexer,
         }
     }
+}
+
+/*
+Sorts the fields of a value table, the way `sort_table_types` sorts a
+table type.
+
+Off by default, and deliberately so: a value table is data, and the
+sort moves the values with their keys, so the file evaluates them in
+the new order. A table whose values call anything is a table whose
+side effects move. The option exists for the projects whose tables are
+plain data and want them read in one order everywhere.
+
+The guards mirror the type sort and add one. A table with a comment in
+it stays as written. A table with a positional field stays whole,
+because positions are the data. A computed key that is not a plain
+string names nothing to sort by, and one such field keeps the whole
+table as written.
+*/
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct SortTables {
+    #[serde(default)]
+    pub order: PropertyOrder,
+}
+
+/*
+The keyword a function declaration takes, for `function_style`.
+
+`preserve` is the default and changes nothing. The other three rewrite
+the declarations at the top level of a file, where the three spellings
+are interchangeable, under the guards `rebind::function_plan` states: a
+dotted or method name has no local form, an anonymous function is not a
+declaration, and a conversion that would not compile stays as written.
+*/
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FunctionStyle {
+    /// Keep the keyword the author wrote.
+    #[default]
+    Preserve,
+    /// `local function f` where the spelling allows it.
+    Local,
+    /// `const function f` where nothing reassigns the name.
+    Const,
+    /// A bare `function f` at the top level.
+    Global,
 }
 
 /// Selects when the formatter opens a union or an intersection over several lines.
@@ -742,6 +825,12 @@ pub struct FmtConfig {
     /// Sorts the properties of a table type by the length of their names.
     #[serde(default)]
     pub sort_table_types: SortTableTypes,
+
+    #[serde(default)]
+    pub sort_tables: SortTables,
+
+    #[serde(default)]
+    pub function_style: FunctionStyle,
 
     /// Selects how a union and an intersection open over several lines.
     #[serde(default)]

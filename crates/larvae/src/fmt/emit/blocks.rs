@@ -160,6 +160,27 @@ impl<'a> Emitter<'a> {
             if self.unused.removals.contains(&stmt.span().start)
                 && self.verbatim_stmt(stmt).is_none()
             {
+                /*
+                The removed line leaves no gap behind. The cursor stays
+                put, so its comments still reach the next statement, and
+                the newline the dead line itself contributed would read
+                as a blank line the author wrote. The cursor moves to
+                the end of that line instead when nothing but the
+                statement sat on it, which is the one case where the
+                newline belonged to the statement and not to the file.
+                */
+                let hi = self.tok_end(stmt.span().end - 1);
+
+                /*
+                The cursor moves only when the whole gap holds no
+                comment: one above the dead line, beside it, or inside
+                it all reach the next statement through this cursor,
+                and a formatter may not lose prose.
+                */
+                if self.trivia.between(cursor, hi).is_empty() {
+                    cursor = hi;
+                }
+
                 continue;
             }
 

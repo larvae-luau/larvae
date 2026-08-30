@@ -2001,7 +2001,8 @@ fn sorted(order: PropertyOrder, indexer_first: bool) -> FmtConfig {
     FmtConfig {
         sort_table_types: SortTableTypes {
             order,
-            indexer_first,
+            indexer_first: Some(indexer_first),
+            ..Default::default()
         },
         ..Default::default()
     }
@@ -2138,7 +2139,8 @@ fn the_sort_needs_the_table_type_layout() {
         },
         sort_table_types: SortTableTypes {
             order: PropertyOrder::Ascending,
-            indexer_first: true,
+            indexer_first: Some(true),
+            ..Default::default()
         },
         ..Default::default()
     };
@@ -2181,7 +2183,8 @@ fn every_property_order_is_idempotent_and_parses() {
                     column_width,
                     sort_table_types: SortTableTypes {
                         order,
-                        indexer_first,
+                        indexer_first: Some(indexer_first),
+                        ..Default::default()
                     },
                     ..Default::default()
                 });
@@ -2403,7 +2406,8 @@ fn every_type_layout_is_idempotent_and_parses() {
                         column_width,
                         sort_table_types: SortTableTypes {
                             order,
-                            indexer_first,
+                            indexer_first: Some(indexer_first),
+                            ..Default::default()
                         },
                         type_operators: TypeOperators { expand },
                         ..Default::default()
@@ -3042,4 +3046,230 @@ fn both_modes_are_stable() {
 
         assert_eq!(once, twice, "{mode:?} did not settle");
     }
+}
+
+// --- the value table sort, the size orders, and the function style -------
+
+/*
+A value table keeps its order until the project asks. The sort is off by
+default, because a value table is data and moving a field moves the value
+with it.
+*/
+#[test]
+fn a_value_table_keeps_its_order_by_default() {
+    let src = "local t = { zeta = 1, alpha = 2 }\nreturn t\n";
+
+    assert_eq!(fmt_with(src, FmtConfig::default()), src);
+}
+
+/// On, it sorts by the same orders the type sort takes.
+#[test]
+fn a_value_table_sorts_when_the_project_asks() {
+    let cfg = |order| FmtConfig {
+        sort_tables: larvae::fmt::config::SortTables { order },
+        ..Default::default()
+    };
+
+    let src = "local t = { zeta = 1, al = 2, mid = 3 }\nreturn t\n";
+
+    assert_eq!(
+        fmt_with(src, cfg(PropertyOrder::Alphabetical)),
+        "local t = { al = 2, mid = 3, zeta = 1 }\nreturn t\n"
+    );
+    assert_eq!(
+        fmt_with(src, cfg(PropertyOrder::Ascending)),
+        "local t = { al = 2, mid = 3, zeta = 1 }\nreturn t\n"
+    );
+}
+
+/*
+A positional field is order as data, and a comment cannot move with the
+field it describes. One of either keeps the whole table as written.
+*/
+#[test]
+fn the_value_sort_leaves_a_table_it_cannot_read_whole() {
+    let cfg = FmtConfig {
+        sort_tables: larvae::fmt::config::SortTables {
+            order: PropertyOrder::Alphabetical,
+        },
+        ..Default::default()
+    };
+
+    let positional = "local t = { zeta = 1, 5, alpha = 2 }\nreturn t\n";
+    assert_eq!(fmt_with(positional, cfg.clone()), positional);
+
+    let commented = "local t = {\n\tzeta = 1, -- the last one\n\talpha = 2,\n}\nreturn t\n";
+    assert_eq!(fmt_with(commented, cfg), commented);
+}
+
+/*
+The separators are the emitter's, so a sorted table cannot leave a `;`
+behind, and the trailing comma the magic option reads still opens it.
+*/
+#[test]
+fn a_sorted_table_keeps_one_separator_and_its_magic_comma() {
+    let cfg = FmtConfig {
+        magic_trailing_comma: true,
+        sort_tables: larvae::fmt::config::SortTables {
+            order: PropertyOrder::Alphabetical,
+        },
+        ..Default::default()
+    };
+
+    let out = fmt_with("local t = {\n\tzeta = 1;\n\talpha = 2,\n}\nreturn t\n", cfg);
+
+    assert!(!out.contains(';'), "{out}");
+    assert_eq!(out, "local t = {\n\talpha = 2,\n\tzeta = 1,\n}\nreturn t\n");
+}
+
+/// The size orders measure the whole field, not the name.
+#[test]
+fn the_size_orders_measure_the_field() {
+    let cfg = |order| FmtConfig {
+        sort_table_types: SortTableTypes {
+            order,
+            indexer: larvae::fmt::config::IndexerPosition::Sorted,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    // `ab` names less than `long` and its field is the wider of the two.
+    let src = "type T = { ab: SomeVeryLongTypeName, long: no }\nreturn nil\n";
+
+    assert_eq!(
+        fmt_with(src, cfg(PropertyOrder::SizeAscending)),
+        "type T = { long: no, ab: SomeVeryLongTypeName }\nreturn nil\n"
+    );
+    assert_eq!(
+        fmt_with(src, cfg(PropertyOrder::SizeDescending)),
+        "type T = { ab: SomeVeryLongTypeName, long: no }\nreturn nil\n"
+    );
+}
+
+/// The indexer takes the place the option names, and `sorted` gives it none.
+#[test]
+fn the_indexer_takes_its_position() {
+    let cfg = |indexer| FmtConfig {
+        sort_table_types: SortTableTypes {
+            order: PropertyOrder::Alphabetical,
+            indexer,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    use larvae::fmt::config::IndexerPosition;
+
+    let src = "type T = { foo: number, [number]: string, bar: number }\nreturn nil\n";
+
+    assert_eq!(
+        fmt_with(src, cfg(IndexerPosition::First)),
+        "type T = { [number]: string, bar: number, foo: number }\nreturn nil\n"
+    );
+    assert_eq!(
+        fmt_with(src, cfg(IndexerPosition::Last)),
+        "type T = { bar: number, foo: number, [number]: string }\nreturn nil\n"
+    );
+}
+
+/*
+Two fields that measure the same land in one order and stay there. A
+second format finds them as the first left them.
+*/
+#[test]
+fn a_tie_sorts_the_same_way_every_run() {
+    let cfg = FmtConfig {
+        sort_tables: larvae::fmt::config::SortTables {
+            order: PropertyOrder::SizeAscending,
+        },
+        sort_table_types: SortTableTypes {
+            order: PropertyOrder::SizeAscending,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let src = "type T = { bbb: number, aaa: number }\nlocal t = { bbb = 1, aaa = 2 }\nreturn t\n";
+    let once = fmt_with(src, cfg.clone());
+
+    assert_eq!(
+        once,
+        fmt_with(&once, cfg.clone()),
+        "the second run moved something"
+    );
+    assert!(
+        once.starts_with("type T = { aaa: number, bbb: number }"),
+        "{once}"
+    );
+}
+
+/*
+`function_style` rewrites the declarations where the three spellings mean
+one thing, and nowhere else. A dotted or method name has no local form,
+and an anonymous function declares nothing.
+*/
+#[test]
+fn the_function_style_leaves_the_forms_that_have_no_keyword() {
+    use larvae::fmt::config::FunctionStyle;
+
+    let cfg = |style| FmtConfig {
+        function_style: style,
+        ..Default::default()
+    };
+
+    let src = "local C = {}\nfunction plain()\n\treturn 1\nend\nfunction C.method()\n\treturn 2\nend\nfunction C:other()\n\treturn 3\nend\nlocal anon = function()\n\treturn 4\nend\nreturn { C, plain, anon }\n";
+
+    let out = fmt_with(src, cfg(FunctionStyle::Local));
+
+    assert!(out.contains("local function plain()"), "{out}");
+    assert!(out.contains("function C.method()"), "{out}");
+    assert!(out.contains("function C:other()"), "{out}");
+    assert!(out.contains("local anon = function()"), "{out}");
+    assert!(!out.contains("local function C"), "{out}");
+
+    // And the other direction takes the keyword off.
+    let back = fmt_with(&out, cfg(FunctionStyle::Global));
+
+    assert!(back.contains("function plain()"), "{back}");
+    assert!(!back.contains("local function plain"), "{back}");
+}
+
+/// `const` needs the proof: a name the file reassigns keeps what it had.
+#[test]
+fn the_const_style_refuses_a_reassigned_name() {
+    let cfg = FmtConfig {
+        function_style: larvae::fmt::config::FunctionStyle::Const,
+        ..Default::default()
+    };
+
+    let out = fmt_with(
+        "function safe()\n\treturn 1\nend\nfunction moved()\n\treturn 2\nend\nmoved = nil\nreturn { safe, moved }\n",
+        cfg,
+    );
+
+    assert!(out.contains("const function safe()"), "{out}");
+    assert!(out.contains("\nfunction moved()"), "{out}");
+}
+
+/*
+A removed import leaves no gap. The line goes and the blank line the
+author wrote below the block stays where it was.
+*/
+#[test]
+fn a_removed_import_leaves_no_blank_line() {
+    let cfg = FmtConfig {
+        unused_imports: larvae::fmt::config::UnusedImports::Remove,
+        ..Default::default()
+    };
+
+    let out = fmt_with(
+        "local Used = require(\"./a\")\nlocal Dead = require(\"./b\")\nlocal Other = require(\"./c\")\n\nreturn { Used, Other }\n",
+        cfg,
+    );
+
+    assert_eq!(
+        out,
+        "local Used = require(\"./a\")\nlocal Other = require(\"./c\")\n\nreturn { Used, Other }\n"
+    );
 }

@@ -106,6 +106,125 @@ pub fn plan(
 }
 
 /*
+The keyword each function declaration takes, for `function_style`.
+
+Three spellings mean one thing at the top level of a file: `local
+function f`, `const function f`, and a bare `function f`. Inside a
+table they do not: `function t.m()` and `function t:m()` assign a
+field, and no keyword can precede them. An anonymous function is an
+expression and declares nothing. Both stay as written, whatever the
+option says.
+
+`const` needs one more proof, the same one `require_binding` needs: a
+name something reassigns cannot take it, because Luau refuses the
+program. A conversion the resolver cannot prove safe stays put.
+*/
+pub fn function_plan(
+    src: &str,
+    toks: &[Tok],
+    chunk: &Chunk,
+    style: super::config::FunctionStyle,
+) -> Rebindings {
+    use super::config::FunctionStyle;
+
+    let mut out = Rebindings::new();
+
+    if style == FunctionStyle::Preserve {
+        return out;
+    }
+
+    let names = match style == FunctionStyle::Const {
+        true => Some(crate::lint::scope::resolve(src, toks, chunk)),
+
+        false => None,
+    };
+
+    /*
+    Only the top level converts. A declaration inside a block is
+    scoped to it, so a bare `function f` there writes a global and the
+    two spellings stop meaning the same thing.
+    */
+    for stmt in &chunk.block.stmts {
+        match stmt {
+            Stmt::LocalFunction(n) => {
+                // The statement opens on its keyword, `local` or `const`.
+                let keyword = n.span.start;
+
+                match style {
+                    FunctionStyle::Global => {
+                        out.insert(keyword, "");
+                    }
+
+                    FunctionStyle::Local if n.is_const => {
+                        out.insert(keyword, "local");
+                    }
+
+                    FunctionStyle::Const if !n.is_const => {
+                        let names = names.as_ref().expect("resolved for const");
+                        let writable = names
+                            .by_token
+                            .get(&n.name.start)
+                            .and_then(|&i| names.bindings.get(i))
+                            .is_none_or(|b| !b.writes.is_empty());
+
+                        if !writable {
+                            out.insert(keyword, "const");
+                        }
+                    }
+
+                    _ => {}
+                }
+            }
+
+            /*
+            A bare `function f` takes a keyword only where the name is
+            one word. `function t.m` and `function t:m` assign a field
+            of a table, which no keyword can precede.
+            */
+            Stmt::Function(n) if n.path.len() == 1 && !n.is_method && !n.exported => {
+                let word = match style {
+                    FunctionStyle::Local => "local",
+                    FunctionStyle::Const => "const",
+
+                    _ => continue,
+                };
+
+                /*
+                A bare declaration writes a global, so the resolver has
+                no binding to read. The proof is the other list: a write
+                to that name anywhere else in the file, the declaration
+                itself excepted, is a reassignment `const` refuses.
+                */
+                if word == "const" {
+                    let names = names.as_ref().expect("resolved for const");
+                    let name = n.path[0];
+                    let text = &src[toks[name.start as usize].start as usize
+                        ..toks[name.start as usize].end as usize];
+
+                    let reassigned = names.global_writes.iter().any(|&at| {
+                        at != name.start
+                            && !names.global_functions.contains(&at)
+                            && &src
+                                [toks[at as usize].start as usize..toks[at as usize].end as usize]
+                                == text
+                    });
+
+                    if reassigned {
+                        continue;
+                    }
+                }
+
+                out.insert(n.span.start, word);
+            }
+
+            _ => {}
+        }
+    }
+
+    out
+}
+
+/*
 Reports if this declaration can become `const`.
 
 Three rules, and each one is a place where the swap would not compile or
