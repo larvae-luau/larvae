@@ -146,6 +146,17 @@ counterpart there:
   declined requests for the rest, so stock luau-lsp can own the plain Luau
   of a project while larvae serves the claimed files beside it
 
+- A double click accepts an inlay hint into the file. The edit writes
+  the whole type, so a label the display truncated still accepts what
+  it stands for. A hint whose text is display notation and not syntax,
+  ex: `@metatable` or a type Luau's printer cut off, stays display
+  only, and a parameter name never inserts, because a call site has no
+  written form for one
+- Hovering an inlay hint answers with the same card as hovering the
+  name it annotates, through `inlayHint/resolve`. A hint on a linted
+  require showed the lint alone, because an editor never sends a hover
+  for the hint's own pixels
+
 ### Changed
 
 - The syntax layer lives in its own crate, `eclipse_luau`: the lexer, the

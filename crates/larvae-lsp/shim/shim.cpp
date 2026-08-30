@@ -3189,8 +3189,13 @@ struct HintCollector : Luau::AstVisitor
         : session(s)
         , module(std::move(m))
     {
+        /*
+        The server truncates the label for display; the whole type still
+        crosses, because the accept edit writes it into the file. The cap
+        stays for the pathological shapes nobody would accept anyway.
+        */
         opts.exhaustive = false;
-        opts.maxTypeLength = 60;
+        opts.maxTypeLength = 2000;
     }
 
     /*

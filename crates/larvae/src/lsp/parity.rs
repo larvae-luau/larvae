@@ -543,7 +543,7 @@ impl Server {
             .into_iter()
             .filter(|h| from.is_none_or(|f| h.line >= f) && to.is_none_or(|t| h.line <= t))
             .map(|h| {
-                let text = self.instances.readable(&h.label);
+                let text = self.instances.readable(&h.label).into_owned();
 
                 // A hint longer than the code it annotates hides the code.
                 let label = match text.chars().count() > cfg.type_hint_max_length {
@@ -553,10 +553,10 @@ impl Server {
                         format!("{kept}...")
                     }
 
-                    false => text.into_owned(),
+                    false => text.clone(),
                 };
 
-                json!({
+                let mut hint = json!({
                     "position": { "line": h.line, "character": h.character },
                     "label": label,
                     "kind": h.kind,
@@ -564,12 +564,51 @@ impl Server {
                     // A parameter name sits before its argument, and the
                     // argument must not read as glued to it.
                     "paddingRight": h.kind == 2,
-                })
+                    // The resolve request sends the hint back alone, so it
+                    // carries its document.
+                    "data": { "uri": uri },
+                });
+
+                /*
+                A double click accepts a type hint into the file, when the
+                type is syntax Luau reads. The edit writes the whole type,
+                so a truncated label still accepts what it stands for.
+                `@metatable` is display notation, not a type, and a
+                parameter name has no written form at a call site, so
+                those hints stay display only.
+                */
+                if h.kind == 1 && insertable_type(&text) {
+                    hint["textEdits"] = json!([{
+                        "range": {
+                            "start": { "line": h.line, "character": h.character },
+                            "end": { "line": h.line, "character": h.character },
+                        },
+                        "newText": text,
+                    }]);
+                }
+
+                hint
             })
             .collect();
 
         json!(out)
     }
+}
+
+/*
+Report if a type hint's text is syntax an accept can write.
+
+The label prints the way `toString` speaks, and that speech holds
+notation no parser reads: `@metatable`, `*error-type*`, and the `...`
+tail of a truncated hint. The one honest test is a parse: the label
+lands in a type alias, and what does not parse does not insert.
+*/
+fn insertable_type(label: &str) -> bool {
+    let Some(ty) = label.strip_prefix(": ") else {
+        return false;
+    };
+
+    crate::syntax::parse_one(&format!("type __hint = {ty}\n")).is_ok()
 }
 
 /*
@@ -590,4 +629,26 @@ fn location(at: &super::analysis::AnalysisLocation) -> Value {
             "end": { "line": at.end.0, "character": at.end.1 },
         },
     })
+}
+#[cfg(test)]
+mod hint_accepts {
+    use super::insertable_type;
+
+    /// Real type syntax inserts; display notation stays display.
+    #[test]
+    fn only_syntax_inserts() {
+        assert!(insertable_type(": number"));
+        assert!(insertable_type(": { hp: number, name: string }"));
+        assert!(insertable_type(": (number) -> string"));
+        assert!(insertable_type(
+            ": { a: number, e: number, f: boolean, foo: string, test: number }"
+        ));
+        assert!(insertable_type(": Folder | Part"));
+
+        // toString notation, not types: these never insert.
+        assert!(!insertable_type(": { @metatable Class, {  } }"));
+        assert!(!insertable_type(": *error-type*"));
+        assert!(!insertable_type(": { hp: number, na..."));
+        assert!(!insertable_type("name:"));
+    }
 }

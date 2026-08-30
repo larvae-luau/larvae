@@ -626,6 +626,36 @@ impl Server {
                 self.reply(message, out, result)?;
             }
 
+            /*
+            The tooltip of one hint, on demand. Hovering a hint shows the
+            hint's own tooltip and never a textDocument/hover, so a hint
+            over a linted require showed the lint alone. The resolve
+            answers with the same card a hover on the annotated name gives,
+            so the type overview rides the hint too.
+            */
+            "inlayHint/resolve" => {
+                let mut hint = message.params.clone();
+
+                let anchor = json!({
+                    "textDocument": { "uri": hint["data"]["uri"] },
+                    "position": {
+                        "line": hint["position"]["line"],
+                        "character": hint["position"]["character"]
+                            .as_u64()
+                            .unwrap_or(0)
+                            .saturating_sub(1),
+                    },
+                });
+
+                let card = self.hover(&anchor);
+
+                if let Some(value) = card["contents"]["value"].as_str() {
+                    hint["tooltip"] = json!({ "kind": "markdown", "value": value });
+                }
+
+                self.reply(message, out, hint)?;
+            }
+
             "textDocument/typeDefinition" => {
                 let result = self.type_definition(&message.params);
 
@@ -836,7 +866,8 @@ fn capabilities(analysis: bool) -> Value {
         caps["typeDefinitionProvider"] = json!(true);
         // Both read the type graph, so neither means anything without it.
         caps["signatureHelpProvider"] = json!({ "triggerCharacters": ["(", ","] });
-        caps["inlayHintProvider"] = json!(true);
+        // Resolve fills a hint's tooltip on demand, when the editor asks.
+        caps["inlayHintProvider"] = json!({ "resolveProvider": true });
         /*
         Every string mark opens a require spec, and a project that writes
         `'` got no list at all: the editor asks on a trigger character, and
