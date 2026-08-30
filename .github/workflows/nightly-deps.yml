@@ -89,6 +89,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cp /tmp/globalTypes.d.luau crates/larvae-lsp/types/globalTypes.d.luau
+          # The shapes upstream has not shipped yet; a no-op once it does.
+          python3 scripts/patch_global_types.py
           if git diff --quiet; then
             echo "the types have not moved"; exit 0
           fi

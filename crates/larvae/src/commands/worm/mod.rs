@@ -10,7 +10,7 @@ mod develop;
 mod manage;
 
 use develop::{info, run_worm, types};
-use manage::{add, install, remove};
+use manage::{add, claims, install, remove};
 
 /// Luau type definitions for the worm API; `larvae worm types` writes them
 pub const TYPES: &str = include_str!("../../worm/worm.d.luau");
@@ -88,6 +88,13 @@ pub enum WormCommand {
         force: bool,
     },
 
+    /// Report the file extensions this project's worms claim, as JSON
+    Claims {
+        /// The config to read; the default is ./larvae.toml
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+
     /// Remove a worm from larvae.toml and delete what it installed
     #[command(alias = "rm")]
     Remove {
@@ -125,6 +132,8 @@ pub fn run(cmd: WormCommand) -> Result<ExitCode> {
         } => add(&spec, cargo, name, config),
 
         WormCommand::Install { config, force } => install(config, force),
+
+        WormCommand::Claims { config } => claims(config),
 
         WormCommand::Remove {
             name,

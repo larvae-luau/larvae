@@ -20,10 +20,10 @@ mod exprs;
 mod flow;
 mod fold;
 mod interp;
-mod locals;
+pub(crate) mod locals;
 mod methods;
 mod support;
-mod types;
+pub(crate) mod types;
 
 use crate::config::RulesConfig;
 use crate::diag::Diag;

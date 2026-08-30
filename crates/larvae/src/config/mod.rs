@@ -305,6 +305,11 @@ impl Config {
         Ok(())
     }
 
+    /// True when the run prints through the dense emitter. `obfuscate` forces it.
+    pub fn dense_output(&self) -> bool {
+        self.process.generator == "dense" || self.minify.obfuscate
+    }
+
     /// The alias map with RFC case insensitive names (lowercase keys)
     pub fn alias_map(&self) -> HashMap<String, String> {
         self.aliases
@@ -475,7 +480,7 @@ mod tests {
         let c: Config = toml::from_str("[minify]\ncolumn_span = 100").unwrap();
 
         c.validate().unwrap();
-        assert_eq!(c.minify.column_span, 100);
+        assert_eq!(c.minify.column_span, Some(100));
         assert!(!c.minify.rename_variables);
     }
 

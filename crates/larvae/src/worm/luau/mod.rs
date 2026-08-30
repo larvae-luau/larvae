@@ -210,6 +210,8 @@ impl LuauWorm {
         let extra = self.lua.create_table()?;
         extra.set("fmt", json_to_lua(&self.lua, &settings.fmt)?)?;
         extra.set("lint", json_to_lua(&self.lua, &settings.lint)?)?;
+        // A worm resolves a file of its own against the root, not the cwd.
+        extra.set("root", settings.root.as_str())?;
 
         init.call::<()>((cfg, table, extra))
             .context("worm rejected its configuration")?;

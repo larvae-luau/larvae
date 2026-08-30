@@ -530,6 +530,118 @@ impl TypeSeparator {
     }
 }
 
+/*
+Selects the order of the properties inside a table type.
+
+`none` is the default. A formatter that reorders code nobody asked it to
+reorder loses the order the author chose, and that order often groups the
+properties by what they mean.
+
+The measure is the length of the property name. A type reads as a block, and
+the ragged left edge of its values is what makes a block hard to scan. Two
+names of one length sort alphabetically, so the output does not depend on the
+order of the input.
+*/
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PropertyOrder {
+    /// Keep the order the author wrote.
+    #[default]
+    None,
+    /// The shortest name first.
+    Ascending,
+    /// The longest name first.
+    Descending,
+}
+
+/*
+Sorts the properties of a table type by the length of their names.
+
+This reaches a type position and nothing else: an alias, an annotation on a
+binding or a parameter, a return type, and a `::` assertion. A value table
+keeps the order the author wrote, because there the order is data.
+
+Two limits come with it. A table type that holds a comment prints as the
+author wrote it, so nothing inside it moves, and `emit::sort_properties`
+states why. And the sort reads the fields that the table type layout finds,
+so `table_types.enabled = false` leaves every order as written.
+*/
+/*
+Keys stay snake case here, which is larvae's rule for a key.
+*/
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SortTableTypes {
+    #[serde(default)]
+    pub order: PropertyOrder,
+
+    /*
+    An indexer such as `[number]: any` goes above the named properties.
+
+    On by default, and it costs nothing until `order` asks for a sort. An
+    indexer states the shape of every key instead of one key, so it reads as
+    the heading of the table.
+
+    Off puts the indexer in its sorted position. An indexer names nothing, so
+    it measures zero: it lands first under `ascending`, which is where
+    `indexer_first` puts it anyway, and last under `descending`.
+    */
+    #[serde(default = "default_true")]
+    pub indexer_first: bool,
+}
+
+impl Default for SortTableTypes {
+    fn default() -> Self {
+        Self {
+            order: PropertyOrder::default(),
+            indexer_first: default_true(),
+        }
+    }
+}
+
+/// Selects when the formatter opens a union or an intersection over several lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TypeExpansion {
+    /*
+    Leave the chain to the replay, which is the layout larvae always had.
+
+    The operator breaks no line here, so a chain wider than `column_width`
+    runs past it.
+    */
+    #[default]
+    Auto,
+    /// Every member on a line of its own, whatever its width.
+    Always,
+    /*
+    One line, whatever `table_types.width` says about a table type inside it.
+
+    `column_width` outranks this. A chain that does not fit the line opens one
+    member per line, because a line that runs off the screen is not the one
+    line the option asked for. So the order is `column_width` first, then
+    `type_operators`, then `table_types.width`.
+    */
+    Never,
+}
+
+/*
+How the formatter lays out a union and an intersection.
+
+`|` and `&` share one option, because they share one shape: members with an
+operator between them. A project that opens the one and closes the other has
+two styles for one construct.
+
+An opened chain takes the leading operator, which is the position the
+formatter already gives the operator of a long binary chain. The reader finds
+each member at one column instead of at the uneven right edge.
+*/
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct TypeOperators {
+    #[serde(default)]
+    pub expand: TypeExpansion,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct FmtConfig {
@@ -626,6 +738,14 @@ pub struct FmtConfig {
     /// Selects how a table type opens over several lines.
     #[serde(default)]
     pub table_types: TableTypes,
+
+    /// Sorts the properties of a table type by the length of their names.
+    #[serde(default)]
+    pub sort_table_types: SortTableTypes,
+
+    /// Selects how a union and an intersection open over several lines.
+    #[serde(default)]
+    pub type_operators: TypeOperators,
 
     /*
     Whether the file ends with a newline.
@@ -798,6 +918,16 @@ impl FmtConfig {
                 LineEndings::Windows => "\r\n",
             },
         }
+    }
+
+    /*
+    Reports if an option gives a type a layout past the one line replay.
+
+    Two options do, and either one on is enough. With both off the emitter
+    replays the tokens of a type and writes the bytes it always wrote.
+    */
+    pub fn lays_out_types(&self) -> bool {
+        self.table_types.enabled || self.type_operators.expand != TypeExpansion::Auto
     }
 
     /// Reports if a definition puts a space before its parentheses.

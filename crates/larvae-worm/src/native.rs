@@ -73,7 +73,7 @@ serve. One bad file must not stop a watch session.
 use std::io::{Read, Write};
 
 pub use crate::wire::{DOC_VERSION, Doc, Finding, Format, HostParse, Lint};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 /**
 The reply to `lsp_load`: the lowered Luau of one module the worm owns.
@@ -254,6 +254,15 @@ pub struct Settings {
     pub fmt: String,
     /// The lint levels of the project, as JSON text
     pub lint: String,
+    /// The root of the project, as an absolute path.
+    ///
+    /// Resolve a file of your own against this and never against the working
+    /// directory. `larvae process` runs in the project and the editor server
+    /// runs wherever the editor started it, so a relative path finds the file
+    /// for one of them and not the other.
+    ///
+    /// It is empty when the host is older than this field.
+    pub root: String,
 }
 
 #[derive(Deserialize)]
@@ -273,6 +282,9 @@ enum Request {
         /// The lint levels of the project, as JSON text
         #[serde(default)]
         lint: String,
+        /// The root of the project; empty from a host older than this field
+        #[serde(default)]
+        root: String,
     },
     Transform {
         source: String,
@@ -345,6 +357,7 @@ fn answer(handler: &mut impl Handler, request: Request) -> Vec<u8> {
             doc_version,
             fmt,
             lint,
+            root,
         } => {
             // 0 means a host from before the format op existed. Such a host
             // does not send one, so only a real mismatch is a reason to refuse.
@@ -355,7 +368,7 @@ fn answer(handler: &mut impl Handler, request: Request) -> Vec<u8> {
             }
 
             handler
-                .init(&config, &rules, &Settings { fmt, lint })
+                .init(&config, &rules, &Settings { fmt, lint, root })
                 .map(|()| serde_json::json!({ "ok": true }))
         }
 

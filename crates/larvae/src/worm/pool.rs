@@ -34,6 +34,7 @@ use super::{Worm, toml_text};
 static NEXT_BUILD: AtomicU64 = AtomicU64::new(1);
 
 /// All the data a worker needs to make its own instance of one worm
+#[derive(Clone)]
 pub struct Spec {
     pub manifest: Manifest,
     /// The Luau source or wasm module. It is kept so a worker does not touch the disk.
@@ -99,6 +100,11 @@ impl Spec {
         !self.manifest.lints.is_empty()
     }
 
+    /// Report if other worms may serve the files this worm claims
+    pub fn shares(&self) -> bool {
+        self.manifest.frontend.as_ref().is_some_and(|f| f.shared)
+    }
+
     /*
     Report if the lints of larvae also run on the claimed files of this worm.
 
@@ -140,6 +146,67 @@ struct Local {
 impl Pool {
     pub fn new(specs: Vec<Arc<Spec>>, native: i64) -> Self {
         Self::with_settings(specs, native, super::Settings::default())
+    }
+
+    /*
+    The pool again, with `[lsp.<worm>]` folded into each worm's config.
+
+    The keys check against the worm's own `[options]`, so a typo or a
+    wrong type says so instead of doing nothing. The build id changes,
+    so every instance restarts and reads the new settings at init.
+    */
+    pub fn with_lsp_settings(
+        self,
+        settings: &BTreeMap<String, toml::Value>,
+        complaints: &mut Vec<String>,
+    ) -> Self {
+        if settings.is_empty() {
+            return self;
+        }
+
+        let mut specs = self.specs.clone();
+
+        for (name, value) in settings {
+            let Some(index) = specs.iter().position(|s| s.manifest.name == *name) else {
+                complaints.push(format!(
+                    "[lsp] has no setting and no worm named `{name}`, so that table does nothing"
+                ));
+
+                continue;
+            };
+
+            let Some(table) = value.as_table() else {
+                complaints.push(format!(
+                    "[lsp.{name}] has to be a table of the settings the worm declares"
+                ));
+
+                continue;
+            };
+
+            let mut spec = (*specs[index]).clone();
+            let mut config = spec.config.as_table().cloned().unwrap_or_default();
+
+            for (key, val) in table {
+                match spec.manifest.options.get(key) {
+                    None => complaints.push(format!(
+                        "worm `{name}` declares no setting `{key}`, so [lsp.{name}] {key} does nothing"
+                    )),
+
+                    Some(decl) if !decl.kind.accepts(val) => complaints.push(format!(
+                        "[lsp.{name}] {key} takes a {}", decl.kind.name()
+                    )),
+
+                    Some(_) => {
+                        config.insert(key.clone(), val.clone());
+                    }
+                }
+            }
+
+            spec.config = toml::Value::Table(config);
+            specs[index] = Arc::new(spec);
+        }
+
+        Self::with_settings(specs, self.native, self.settings)
     }
 
     /// The same, with the settings of the project for the worms that lay out
@@ -264,6 +331,34 @@ impl Pool {
         Self::extensions(self.specs.iter().filter(|s| s.lints()))
     }
 
+    /*
+    The worms whose Lint op reads plain Luau, by index.
+
+    These run over every `.luau` file after the builtin lints, and over
+    the Luau shadow of a claimed file when the claiming worm shares it.
+    */
+    pub fn luau_linters(&self) -> Vec<usize> {
+        self.specs
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.manifest.lints_luau && s.lints())
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /*
+    The extensions a resolving worm claims, without the dot.
+
+    A require of one of these is answered by the worm, which vendors the
+    type of the file. A require of any other non-Luau file is a path Luau
+    cannot load, and it reports one. So this list is the difference between
+    a type and an `unsupported path`, and it takes both halves: the worm has
+    to claim the extension and to answer resolution.
+    */
+    pub fn lsp_resolved_claims(&self) -> Vec<String> {
+        Self::extensions(self.specs.iter().filter(|s| s.manifest.lsp.resolve))
+    }
+
     fn extensions<'a>(specs: impl Iterator<Item = &'a Arc<Spec>>) -> Vec<String> {
         specs
             .flat_map(|s| &s.claims)
@@ -369,13 +464,38 @@ impl Pool {
 
     /// The lowered source from the first resolver worm that loads the path
     pub fn lsp_load_any(&self, path: &str) -> Option<super::proto::LspLoadReply> {
+        self.lsp_load_traced(path).ok().flatten()
+    }
+
+    /*
+    The same load, and a refusal comes back with its reason.
+
+    A worm that cannot lower a file is the only one who knows why, and a
+    require of that file otherwise fails as a bare `*error-type*` with
+    nothing to read. `Ok(None)` is a path no resolver claims, which is a
+    different answer from a claimed file that will not lower.
+    */
+    pub fn lsp_load_traced(
+        &self,
+        path: &str,
+    ) -> Result<Option<super::proto::LspLoadReply>, String> {
+        let mut refusal = None;
+
         for index in self.lsp_resolvers() {
-            if let Ok(reply) = self.lsp_load(index, path) {
-                return Some(reply);
+            match self.lsp_load(index, path) {
+                Ok(reply) => return Ok(Some(reply)),
+
+                // The root cause is the worm's own sentence; the context
+                // chain above it repeats the worm's name.
+                Err(e) => refusal = Some(e.root_cause().to_string()),
             }
         }
 
-        None
+        match refusal {
+            Some(reason) => Err(reason),
+
+            None => Ok(None),
+        }
     }
 
     /// The indexes of the worms that answer tier-1 resolution

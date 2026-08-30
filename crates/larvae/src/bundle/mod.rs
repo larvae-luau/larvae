@@ -59,7 +59,13 @@ unreachable ones included. A project keeps them for the requires the walk
 cannot follow: a dynamic require finds its module in the registry at run
 time only when the bundle contains it.
 */
-pub fn plan(root: &Path, entry: &Path, graph: &Graph, tree_shake: bool) -> Result<Plan> {
+pub fn plan(
+    root: &Path,
+    entry: &Path,
+    graph: &Graph,
+    tree_shake: bool,
+    ids: crate::config::bundle::ModuleIds,
+) -> Result<Plan> {
     if !entry.exists() {
         bail!("the bundle entry {} does not exist", crate::ui::rel(entry));
     }
@@ -94,6 +100,19 @@ pub fn plan(root: &Path, entry: &Path, graph: &Graph, tree_shake: bool) -> Resul
             if !modules.contains_key(node) {
                 modules.insert(node.to_path_buf(), emit::module_id(root, node));
             }
+        }
+    }
+
+    /*
+    Opaque ids replace the paths once the set is complete. Numbers, in the
+    sorted order the map already holds, so the same project always numbers
+    the same way. The ids stay string literals in the output: a number
+    would break the parenthesis-free `require "x"` form the rewrite
+    handles, and a quoted number is exactly as opaque.
+    */
+    if ids == crate::config::bundle::ModuleIds::Opaque {
+        for (n, id) in modules.values_mut().enumerate() {
+            *id = (n + 1).to_string();
         }
     }
 
@@ -232,6 +251,7 @@ pub fn rewrite(src: &str, path: &Path, plan: &Plan, diags: &mut Vec<Diag>) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::bundle::ModuleIds;
 
     fn graph_of(edges: &[(&str, &str)]) -> Graph {
         let mut g = Graph::default();
@@ -272,7 +292,7 @@ mod tests {
             ),
         ]);
 
-        let plan = plan(&root, &root.join("a.luau"), &g, true).unwrap();
+        let plan = plan(&root, &root.join("a.luau"), &g, true, ModuleIds::Paths).unwrap();
 
         assert_eq!(plan.modules.len(), 3, "{:?}", plan.modules);
     }
@@ -289,7 +309,7 @@ mod tests {
         )]);
         g.see(&root.join("orphan.luau"));
 
-        let plan = plan(&root, &root.join("a.luau"), &g, true).unwrap();
+        let plan = plan(&root, &root.join("a.luau"), &g, true, ModuleIds::Paths).unwrap();
 
         assert_eq!(plan.modules.len(), 2);
         assert!(!plan.modules.contains_key(&root.join("orphan.luau")));
@@ -307,7 +327,7 @@ mod tests {
         )]);
         g.see(&root.join("orphan.luau"));
 
-        let plan = plan(&root, &root.join("a.luau"), &g, false).unwrap();
+        let plan = plan(&root, &root.join("a.luau"), &g, false, ModuleIds::Paths).unwrap();
 
         assert!(plan.modules.contains_key(&root.join("orphan.luau")));
     }
@@ -324,7 +344,7 @@ mod tests {
             (b.to_str().unwrap(), a.to_str().unwrap()),
         ]);
 
-        let plan = plan(&root, &a, &g, true).unwrap();
+        let plan = plan(&root, &a, &g, true, ModuleIds::Paths).unwrap();
 
         assert_eq!(plan.modules.len(), 2);
     }
@@ -340,7 +360,14 @@ mod tests {
             root.join("pkg/helper.luau").to_str().unwrap(),
         )]);
 
-        let plan = plan(&root, &root.join("pkg/init.luau"), &g, true).unwrap();
+        let plan = plan(
+            &root,
+            &root.join("pkg/init.luau"),
+            &g,
+            true,
+            ModuleIds::Paths,
+        )
+        .unwrap();
 
         assert_eq!(plan.entry, root.join("pkg"));
         assert_eq!(plan.modules.len(), 2, "{:?}", plan.modules);
@@ -354,6 +381,7 @@ mod tests {
             &dir.path().join("nope.luau"),
             &Graph::default(),
             true,
+            ModuleIds::Paths,
         ) else {
             panic!("there is no entry there to plan from")
         };
@@ -373,7 +401,7 @@ mod tests {
         )]);
         g.see_opaque(&root.join("styled.luau"));
 
-        let plan = plan(&root, &root.join("a.luau"), &g, true).unwrap();
+        let plan = plan(&root, &root.join("a.luau"), &g, true, ModuleIds::Paths).unwrap();
 
         assert_eq!(plan.diags.len(), 1, "{:?}", plan.diags);
         assert!(plan.diags[0].file.ends_with("styled.luau"));

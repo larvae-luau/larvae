@@ -193,8 +193,14 @@ A call of the form `Type.name(...)`, where `Type` is a global.
 
 The check requires a global for the same reason as everywhere else. A local
 named `Color3` belongs to the author, and these lints say nothing about it.
+
+The `documentColor` answer of the language server reads the same calls, so it
+calls this function. One reader keeps the swatch and the lint on one rule.
 */
-fn constructor<'e>(ctx: &LintCtx<'_>, e: &'e Expr) -> Option<(String, &'e [Expr], TokSpan)> {
+pub(crate) fn constructor<'e>(
+    ctx: &LintCtx<'_>,
+    e: &'e Expr,
+) -> Option<(String, &'e [Expr], TokSpan)> {
     let Expr::Call {
         func,
         method: None,
@@ -230,7 +236,7 @@ fn constructor<'e>(ctx: &LintCtx<'_>, e: &'e Expr) -> Option<(String, &'e [Expr]
     ))
 }
 
-fn number(ctx: &LintCtx<'_>, e: &Expr) -> Option<f64> {
+pub(crate) fn number(ctx: &LintCtx<'_>, e: &Expr) -> Option<f64> {
     match e {
         Expr::Number(s) => ctx.text(*s).parse().ok(),
 

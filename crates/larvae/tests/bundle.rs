@@ -122,6 +122,66 @@ fn a_chain_of_modules_all_load() {
     assert_eq!(run_luau(&text).expect("runs"), "b-a");
 }
 
+/*
+Opaque ids leave no path in the output.
+
+The point of the setting is what the shipped file no longer says, so the
+test reads the text as an adversary would: no `src/`, no module name, no
+quoted path anywhere. The bundle still runs, which proves the renumbering
+reached every definition, every rewritten require, and the entry.
+*/
+#[test]
+fn opaque_ids_run_and_name_no_file() {
+    let dir = project(
+        &[
+            (
+                "main.luau",
+                "local g = require(\"./vendor/greet\")\nreturn g.hello(\"world\")\n",
+            ),
+            (
+                "vendor/greet.luau",
+                "return { hello = function(n) return \"hi \" .. n end }\n",
+            ),
+        ],
+        &config_with(
+            "[bundle]\nentry = \"src/main.luau\"\noutput = \"out.luau\"\nmodule_ids = \"opaque\"\n",
+        ),
+    );
+
+    let text = run_bundle(dir.path(), &[]).expect("bundles");
+
+    assert_eq!(run_luau(&text).expect("runs"), "hi world");
+
+    for leak in ["src/", "vendor", "greet", "main"] {
+        assert!(!text.contains(leak), "{leak:?} survives in:\n{text}");
+    }
+
+    assert!(text.contains("__larvae[\"1\"] = function()"), "{text}");
+    assert!(text.contains("__larvae[\"2\"] = function()"), "{text}");
+}
+
+/// The numbering follows the sorted paths, so a rebundle emits the same bytes.
+#[test]
+fn opaque_ids_are_deterministic() {
+    let files = [
+        ("main.luau", "return require(\"./b\") .. require(\"./a\")\n"),
+        ("a.luau", "return \"a\"\n"),
+        ("b.luau", "return \"b\"\n"),
+    ];
+    let config = config_with(
+        "[bundle]\nentry = \"src/main.luau\"\noutput = \"out.luau\"\nmodule_ids = \"opaque\"\n",
+    );
+
+    let dir = project(&files, &config);
+    let first = run_bundle(dir.path(), &[]).expect("bundles");
+
+    let again = project(&files, &config);
+    let second = run_bundle(again.path(), &[]).expect("bundles");
+
+    assert_eq!(first, second);
+    assert_eq!(run_luau(&first).expect("runs"), "ba");
+}
+
 /// One module required from two places must initialise once, not twice
 #[test]
 fn a_shared_module_is_initialised_exactly_once() {
@@ -579,4 +639,90 @@ fn an_export_type_loses_its_export_inside_the_bundle() {
     assert!(!text.contains("export type"), "{text}");
     assert!(text.contains("type Word"), "the alias itself stays: {text}");
     assert_eq!(run_luau(&text).expect("runs"), "typed");
+}
+
+/*
+The bundle prints through the generator of the project, so `obfuscate`
+reaches it with no key of its own. The bundle is the file most projects
+ship, so it is the one that matters most here.
+*/
+#[test]
+fn obfuscate_reaches_the_bundle_and_it_still_runs() {
+    let dir = project(
+        &[
+            (
+                "main.luau",
+                "local g = require(\"./greet\")\nreturn g.hello(\"world\")\n",
+            ),
+            (
+                "greet.luau",
+                "local prefix: string = \"hi \"\nreturn { hello = function(n: string) return prefix .. n end }\n",
+            ),
+        ],
+        &format!(
+            "{}\n[minify]\nobfuscate = true\n",
+            config_with("[bundle]\nentry = \"src/main.luau\"\noutput = \"out.luau\"\n")
+        ),
+    );
+
+    let text = run_bundle(dir.path(), &[]).expect("bundles");
+
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(!text.contains("prefix"), "{text}");
+    assert!(!text.contains("hi "), "{text}");
+    assert!(text.contains("_0x0"), "{text}");
+    assert_eq!(run_luau(&text).expect("runs"), "hi world");
+}
+
+/*
+The two settings the shipped file wants together.
+
+Obfuscation hex-escapes a string but keeps its bytes, so on its own the
+registry still spells every path, one decode away. With opaque ids there
+is no path to decode. The assertion decodes every escape back to bytes
+and then looks, which is what a reader of the shipped file would do.
+*/
+#[test]
+fn obfuscation_with_opaque_ids_ships_no_path() {
+    let dir = project(
+        &[
+            (
+                "main.luau",
+                "local g = require(\"./vendor/greet\")\nreturn g.hello(\"world\")\n",
+            ),
+            (
+                "vendor/greet.luau",
+                "return { hello = function(n: string) return \"hi \" .. n end }\n",
+            ),
+        ],
+        &format!(
+            "{}\n[minify]\nobfuscate = true\n",
+            config_with(
+                "[bundle]\nentry = \"src/main.luau\"\noutput = \"out.luau\"\nmodule_ids = \"opaque\"\n"
+            )
+        ),
+    );
+
+    let text = run_bundle(dir.path(), &[]).expect("bundles");
+
+    assert_eq!(run_luau(&text).expect("runs"), "hi world");
+
+    let decoded: String = {
+        let mut out = String::new();
+        let mut rest = text.as_str();
+
+        while let Some(at) = rest.find("\\x") {
+            out.push_str(&rest[..at]);
+            let byte = u8::from_str_radix(&rest[at + 2..at + 4], 16).expect("two hex digits");
+            out.push(byte as char);
+            rest = &rest[at + 4..];
+        }
+
+        out.push_str(rest);
+        out
+    };
+
+    for leak in ["src/", "vendor", "greet", "main"] {
+        assert!(!decoded.contains(leak), "{leak:?} decodes out of:\n{text}");
+    }
 }

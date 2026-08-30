@@ -21,7 +21,8 @@ use crate::syntax::lexer::{Tok, TokKind};
 
 use super::config::{
     BlockNewlineGaps, CallParens, CallStyle, CollapseSimpleStatement, FmtConfig, IfExpansion,
-    IfPlacement, IfStyle, ListExpansion, QuoteStyle, RequireGrouping, Semicolons,
+    IfPlacement, IfStyle, ListExpansion, PropertyOrder, QuoteStyle, RequireGrouping, Semicolons,
+    TypeExpansion,
 };
 use super::doc::Doc;
 use super::trivia::{Attached, Comment, Trivia};
@@ -197,13 +198,14 @@ impl<'a> Emitter<'a> {
     The replay in `verbatim` keeps a type on one line. This method replays
     the same tokens, and treats each `{ ... }` region as a body: flat when
     its flat form fits `table_types.width`, one field per line otherwise.
-    The separator between fields follows the option in both layouts.
+    The separator between fields follows the option in both layouts. A union
+    or an intersection follows `type_operators` in the same way.
 
     A comment inside the span keeps the author's text unchanged, for the
     reason `verbatim` states: a replay has no position to put one back.
     */
     fn type_doc(&self, span: TokSpan) -> Doc<'a> {
-        if span.is_empty() || !self.cfg.table_types.enabled {
+        if span.is_empty() || !self.cfg.lays_out_types() {
             return Doc::text(self.verbatim(span));
         }
 
@@ -213,11 +215,22 @@ impl<'a> Emitter<'a> {
             return Doc::text(self.verbatim(span));
         }
 
-        self.type_region(span.start, span.end)
+        self.type_region(span.start, span.end, Fit::Free)
     }
 
-    /// The tokens of one type stretch: tables laid out, the rest replayed
-    fn type_region(&self, from: u32, to: u32) -> Doc<'a> {
+    /// The tokens of one type stretch: the operator chain first, then the tables
+    fn type_region(&self, from: u32, to: u32, fit: Fit) -> Doc<'a> {
+        if self.cfg.type_operators.expand != TypeExpansion::Auto
+            && let Some(chain) = self.operator_chain(from, to, fit)
+        {
+            return chain;
+        }
+
+        self.type_run(from, to, fit)
+    }
+
+    /// One stretch with no operator to split: tables laid out, the rest replayed
+    fn type_run(&self, from: u32, to: u32, fit: Fit) -> Doc<'a> {
         let mut parts: Vec<Doc<'a>> = Vec::new();
         let mut flat = String::new();
         let mut prev: Option<u32> = None;
@@ -226,7 +239,8 @@ impl<'a> Emitter<'a> {
         while i < to {
             let spaced = prev.is_some_and(|p| needs_space(self.tok(p), self.tok(i)));
 
-            if self.tok(i) == "{"
+            if self.cfg.table_types.enabled
+                && self.tok(i) == "{"
                 && let Some(close) = self.matching_brace(i, to)
             {
                 if spaced {
@@ -237,7 +251,7 @@ impl<'a> Emitter<'a> {
                     parts.push(Doc::text(std::mem::take(&mut flat)));
                 }
 
-                parts.push(self.table_type(i, close));
+                parts.push(self.table_type(i, close, fit));
                 prev = Some(close);
                 i = close + 1;
 
@@ -297,10 +311,10 @@ impl<'a> Emitter<'a> {
     parent with it, because a parent holding a broken child cannot stay
     flat.
     */
-    fn table_type(&self, open: u32, close: u32) -> Doc<'a> {
+    fn table_type(&self, open: u32, close: u32, fit: Fit) -> Doc<'a> {
         let cfg = &self.cfg.table_types;
 
-        let mut fields: Vec<Doc<'a>> = Vec::new();
+        let mut spans: Vec<(u32, u32)> = Vec::new();
         let mut depth = 0i32;
         let mut start = open + 1;
 
@@ -314,7 +328,7 @@ impl<'a> Emitter<'a> {
 
                 "," | ";" if depth == 0 => {
                     if start < i {
-                        fields.push(self.type_region(start, i));
+                        spans.push((start, i));
                     }
 
                     start = i + 1;
@@ -329,12 +343,19 @@ impl<'a> Emitter<'a> {
         }
 
         if start < close {
-            fields.push(self.type_region(start, close));
+            spans.push((start, close));
         }
 
-        if fields.is_empty() {
+        if spans.is_empty() {
             return Doc::text("{}");
         }
+
+        self.sort_properties(&mut spans);
+
+        let fields: Vec<Doc<'a>> = spans
+            .into_iter()
+            .map(|(from, to)| self.type_region(from, to, fit))
+            .collect();
 
         let sep = cfg.separator.text();
 
@@ -349,7 +370,12 @@ impl<'a> Emitter<'a> {
             };
         }
 
-        if width.is_some_and(|w| w <= cfg.width) {
+        /*
+        `Fit::Flat` says the caller already chose one line for the text
+        around this table, so the width of the table decides nothing here.
+        `type_operators` asked for that line and `column_width` allowed it.
+        */
+        if fit == Fit::Flat || width.is_some_and(|w| w <= cfg.width) {
             return Doc::concat([
                 Doc::text("{ "),
                 Doc::join(Doc::text(format!("{sep} ")), fields),
@@ -367,6 +393,284 @@ impl<'a> Emitter<'a> {
             Doc::Hard,
             Doc::text("}"),
         ])
+    }
+
+    /*
+    Puts the properties of one table type in the order `sort_table_types`
+    asks for.
+
+    The sort reads the name of each property from its first tokens. A field
+    that names nothing leaves the whole table in the order the author wrote:
+    a table the sort cannot read in full is a table it must not touch. The
+    element type of `{ string }` is that case, and so is a key written as a
+    string, because neither has a name to measure.
+
+    A comment never reaches this point. `type_doc` prints a type that holds
+    one exactly as the author wrote it, because a token replay has no
+    position to put a comment back. So the sort cannot separate a comment
+    from the property it sits on: a table with a comment in it stays as
+    written, whatever `order` says. A moved comment that now describes
+    another property is worse than a table this option skipped.
+    */
+    fn sort_properties(&self, spans: &mut [(u32, u32)]) {
+        let cfg = &self.cfg.sort_table_types;
+
+        if cfg.order == PropertyOrder::None || spans.len() < 2 {
+            return;
+        }
+
+        let mut named = Vec::with_capacity(spans.len());
+
+        for &(from, to) in spans.iter() {
+            match self.property_name(from, to) {
+                Some(name) => named.push((name, (from, to))),
+
+                None => return,
+            }
+        }
+
+        /*
+        The sort is stable, so two properties that measure the same and
+        carry the same name keep the order the author gave them.
+        */
+        named.sort_by(|(a, _), (b, _)| {
+            let rank = |name: &Property<'_>| match cfg.indexer_first && name.indexer {
+                true => 0u8,
+
+                false => 1,
+            };
+
+            let (a_len, b_len) = (a.text.chars().count(), b.text.chars().count());
+
+            rank(a)
+                .cmp(&rank(b))
+                .then_with(|| match cfg.order {
+                    PropertyOrder::Descending => b_len.cmp(&a_len),
+
+                    _ => a_len.cmp(&b_len),
+                })
+                .then_with(|| a.text.cmp(b.text))
+        });
+
+        for (slot, (_, span)) in spans.iter_mut().zip(named) {
+            *slot = span;
+        }
+    }
+
+    /*
+    The name of one property of a table type, or None where it has none.
+
+    `read` and `write` sit before the name, and either one is also a name a
+    property can carry, so the `:` after it decides which of the two this is.
+    */
+    fn property_name(&self, from: u32, to: u32) -> Option<Property<'a>> {
+        if from + 1 >= to {
+            return None;
+        }
+
+        /*
+        An indexer states the shape of every key instead of one key, so it
+        measures as an empty name. A key written as a string is not an
+        indexer, and it carries quotes that no length of a name can compare
+        against, so the table keeps the order it has.
+        */
+        if self.tok(from) == "[" {
+            let inner = self.tok(from + 1);
+
+            if inner.starts_with(['"', '\'', '[', '`']) {
+                return None;
+            }
+
+            return Some(Property {
+                text: "",
+                indexer: true,
+            });
+        }
+
+        let at = match matches!(self.tok(from), "read" | "write") && self.tok(from + 1) != ":" {
+            true => from + 1,
+
+            false => from,
+        };
+
+        let text = self.tok(at);
+
+        if !is_atom(text) || text.starts_with(|c: char| c.is_ascii_digit()) {
+            return None;
+        }
+
+        // A field without a `:` is the element type of an array, which names nothing.
+        if at + 1 >= to || self.tok(at + 1) != ":" {
+            return None;
+        }
+
+        Some(Property {
+            text,
+            indexer: false,
+        })
+    }
+
+    /*
+    A union or an intersection, laid out by `type_operators`.
+
+    Returns None where this stretch holds no operator of its own top level,
+    and the caller replays the tokens instead.
+
+    The split reads the operators that this stretch owns. One inside `<>` or
+    `()` keeps its line, because the replay does not descend into either. A
+    member that is a table type still opens, and the fields of that table are
+    stretches of their own, so a nested chain follows the option at every
+    level the layout reaches.
+
+    Only whitespace moves, and that is what makes the split safe where it
+    reads a chain the parser groups another way. `A | B & C` groups as
+    `A | (B & C)`, and `(T) -> A | B` returns the union, whatever the lines
+    look like. The one token this adds is the leading `|` or `&` of an opened
+    chain, which Luau allows and its own parser skips.
+    */
+    fn operator_chain(&self, from: u32, to: u32, fit: Fit) -> Option<Doc<'a>> {
+        let head = self.chain_head(from, to);
+        let members = self.chain_members(head, to)?;
+        let prefix = self.type_run(from, head, Fit::Flat);
+
+        // the operator that opens the first line, which is the first one the chain uses
+        let lead = members
+            .iter()
+            .map(|(op, ..)| *op)
+            .find(|op| !op.is_empty())
+            .unwrap_or("|");
+
+        // One line takes flat members, so the tables inside them stay on it too.
+        let flat = || {
+            let mut parts = vec![prefix.clone()];
+
+            for (i, &(op, start, end)) in members.iter().enumerate() {
+                match i {
+                    0 if matches!(prefix, Doc::Nil) => {}
+
+                    0 => parts.push(Doc::text(" ")),
+
+                    _ => parts.push(Doc::text(format!(" {op} "))),
+                }
+
+                parts.push(self.type_region(start, end, Fit::Flat));
+            }
+
+            Doc::concat(parts)
+        };
+
+        if fit == Fit::Flat {
+            return Some(flat());
+        }
+
+        let broken = || {
+            let lines = members.iter().enumerate().map(|(i, &(op, start, end))| {
+                let op = match i {
+                    0 => lead,
+
+                    _ => op,
+                };
+
+                Doc::concat([
+                    Doc::Hard,
+                    Doc::text(op),
+                    Doc::text(" "),
+                    self.type_region(start, end, Fit::Free),
+                ])
+            });
+
+            Doc::concat([prefix.clone(), Doc::indent(Doc::concat(lines))])
+        };
+
+        match self.cfg.type_operators.expand {
+            TypeExpansion::Always => Some(broken()),
+
+            /*
+            The group asks the renderer, which measures from the column the
+            chain starts at. So `column_width` decides, and it is the only
+            thing that can take the one line this setting asks for.
+            */
+            TypeExpansion::Never => Some(Doc::group(Doc::if_break(flat(), broken()))),
+
+            TypeExpansion::Auto => None,
+        }
+    }
+
+    /*
+    The token where the operator chain of a stretch starts.
+
+    A stretch is not always the type alone. An alias arrives as the whole
+    statement, and a field of a table type arrives with its name, so a `=`
+    or a `:` of the top level ends a prefix that no line break may move.
+    */
+    fn chain_head(&self, from: u32, to: u32) -> u32 {
+        let mut depth = 0i32;
+        let mut head = from;
+
+        for i in from..to {
+            let t = self.tok(i);
+
+            match t {
+                "{" | "(" | "[" => depth += 1,
+
+                "}" | ")" | "]" => depth -= 1,
+
+                "=" | ":" if depth == 0 => head = i + 1,
+
+                _ if t.bytes().all(|b| b == b'<') => depth += t.len() as i32,
+
+                _ if t.bytes().all(|b| b == b'>') => depth -= t.len() as i32,
+
+                _ => {}
+            }
+        }
+
+        head
+    }
+
+    /*
+    The members of one chain, each with the operator that precedes it.
+
+    The operator of the first member is empty, unless the author wrote the
+    leading `|` that Luau allows there. Returns None where the stretch holds
+    fewer than two members, because one member is not a chain.
+    */
+    fn chain_members(&self, from: u32, to: u32) -> Option<Vec<(&'a str, u32, u32)>> {
+        let mut members: Vec<(&'a str, u32, u32)> = Vec::new();
+        let mut depth = 0i32;
+        let mut start = from;
+        let mut op = "";
+
+        for i in from..to {
+            let t = self.tok(i);
+
+            match t {
+                "{" | "(" | "[" => depth += 1,
+
+                "}" | ")" | "]" => depth -= 1,
+
+                "|" | "&" if depth == 0 => {
+                    if start < i {
+                        members.push((op, start, i));
+                    }
+
+                    op = t;
+                    start = i + 1;
+                }
+
+                _ if t.bytes().all(|b| b == b'<') => depth += t.len() as i32,
+
+                _ if t.bytes().all(|b| b == b'>') => depth -= t.len() as i32,
+
+                _ => {}
+            }
+        }
+
+        if start < to {
+            members.push((op, start, to));
+        }
+
+        (members.len() > 1).then_some(members)
     }
 
     /// Reports if the author left a newline between two adjacent tokens.
@@ -531,6 +835,28 @@ pub(super) fn is_simple(stmt: &Stmt) -> bool {
 pub(super) enum Single {
     Str,
     Table,
+}
+
+/*
+Reports how much room a stretch of a type has.
+
+`Flat` says the caller already took one line for the text around this
+stretch. So every table type inside it stays on that line, whatever
+`table_types.width` says, and no group inside it can break. `type_operators`
+is the one option that asks for this, and `column_width` has already allowed
+the line by the time it does.
+*/
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub(super) enum Fit {
+    Free,
+    Flat,
+}
+
+/// The name of one property of a table type, as `sort_table_types` reads it.
+struct Property<'a> {
+    text: &'a str,
+    /// An indexer names the shape of a key, so it carries no name of its own.
+    indexer: bool,
 }
 
 /*

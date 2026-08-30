@@ -4,7 +4,7 @@ mod file;
 mod frontend;
 mod output;
 pub mod roots;
-pub(crate) mod setup;
+pub mod setup;
 
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -222,6 +222,7 @@ fn run_inner(
         quote: config.process.quotes.char(),
         strict: config.requires.strict,
         claimed: &claimed,
+        client_relative_requires: config.requires.client_relative_requires,
     };
 
     let opts = FileOpts::from_config(&root, config, write)?;
@@ -233,7 +234,7 @@ fn run_inner(
     story and the default build stays untouched.
     */
     let rules_cfg: std::borrow::Cow<crate::config::RulesConfig> =
-        match config.process.generator == "dense" && config.minify.rename_variables {
+        match config.dense_output() && config.minify.rename_variables {
             true => {
                 let mut forced = config.rules.clone();
                 forced.rename_variables = true;

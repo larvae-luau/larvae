@@ -62,6 +62,7 @@ pub static ALL: &[&dyn Lint] = &[
     &names::UnscopedVariables,
     &names::UnusedFunction,
     &names::UnusedVariable,
+    &names::UnusedImport,
     &names::Shadowing,
     &names::GlobalUsage,
     // The lints that a project tunes.

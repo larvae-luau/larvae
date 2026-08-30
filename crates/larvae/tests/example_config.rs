@@ -121,6 +121,7 @@ fn the_documented_requires_defaults_match() {
     assert_eq!(a.target, b.target);
     assert_eq!(a.strict, b.strict);
     assert_eq!(a.instance_input, b.instance_input);
+    assert_eq!(a.client_relative_requires, b.client_relative_requires);
 }
 
 #[test]

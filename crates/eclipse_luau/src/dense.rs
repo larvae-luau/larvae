@@ -102,8 +102,16 @@ fn must_separate(prev: &Tok, next: &Tok, src: &str) -> bool {
     }
 
     match (last, first) {
-        // `1 ..` and `.. .5`: a dot after a dot or a digit grows the operator.
-        ('.', '.') | ('0'..='9', '.') => true,
+        // `1 ..` and `.. .5`: a dot after a dot or a number grows the operator.
+        ('.', '.') => true,
+
+        /*
+        The digit has to belong to a number. `_0x0 .new` needs no space,
+        because the lexer reads a word that starts with a letter or an
+        underscore whole, whatever it ends with, and a rename hands out
+        names like that.
+        */
+        ('0'..='9', '.') if prev.kind == crate::lexer::TokKind::Number => true,
 
         // `- -x`: two minus signs in a row open a comment.
         ('-', '-') => true,
@@ -159,6 +167,16 @@ mod tests {
         let out = one_line("local x = not a and b or c\n");
 
         assert_eq!(out, "local x=not a and b or c\n");
+    }
+
+    /// A word that ends in a digit is still a word, so `.` can follow it.
+    #[test]
+    fn a_name_that_ends_in_a_digit_needs_no_space_before_a_dot() {
+        let src = "local _0x0 = t\nreturn _0x0.field\n";
+        let out = one_line(src);
+
+        same_tokens(src, &out);
+        assert_eq!(out, "local _0x0=t return _0x0.field\n");
     }
 
     #[test]

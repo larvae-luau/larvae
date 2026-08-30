@@ -192,9 +192,648 @@ fn a_syntax_error_is_the_only_diagnostic_and_is_an_error() {
     );
 }
 
+/*
+A deprecated use publishes as a struck-through hint, and the list can
+drop deprecated entries whole.
+
+Severity 4 draws no squiggle, tag 2 is the strikethrough. The hide is
+off by default: the strikethrough already says what the platform
+thinks, and hiding is a stance a project takes on purpose.
+*/
+#[test]
+fn deprecated_marks_publish_and_the_list_can_hide_them() {
+    struct Deprecating;
+
+    impl crate::lsp::analysis::Analysis for Deprecating {
+        fn open(&mut self, _: &std::path::Path, _: &str) {}
+
+        fn check(&mut self, _: &std::path::Path) -> Vec<crate::lsp::analysis::AnalysisDiag> {
+            Vec::new()
+        }
+
+        fn hover(&mut self, _: &std::path::Path, _: u32, _: bool, _: bool) -> Option<String> {
+            None
+        }
+
+        fn invalidate(&mut self, _: &std::path::Path) {}
+
+        fn deprecated_uses(
+            &mut self,
+            _: &std::path::Path,
+        ) -> Vec<crate::lsp::analysis::AnalysisDiag> {
+            vec![crate::lsp::analysis::AnalysisDiag {
+                span: (2, 8),
+                severity: 4,
+                message: "Member 'Instance.Remove' is deprecated".into(),
+                code: None,
+            }]
+        }
+
+        fn completions(
+            &mut self,
+            _: &std::path::Path,
+            _: u32,
+        ) -> Vec<crate::lsp::analysis::AnalysisCompletion> {
+            [("Remove", true), ("Destroy", false)]
+                .into_iter()
+                .map(
+                    |(label, deprecated)| crate::lsp::analysis::AnalysisCompletion {
+                        label: label.into(),
+                        kind: 3,
+                        detail: None,
+                        label_detail: None,
+                        insert_text: None,
+                        documentation: None,
+                        deprecated,
+                        type_correct: 0,
+                        wrong_index_type: false,
+                    },
+                )
+                .collect()
+        }
+    }
+
+    let mut server = Server {
+        analysis: std::cell::RefCell::new(Some(Box::new(Deprecating))),
+        ..Server::default()
+    };
+
+    let mut out = Vec::new();
+    server
+        .handle(
+            &message(
+                "textDocument/didOpen",
+                None,
+                json!({ "textDocument": { "uri": "file:///t.luau", "text": "p:Remove()\n" } }),
+            ),
+            &mut out,
+        )
+        .unwrap();
+
+    let published = String::from_utf8(out).unwrap();
+
+    assert!(
+        published.contains("\"tags\":[2]") && published.contains("deprecated"),
+        "{published}"
+    );
+
+    let items = server.completions(&json!({
+        "textDocument": { "uri": "file:///t.luau" },
+        "position": { "line": 0, "character": 0 },
+    }));
+
+    assert!(
+        items
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["label"] == "Remove"),
+        "listed by default: {items}"
+    );
+
+    server.lsp.completion.hide_deprecated = true;
+
+    let items = server.completions(&json!({
+        "textDocument": { "uri": "file:///t.luau" },
+        "position": { "line": 0, "character": 0 },
+    }));
+    let items = items.as_array().unwrap();
+
+    assert!(!items.iter().any(|i| i["label"] == "Remove"), "{items:?}");
+    assert!(items.iter().any(|i| i["label"] == "Destroy"), "{items:?}");
+}
+
+/*
+One deprecation, one voice.
+
+The platform's mark is the precise one, so a larvae `deprecated`
+finding that overlaps it stands down. A name only the project marked
+gets no platform mark, and larvae still speaks for it.
+*/
+#[test]
+fn the_platform_mark_wins_where_the_two_overlap() {
+    struct MarksChildren;
+
+    impl crate::lsp::analysis::Analysis for MarksChildren {
+        fn open(&mut self, _: &std::path::Path, _: &str) {}
+
+        fn check(&mut self, _: &std::path::Path) -> Vec<crate::lsp::analysis::AnalysisDiag> {
+            Vec::new()
+        }
+
+        fn hover(&mut self, _: &std::path::Path, _: u32, _: bool, _: bool) -> Option<String> {
+            None
+        }
+
+        fn invalidate(&mut self, _: &std::path::Path) {}
+
+        fn completions(
+            &mut self,
+            _: &std::path::Path,
+            _: u32,
+        ) -> Vec<crate::lsp::analysis::AnalysisCompletion> {
+            Vec::new()
+        }
+
+        fn deprecated_uses(
+            &mut self,
+            _: &std::path::Path,
+        ) -> Vec<crate::lsp::analysis::AnalysisDiag> {
+            // The span of `children` in the document below.
+            vec![crate::lsp::analysis::AnalysisDiag {
+                span: (2, 10),
+                severity: 4,
+                message:
+                    "Member 'Instance.children' is deprecated, use 'Instance.GetChildren' instead"
+                        .into(),
+                code: None,
+            }]
+        }
+    }
+
+    let mut server = Server {
+        analysis: std::cell::RefCell::new(Some(Box::new(MarksChildren))),
+        ..Server::default()
+    };
+    server.lint.std = crate::lint::config::StdLib::Roblox;
+
+    let mut out = Vec::new();
+    server
+        .handle(
+            &message(
+                "textDocument/didOpen",
+                None,
+                json!({ "textDocument": { "uri": "file:///t.luau", "text": "p:children()\n" } }),
+            ),
+            &mut out,
+        )
+        .unwrap();
+
+    let published = String::from_utf8(out).unwrap();
+
+    assert!(
+        published.contains("Instance.children"),
+        "the platform speaks: {published}"
+    );
+    assert!(
+        !published.contains("\"code\":\"deprecated\""),
+        "larvae's overlapping finding stands down: {published}"
+    );
+}
+
+/*
+A key a dot cannot reach rewrites itself into brackets on accept.
+
+`t.Jump Force` is not Luau: the offer's edit writes the bracketed key
+in the project's quote, and one more edit removes the dot the author
+typed. An ordinary identifier key keeps its plain insert.
+*/
+#[test]
+fn a_space_named_key_accepts_as_a_bracket_access() {
+    struct SpacedFields;
+
+    impl crate::lsp::analysis::Analysis for SpacedFields {
+        fn open(&mut self, _: &std::path::Path, _: &str) {}
+
+        fn check(&mut self, _: &std::path::Path) -> Vec<crate::lsp::analysis::AnalysisDiag> {
+            Vec::new()
+        }
+
+        fn hover(&mut self, _: &std::path::Path, _: u32, _: bool, _: bool) -> Option<String> {
+            None
+        }
+
+        fn invalidate(&mut self, _: &std::path::Path) {}
+
+        fn completions(
+            &mut self,
+            _: &std::path::Path,
+            _: u32,
+        ) -> Vec<crate::lsp::analysis::AnalysisCompletion> {
+            ["Jump Force", "Strength"]
+                .into_iter()
+                .map(|label| crate::lsp::analysis::AnalysisCompletion {
+                    label: label.into(),
+                    kind: 5,
+                    detail: None,
+                    label_detail: None,
+                    insert_text: None,
+                    documentation: None,
+                    deprecated: false,
+                    type_correct: 0,
+                    wrong_index_type: false,
+                })
+                .collect()
+        }
+    }
+
+    let mut server = Server {
+        analysis: std::cell::RefCell::new(Some(Box::new(SpacedFields))),
+        ..Server::default()
+    };
+    server.fmt.quote_style = crate::fmt::config::QuoteStyle::AutoPreferSingle;
+
+    let src = "local t = stats\nlocal x = t.Jum\n";
+    server.documents.insert("file:///t.luau".into(), src.into());
+
+    let items = server.completions(&json!({
+        "textDocument": { "uri": "file:///t.luau" },
+        "position": { "line": 1, "character": 15 },
+    }));
+    let items = items.as_array().cloned().unwrap_or_default();
+
+    let spaced = items
+        .iter()
+        .find(|i| i["label"] == "Jump Force")
+        .unwrap_or_else(|| panic!("the key offers: {items:?}"));
+
+    assert_eq!(spaced["textEdit"]["newText"], "['Jump Force']", "{spaced}");
+    assert_eq!(
+        spaced["textEdit"]["range"],
+        json!({ "start": { "line": 1, "character": 12 }, "end": { "line": 1, "character": 15 } }),
+        "{spaced}"
+    );
+    assert_eq!(
+        spaced["additionalTextEdits"][0]["range"],
+        json!({ "start": { "line": 1, "character": 11 }, "end": { "line": 1, "character": 12 } }),
+        "the dot goes: {spaced}"
+    );
+
+    let plain = items
+        .iter()
+        .find(|i| i["label"] == "Strength")
+        .expect("the plain key offers");
+
+    assert!(plain.get("textEdit").is_none(), "{plain}");
+}
+
+/*
+The hints hold still while the author types.
+
+A request that lands inside the update delay answers with the last
+settled hints, whatever the text now says. The refresh after the pause
+is what makes the editor ask again.
+*/
+#[test]
+fn hints_hold_still_while_typing() {
+    let mut server = Server {
+        analysis: std::cell::RefCell::new(Some(Box::new(BytecodeAnalysis))),
+        ..Server::default()
+    };
+    server.lsp.inlay_hints.variable_types = true;
+
+    let uri = "file:///t.luau";
+    server.documents.insert(uri.into(), "local a = 1\n".into());
+
+    let params = json!({ "textDocument": { "uri": uri } });
+
+    // settled: computes and caches (the mock analysis answers nothing)
+    let first = server.inlay_hints(&params);
+
+    assert_eq!(first, json!([]));
+
+    // pretend a settled answer was cached, then a keystroke lands
+    server
+        .hint_cache
+        .borrow_mut()
+        .insert(uri.into(), json!([{ "label": ": held" }]));
+    server.note_typing(uri);
+
+    assert_eq!(
+        server.inlay_hints(&params),
+        json!([{ "label": ": held" }]),
+        "mid-typing serves the settled hints"
+    );
+
+    // the pause passed: fresh hints compute again
+    server.hint_hold.insert(
+        uri.into(),
+        std::time::Instant::now() - std::time::Duration::from_secs(5),
+    );
+
+    assert_eq!(server.inlay_hints(&params), json!([]));
+}
+
+/*
+The held hints follow the lines, and leave the edited ones.
+
+An enter moves every hint below the cursor down with its line. The
+rewritten lines themselves drop their hints: a stale character there
+can split a word, and `props: Pr: ()ops` is worse than a hint that
+waits out the pause. An append at the end of the file moves nothing.
+*/
+#[test]
+fn held_hints_follow_the_lines_and_leave_the_edited_ones() {
+    let server = Server::default();
+    let uri = "file:///t.luau";
+
+    let held = json!([
+        { "position": { "line": 0, "character": 11 }, "label": ": number" },
+        { "position": { "line": 1, "character": 20 }, "label": ": ()" },
+        { "position": { "line": 3, "character": 9 }, "label": ": string" },
+    ]);
+
+    // enter pressed at the end of line 1: lines below shift, line 1 keeps
+    server
+        .hint_cache
+        .borrow_mut()
+        .insert(uri.into(), held.clone());
+    server.shift_hint_cache(
+        uri,
+        "local a = 1
+local function t()
+end
+local s = 'x'
+",
+        "local a = 1
+local function t()
+
+end
+local s = 'x'
+",
+    );
+
+    let cache = server.hint_cache.borrow();
+    let shifted = cache.get(uri).unwrap().as_array().unwrap();
+
+    assert_eq!(shifted[0]["position"]["line"], 0);
+    assert_eq!(shifted[1]["position"]["line"], 1);
+    assert_eq!(shifted[2]["position"]["line"], 4, "{shifted:?}");
+    drop(cache);
+
+    // typing inside line 1: that line's hint drops, the rest hold
+    server
+        .hint_cache
+        .borrow_mut()
+        .insert(uri.into(), held.clone());
+    server.shift_hint_cache(
+        uri,
+        "local a = 1
+local function t()
+end
+local s = 'x'
+",
+        "local a = 1
+local function te()
+end
+local s = 'x'
+",
+    );
+
+    let cache = server.hint_cache.borrow();
+    let edited = cache.get(uri).unwrap().as_array().unwrap();
+
+    assert_eq!(edited.len(), 2, "{edited:?}");
+    assert_eq!(edited[0]["position"]["line"], 0);
+    assert_eq!(edited[1]["position"]["line"], 3);
+    drop(cache);
+
+    // an append at the end moves nothing
+    server.hint_cache.borrow_mut().insert(uri.into(), held);
+    server.shift_hint_cache(
+        uri,
+        "local a = 1
+local function t()
+end
+local s = 'x'
+",
+        "local a = 1
+local function t()
+end
+local s = 'x'
+return t
+",
+    );
+
+    let cache = server.hint_cache.borrow();
+    let appended = cache.get(uri).unwrap().as_array().unwrap();
+
+    assert_eq!(appended.len(), 3);
+    assert_eq!(appended[2]["position"]["line"], 3, "{appended:?}");
+}
+
+/*
+A module a worm refuses to lower says why, at the require.
+
+The load hook records the refusal keyed by the file, and the publish
+pins it to every require that names the file. Without this the require
+answered `*error-type*` and nothing anywhere said the reason.
+*/
+#[test]
+fn a_refused_lowering_reports_at_the_require() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::create_dir_all(dir.path().join("src")).expect("makes it");
+    std::fs::write(dir.path().join("src/util.luau"), "return {}\n").expect("writes");
+
+    let mut server = Server {
+        root: Some(dir.path().to_path_buf()),
+        ..Server::default()
+    };
+
+    server.load_errors.lock().unwrap().insert(
+        dir.path().join("src/util.luau"),
+        "worm `x` failed, line 1: no lowering\nmore detail".into(),
+    );
+
+    let mut out = Vec::new();
+    server
+        .handle(
+            &message(
+                "textDocument/didOpen",
+                None,
+                json!({ "textDocument": {
+                    "uri": format!("file://{}/src/main.luau", dir.path().display()),
+                    "text": "local u = require('./util')\nreturn u\n",
+                } }),
+            ),
+            &mut out,
+        )
+        .unwrap();
+
+    let published = String::from_utf8(out).unwrap();
+
+    assert!(
+        published.contains("this module does not lower: worm `x` failed, line 1: no lowering"),
+        "{published}"
+    );
+    assert!(
+        !published.contains("more detail"),
+        "only the first line reaches the list: {published}"
+    );
+}
+
+/*
+A rename asks one question, and the yes applies the edit.
+
+The editor reports the move after it happened, so nothing on disk can
+resolve the old spec any more. The server still finds the require, asks
+with a dialog, and the answer routes back by the id the question carried.
+*/
+#[test]
+fn a_rename_asks_and_the_answer_rewrites_the_requires() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::create_dir_all(dir.path().join("src")).expect("makes it");
+    std::fs::write(
+        dir.path().join("src/main.luau"),
+        "local u = require('./tools')\nreturn u\n",
+    )
+    .expect("writes");
+    std::fs::write(dir.path().join("src/tools.luau"), "return {}\n").expect("writes");
+
+    let mut server = Server {
+        root: Some(dir.path().to_path_buf()),
+        ..Server::default()
+    };
+    let mut out = Vec::new();
+
+    server
+        .handle(
+            &message(
+                "workspace/didRenameFiles",
+                None,
+                json!({ "files": [{
+                    "oldUri": format!("file://{}/src/util.luau", dir.path().display()),
+                    "newUri": format!("file://{}/src/tools.luau", dir.path().display()),
+                }] }),
+            ),
+            &mut out,
+        )
+        .unwrap();
+
+    // wait: the spec says ./tools, and util was renamed TO tools, so the
+    // old spelling on disk is ./util; the fixture writes the PRE state.
+    let asked = String::from_utf8(out).unwrap();
+
+    assert!(
+        asked.is_empty(),
+        "the spec already says the new name: {asked}"
+    );
+
+    std::fs::write(
+        dir.path().join("src/main.luau"),
+        "local u = require('./util')\nreturn u\n",
+    )
+    .expect("writes");
+
+    let mut out = Vec::new();
+    server
+        .handle(
+            &message(
+                "workspace/didRenameFiles",
+                None,
+                json!({ "files": [{
+                    "oldUri": format!("file://{}/src/util.luau", dir.path().display()),
+                    "newUri": format!("file://{}/src/tools.luau", dir.path().display()),
+                }] }),
+            ),
+            &mut out,
+        )
+        .unwrap();
+
+    let asked = String::from_utf8(out).unwrap();
+
+    assert!(
+        asked.contains("window/showMessageRequest"),
+        "the server asks first: {asked}"
+    );
+    assert!(
+        asked.contains("update 1 require in 1 file?"),
+        "the question counts what it found: {asked}"
+    );
+
+    let id: Value = serde_json::from_str(
+        asked
+            .split("\"id\":")
+            .nth(1)
+            .and_then(|rest| rest.split(',').next())
+            .expect("the request has an id"),
+    )
+    .expect("a json id");
+
+    let mut out = Vec::new();
+    let stop = server
+        .handle(
+            &rpc::Message {
+                id: Some(id),
+                method: String::new(),
+                params: json!(null),
+                result: json!({ "title": "Update requires" }),
+            },
+            &mut out,
+        )
+        .unwrap();
+
+    /*
+    Handle answers true to stop the server. A response must answer
+    false: the editor replies to every request the server sends, and
+    the first refresh answer read as a hang-up, which was five clean
+    exits in a row and an editor that gave up restarting.
+    */
+    assert!(!stop, "a response stopped the server");
+
+    let applied = String::from_utf8(out).unwrap();
+
+    assert!(
+        applied.contains("workspace/applyEdit"),
+        "the yes applies: {applied}"
+    );
+    assert!(applied.contains("./tools"), "the new spelling: {applied}");
+}
+
+/*
+A `$` line in a doc fence is the author talking to the checker.
+
+luau-lsp hides it from the rendered card, so a doc written for either
+server reads the same. Prose keeps its dollars.
+*/
+#[test]
+fn a_dollar_line_hides_inside_a_doc_fence() {
+    let docs = "Costs $5.\n```luau\n$local hidden = 1\nprint(hidden)\n```\n$ prose keeps this\n";
+    let card = crate::lsp::features::card("local x: number", Some(docs));
+
+    assert!(!card.contains("hidden = 1"), "{card}");
+    assert!(card.contains("print(hidden)"), "{card}");
+    assert!(card.contains("Costs $5."), "{card}");
+    assert!(card.contains("$ prose keeps this"), "{card}");
+}
+
 #[test]
 fn a_clean_document_produces_no_diagnostics() {
     assert_eq!(diagnostics_of("return 1\n"), json!([]));
+}
+
+/*
+With an analyzer landed, the syntax error is Luau's to report.
+
+Luau's parse errors ride its check in Luau's own words, so larvae's
+spelling would say the same break twice. larvae speaks only while the
+session is loading, and for the files no analyzer reads.
+*/
+#[test]
+fn the_analyzer_speaks_the_syntax_error_alone() {
+    let mut server = Server {
+        analysis: std::cell::RefCell::new(Some(Box::new(BytecodeAnalysis))),
+        ..Server::default()
+    };
+    let mut out = Vec::new();
+
+    server
+        .handle(
+            &message(
+                "textDocument/didOpen",
+                None,
+                json!({ "textDocument": { "uri": "file:///t.luau", "text": "local a =\n" } }),
+            ),
+            &mut out,
+        )
+        .unwrap();
+
+    let published = String::from_utf8(out).unwrap();
+
+    assert!(
+        !published.contains("syntax error"),
+        "larvae repeats the break Luau reports: {published}"
+    );
 }
 
 /*
@@ -338,6 +977,14 @@ fn closing_a_document_drops_it_and_clears_its_diagnostics() {
     );
 }
 
+/*
+A method larvae does not answer gets an error, not silence.
+
+`moniker` is the example because larvae does not answer it and has no plan
+to. It was `rename`, then `signatureHelp`, then `semanticTokens`, and each
+moved as that feature shipped. That movement is the test working: the method
+it names has to be one the server truly lacks.
+*/
 #[test]
 fn an_unsupported_request_is_answered_with_an_error() {
     let mut server = Server::default();
@@ -345,12 +992,23 @@ fn an_unsupported_request_is_answered_with_an_error() {
 
     server
         .handle(
-            &message("textDocument/rename", Some(9), json!({})),
+            &message("textDocument/moniker", Some(9), json!({})),
             &mut out,
         )
         .unwrap();
 
     assert!(String::from_utf8(out).unwrap().contains("is not supported"));
+}
+
+/// The method above must stay one the server does not advertise.
+#[test]
+fn the_unsupported_example_is_really_unsupported() {
+    let caps = capabilities(true);
+
+    assert!(
+        caps["capabilities"]["monikerProvider"].is_null(),
+        "moniker is advertised now, so the test above needs a new example"
+    );
 }
 
 /// A reply to a notification is a protocol error
@@ -437,6 +1095,14 @@ claims = [".luaux"]
 "#;
 
 fn spec(manifest: &str, dir: &std::path::Path) -> std::sync::Arc<crate::worm::pool::Spec> {
+    spec_with(manifest, dir, vec![".luaux".to_owned()])
+}
+
+fn spec_with(
+    manifest: &str,
+    dir: &std::path::Path,
+    claims: Vec<String>,
+) -> std::sync::Arc<crate::worm::pool::Spec> {
     std::sync::Arc::new(crate::worm::pool::Spec {
         manifest: crate::worm::manifest::Manifest::parse(manifest).unwrap(),
         artifact: Vec::new(),
@@ -447,7 +1113,7 @@ fn spec(manifest: &str, dir: &std::path::Path) -> std::sync::Arc<crate::worm::po
         inherit_lints: None,
         inherit: Default::default(),
         requires: crate::worm::RequireOwner::Larvae,
-        claims: vec![".luaux".to_owned()],
+        claims,
     })
 }
 
@@ -731,6 +1397,7 @@ fn claim_only_publishes_empty_for_a_plain_luau_file() {
     server.lsp = crate::config::lsp::LspConfig {
         enabled: true,
         claim_only: true,
+        ..Default::default()
     };
 
     let diags = published(&server, "file:///t.luau");
@@ -744,6 +1411,7 @@ fn claim_only_declines_formatting_and_symbols_for_a_plain_luau_file() {
     server.lsp = crate::config::lsp::LspConfig {
         enabled: true,
         claim_only: true,
+        ..Default::default()
     };
 
     assert_eq!(server.format("file:///t.luau").unwrap(), Value::Null);
@@ -756,6 +1424,7 @@ fn a_disabled_server_advertises_no_capabilities() {
     server.lsp = crate::config::lsp::LspConfig {
         enabled: false,
         claim_only: false,
+        ..Default::default()
     };
 
     let mut out = Vec::new();
@@ -838,10 +1507,53 @@ while True:
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
+/*
+Answers `bytecode` with what it was asked, so the dispatch is provable:
+the method, the optimization level, and the view all read back.
+*/
+struct BytecodeAnalysis;
+
+impl crate::lsp::analysis::Analysis for BytecodeAnalysis {
+    fn open(&mut self, _: &std::path::Path, _: &str) {}
+
+    fn check(&mut self, _: &std::path::Path) -> Vec<crate::lsp::analysis::AnalysisDiag> {
+        Vec::new()
+    }
+
+    fn hover(&mut self, _: &std::path::Path, _: u32, _: bool, _: bool) -> Option<String> {
+        None
+    }
+
+    fn completions(
+        &mut self,
+        _: &std::path::Path,
+        _: u32,
+    ) -> Vec<crate::lsp::analysis::AnalysisCompletion> {
+        Vec::new()
+    }
+
+    fn invalidate(&mut self, _: &std::path::Path) {}
+
+    fn bytecode(
+        &mut self,
+        source: &str,
+        optimization: u8,
+        remarks: bool,
+        config: &crate::config::lsp::BytecodeConfig,
+    ) -> Option<String> {
+        Some(format!(
+            "O{optimization} remarks={remarks} debug={} first={:?}",
+            config.debug_level,
+            source.lines().next().unwrap_or_default(),
+        ))
+    }
+}
+
 /// Captures what the server installs through the seam
 struct MockAnalysis {
     hooks: std::sync::Arc<std::sync::Mutex<Option<crate::lsp::analysis::ModuleHooks>>>,
     defs: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
+    invalidated: std::sync::Arc<std::sync::Mutex<Vec<std::path::PathBuf>>>,
 }
 
 impl crate::lsp::analysis::Analysis for MockAnalysis {
@@ -864,7 +1576,7 @@ impl crate::lsp::analysis::Analysis for MockAnalysis {
         Vec::new()
     }
 
-    fn hover(&mut self, _: &std::path::Path, _: u32) -> Option<String> {
+    fn hover(&mut self, _: &std::path::Path, _: u32, _: bool, _: bool) -> Option<String> {
         None
     }
 
@@ -876,7 +1588,9 @@ impl crate::lsp::analysis::Analysis for MockAnalysis {
         Vec::new()
     }
 
-    fn invalidate(&mut self, _: &std::path::Path) {}
+    fn invalidate(&mut self, path: &std::path::Path) {
+        self.invalidated.lock().unwrap().push(path.to_path_buf());
+    }
 }
 
 #[cfg(unix)]
@@ -886,22 +1600,355 @@ type SharedDefs = std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>;
 
 #[cfg(unix)]
 fn server_with_lsp_worm(dir: &std::path::Path) -> (Server, SharedHooks, SharedDefs) {
+    server_with_lsp_worm_tracked(dir).0
+}
+
+type SharedPaths = std::sync::Arc<std::sync::Mutex<Vec<std::path::PathBuf>>>;
+
+#[cfg(unix)]
+fn server_with_lsp_worm_tracked(
+    dir: &std::path::Path,
+) -> ((Server, SharedHooks, SharedDefs), SharedPaths) {
     lsp_worm_that(dir);
 
     let hooks: SharedHooks = std::sync::Arc::new(std::sync::Mutex::new(None));
     let defs: SharedDefs = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let invalidated: SharedPaths = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
 
     let mut server = Server {
         analysis: std::cell::RefCell::new(Some(Box::new(MockAnalysis {
             hooks: hooks.clone(),
             defs: defs.clone(),
+            invalidated: invalidated.clone(),
         }))),
         ..Default::default()
     };
     server.worms = Pool::new(vec![spec(LSP_WORM, dir)], 1);
     server.install_lsp_hooks();
 
-    (server, hooks, defs)
+    ((server, hooks, defs), invalidated)
+}
+
+/*
+An edit to a claimed file reaches the analyzer as an invalidation.
+
+A plain Luau file requires the claimed one through the worm's lowering, and
+the analyzer caches that lowering by path. Without the invalidation, a
+saved data file kept every dependent on the old shape until a restart.
+*/
+#[cfg(unix)]
+#[test]
+fn a_claimed_file_edit_invalidates_the_analyzer() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let ((mut server, _hooks, _defs), invalidated) = server_with_lsp_worm_tracked(dir.path());
+    let mut out = Vec::new();
+
+    let uri = format!("file://{}/thing.x", dir.path().display());
+
+    server
+        .handle(
+            &message(
+                "textDocument/didOpen",
+                None,
+                json!({ "textDocument": { "uri": uri, "text": "data" } }),
+            ),
+            &mut out,
+        )
+        .unwrap();
+
+    let paths = invalidated.lock().unwrap();
+
+    assert!(
+        paths.iter().any(|p| p.ends_with("thing.x")),
+        "the claimed file never invalidated: {paths:?}"
+    );
+}
+
+/// A worm that lints plain Luau, over the real transport
+const LUAU_LINTER: &str = r#"
+name = "privy"
+api = 1
+form = "native"
+entry = "lintworm.py"
+lints_luau = true
+
+[lints.always]
+description = "fires once per file, to prove the dispatch"
+default = "warn"
+"#;
+
+/// A claiming worm that shares its files and hands back a byte-true shadow
+const SHARING_WORM: &str = r#"
+name = "markup"
+api = 1
+form = "native"
+entry = "shareworm.py"
+
+[frontend]
+claims = [".luaux"]
+shared = true
+
+[lints.own]
+description = "the claiming worm's own finding"
+default = "warn"
+"#;
+
+#[cfg(unix)]
+fn lint_worm_that(dir: &std::path::Path, script: &str, reply: &str) {
+    let path = dir.join(script);
+
+    std::fs::write(
+        &path,
+        format!(
+            r#"#!/usr/bin/env python3
+import sys, json, struct
+
+def read():
+    n = sys.stdin.buffer.read(4)
+    if len(n) < 4: sys.exit(0)
+    return json.loads(sys.stdin.buffer.read(struct.unpack("<I", n)[0]))
+
+def send(obj):
+    b = json.dumps(obj).encode()
+    sys.stdout.buffer.write(struct.pack("<I", len(b)) + b)
+    sys.stdout.buffer.flush()
+
+while True:
+    req = read()
+    if req["op"] == "init":
+        send({{"ok": True}})
+    elif req["op"] == "transform":
+        send({{"ok": True, "output": req["source"]}})
+    elif req["op"] == "lint":
+        send({reply})
+    else:
+        send({{"ok": False, "error": "unexpected op " + req["op"]}})
+"#
+        ),
+    )
+    .unwrap();
+
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/*
+The editor reports a cross-realm require, the same one `larvae check`
+reports.
+
+The require compiles and resolves, so the analyzer is content, and the
+build was the only reader that said anything. A client file requiring
+server code now squiggles in the open file too.
+*/
+#[test]
+fn a_cross_realm_require_squiggles() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+
+    for file in ["src/client/main.luau", "src/server/net.luau"] {
+        let path = dir.path().join(file);
+        std::fs::create_dir_all(path.parent().expect("a parent")).expect("makes it");
+        std::fs::write(&path, "return {}\n").expect("writes");
+    }
+
+    let mut server = Server {
+        root: Some(dir.path().to_path_buf()),
+        ..Default::default()
+    };
+
+    server.mounts = crate::requires::datamodel::MountTable::new(vec![
+        crate::requires::datamodel::Mount {
+            fs: dir.path().join("src/client"),
+            dm: vec![
+                "StarterPlayer".into(),
+                "StarterPlayerScripts".into(),
+                "Client".into(),
+            ],
+        },
+        crate::requires::datamodel::Mount {
+            fs: dir.path().join("src/server"),
+            dm: vec!["ServerScriptService".into()],
+        },
+    ]);
+
+    let uri = format!("file://{}/src/client/main.luau", dir.path().display());
+    server.documents.insert(
+        uri.clone(),
+        "local net = require('../server/net')\nreturn net\n".into(),
+    );
+
+    let text = published(&server, &uri).to_string();
+
+    assert!(
+        text.contains("cross_realm_require") && text.contains("does not replicate"),
+        "the crossing never published: {text}"
+    );
+
+    // The legal direction stays quiet.
+    let uri = format!("file://{}/src/server/main.luau", dir.path().display());
+    server.documents.insert(
+        uri.clone(),
+        "local net = require('./net')\nreturn net\n".into(),
+    );
+
+    let text = published(&server, &uri).to_string();
+
+    assert!(
+        !text.contains("cross_realm_require"),
+        "the server side is allowed to require its own: {text}"
+    );
+}
+
+/*
+`[lsp.<worm>]` reaches the worm as config, checked against its options.
+
+The worm declares what it takes under `[options]`; a key outside that
+list, a wrong type, or a name that is no worm each say so, instead of
+doing nothing in silence.
+*/
+#[test]
+fn lsp_worm_settings_merge_into_the_config() {
+    const CONFIGURED: &str = r#"
+name = "privy"
+api = 1
+form = "native"
+entry = "lintworm.py"
+lints_luau = true
+
+[lints.always]
+description = "fires once per file"
+default = "warn"
+
+[options.strictness]
+type = "boolean"
+default = true
+description = "how hard the worm squints"
+"#;
+
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let pool = Pool::new(vec![spec_with(CONFIGURED, dir.path(), vec![])], 1);
+
+    let lsp: crate::config::lsp::LspConfig =
+        toml::from_str("sourcemap = \"map.json\"\n\n[privy]\nstrictness = false\n")
+            .expect("the worm table parses beside the typed keys");
+
+    assert_eq!(lsp.sourcemap, "map.json");
+
+    let mut complaints = Vec::new();
+    let pool = pool.with_lsp_settings(&lsp.worms, &mut complaints);
+
+    assert_eq!(complaints, Vec::<String>::new());
+    assert_eq!(
+        pool.spec(0).config.get("strictness"),
+        Some(&toml::Value::Boolean(false))
+    );
+
+    // The three refusals, each with its own words.
+    let bad: crate::config::lsp::LspConfig =
+        toml::from_str("[nobody]\nx = 1\n\n[privy]\nmystery = 1\nstrictness = \"loud\"\n")
+            .expect("parses");
+
+    let mut complaints = Vec::new();
+    let _ = pool.with_lsp_settings(&bad.worms, &mut complaints);
+
+    assert!(
+        complaints
+            .iter()
+            .any(|c| c.contains("no worm named `nobody`")),
+        "{complaints:?}"
+    );
+    assert!(
+        complaints
+            .iter()
+            .any(|c| c.contains("no setting `mystery`")),
+        "{complaints:?}"
+    );
+    assert!(
+        complaints
+            .iter()
+            .any(|c| c.contains("strictness takes a boolean")),
+        "{complaints:?}"
+    );
+}
+
+/*
+A worm with `lints_luau` reports inside plain Luau files.
+
+The lint walk only asked the worm that claims a file, so a worm about
+conventions in ordinary code had no way to speak. The manifest key adds
+its Lint op after the builtin lints, on the same levels and suppressions.
+*/
+#[cfg(unix)]
+#[test]
+fn a_luau_linting_worm_reports_in_plain_files() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+
+    lint_worm_that(
+        dir.path(),
+        "lintworm.py",
+        r#"{"ok": True, "findings": [{"span": [0, 6], "lint": "always", "message": "the worm sees this file"}], "comments": []}"#,
+    );
+
+    let mut server = Server {
+        worms: Pool::new(vec![spec_with(LUAU_LINTER, dir.path(), vec![])], 1),
+        ..Default::default()
+    };
+
+    let uri = "file:///p/main.luau";
+    server.documents.insert(uri.into(), "return 1\n".into());
+
+    let diagnostics = published(&server, uri);
+    let text = diagnostics.to_string();
+
+    assert!(
+        text.contains("the worm sees this file"),
+        "the foreign finding never published: {text}"
+    );
+}
+
+/*
+A shared claimed file takes foreign findings, on the shadow's offsets.
+
+The claiming worm consents with `shared` and hands back its byte-true
+Luau shadow; a foreign `lints_luau` worm reads that shadow, so its spans
+land on the author's own bytes. Both worms' findings publish together.
+*/
+#[cfg(unix)]
+#[test]
+fn a_shared_claimed_file_takes_foreign_findings() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+
+    lint_worm_that(
+        dir.path(),
+        "shareworm.py",
+        r#"{"ok": True, "findings": [{"span": [0, 5], "lint": "own", "message": "the owner speaks"}], "comments": [], "luau": "local x = 1\n"}"#,
+    );
+    lint_worm_that(
+        dir.path(),
+        "lintworm.py",
+        r#"{"ok": True, "findings": [{"span": [6, 7], "lint": "always", "message": "the guest speaks"}], "comments": []}"#,
+    );
+
+    let mut server = Server {
+        worms: Pool::new(
+            vec![
+                spec_with(SHARING_WORM, dir.path(), vec![".luaux".to_owned()]),
+                spec_with(LUAU_LINTER, dir.path(), vec![]),
+            ],
+            1,
+        ),
+        ..Default::default()
+    };
+
+    let uri = "file:///p/thing.luaux";
+    server.documents.insert(uri.into(), "local x = 1\n".into());
+
+    let text = published(&server, uri).to_string();
+
+    assert!(
+        text.contains("the owner speaks") && text.contains("the guest speaks"),
+        "expected both worms' findings: {text}"
+    );
 }
 
 /// Tier 1: the analyzer's resolution asks the worm first, over the pipe.
@@ -982,7 +2029,7 @@ impl crate::lsp::analysis::Analysis for Issue1503Analysis {
         Vec::new()
     }
 
-    fn hover(&mut self, _: &std::path::Path, _: u32) -> Option<String> {
+    fn hover(&mut self, _: &std::path::Path, _: u32, _: bool, _: bool) -> Option<String> {
         None
     }
 
@@ -996,11 +2043,23 @@ impl crate::lsp::analysis::Analysis for Issue1503Analysis {
                 label: "end".into(),
                 kind: 14,
                 detail: None,
+                label_detail: None,
+                insert_text: None,
+                documentation: None,
+                deprecated: false,
+                type_correct: 0,
+                wrong_index_type: false,
             },
             crate::lsp::analysis::AnalysisCompletion {
                 label: "elapsedTime".into(),
                 kind: 3,
-                detail: None,
+                detail: Some("() -> number".into()),
+                label_detail: Some("()".into()),
+                insert_text: Some("elapsedTime()".into()),
+                documentation: Some("The seconds since the process started.".into()),
+                deprecated: false,
+                type_correct: 0,
+                wrong_index_type: false,
             },
         ]
     }
@@ -1146,6 +2205,7 @@ serves_luau = true
     server.lsp = crate::config::lsp::LspConfig {
         enabled: true,
         claim_only: true,
+        ..Default::default()
     };
     server.worms = Pool::new(vec![spec(SERVING, dir.path())], 1);
 
@@ -1265,4 +2325,1141 @@ fn a_worm_with_nothing_to_offer_is_quiet() {
         extend::code_actions(&server.worms, "file:///p/t.luaux", "x\n", &json!(null)).is_empty()
     );
     assert!(extend::definitions(&server.worms).is_empty());
+}
+
+// --- [lsp.completion.imports] use_const ------------------------------------
+
+/// The service an auto-import offers, with the keyword the setting decided.
+fn import_edit(server: &Server, src_prefix_line: u32, character: u32) -> (String, String) {
+    let items = completion_items(server, src_prefix_line, character);
+
+    let import = items
+        .iter()
+        .find(|i| i["label"] == "EncodingService")
+        .expect("the service offers");
+
+    (
+        import["detail"].as_str().expect("a detail").to_string(),
+        import["additionalTextEdits"][0]["newText"]
+            .as_str()
+            .expect("a text edit")
+            .to_string(),
+    )
+}
+
+/*
+A module of the project offers itself, and accepting writes the require.
+
+The offer comes from the workspace walk, spelled in the configured style:
+relative by default here, an alias when one covers the module and the
+style asks for it. A `.server.` file is a script, not a module, and
+never offers.
+*/
+#[test]
+fn a_module_auto_import_writes_the_require() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::create_dir_all(dir.path().join("src/Widgets")).expect("makes it");
+    std::fs::write(dir.path().join("src/util.luau"), "return {}\n").expect("writes");
+    std::fs::write(dir.path().join("src/Widgets/init.luau"), "return {}\n").expect("writes");
+    std::fs::write(dir.path().join("src/boot.server.luau"), "return nil\n").expect("writes");
+
+    let mut server = issue_server("uti");
+    server.root = Some(dir.path().to_path_buf());
+    server.symbols = workspace::Index::build(dir.path(), &Default::default());
+    server.documents.insert(
+        format!("file://{}/src/main.luau", dir.path().display()),
+        "uti".into(),
+    );
+
+    let items = server.completions(&json!({
+        "textDocument": { "uri": format!("file://{}/src/main.luau", dir.path().display()) },
+        "position": { "line": 0, "character": 3 },
+    }));
+    let items = items.as_array().cloned().unwrap_or_default();
+
+    let offer = items
+        .iter()
+        .find(|i| i["label"] == "util")
+        .unwrap_or_else(|| panic!("util offers: {items:?}"));
+
+    assert!(
+        offer["additionalTextEdits"][0]["newText"]
+            .as_str()
+            .unwrap()
+            .contains("require(\"./util\")"),
+        "{offer}"
+    );
+
+    assert!(
+        !items.iter().any(|i| i["label"] == "boot"),
+        "a script offered itself: {items:?}"
+    );
+}
+
+/// The directory module offers by its directory name, addressed whole.
+#[test]
+fn an_init_module_offers_as_its_directory() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::create_dir_all(dir.path().join("src/Widgets")).expect("makes it");
+    std::fs::write(dir.path().join("src/Widgets/init.luau"), "return {}\n").expect("writes");
+
+    let mut server = issue_server("Wid");
+    server.root = Some(dir.path().to_path_buf());
+    server.symbols = workspace::Index::build(dir.path(), &Default::default());
+    server.documents.insert(
+        format!("file://{}/src/main.luau", dir.path().display()),
+        "Wid".into(),
+    );
+
+    let items = server.completions(&json!({
+        "textDocument": { "uri": format!("file://{}/src/main.luau", dir.path().display()) },
+        "position": { "line": 0, "character": 3 },
+    }));
+    let items = items.as_array().cloned().unwrap_or_default();
+
+    let offer = items
+        .iter()
+        .find(|i| i["label"] == "Widgets")
+        .unwrap_or_else(|| panic!("the directory offers: {items:?}"));
+
+    assert!(
+        offer["detail"]
+            .as_str()
+            .unwrap()
+            .contains("require(\"./Widgets\")"),
+        "{offer}"
+    );
+}
+
+/// An alias speaks for the module when the style lets it.
+#[test]
+fn the_alias_style_spells_the_import_under_its_alias() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::create_dir_all(dir.path().join("src/shared")).expect("makes it");
+    std::fs::write(dir.path().join("src/shared/util.luau"), "return {}\n").expect("writes");
+
+    let mut server = issue_server("uti");
+    server.root = Some(dir.path().to_path_buf());
+    server.symbols = workspace::Index::build(dir.path(), &Default::default());
+    server.aliases.insert("shared".into(), "src/shared".into());
+    server.documents.insert(
+        format!("file://{}/src/client/main.luau", dir.path().display()),
+        "uti".into(),
+    );
+
+    let items = server.completions(&json!({
+        "textDocument": { "uri": format!("file://{}/src/client/main.luau", dir.path().display()) },
+        "position": { "line": 0, "character": 3 },
+    }));
+    let items = items.as_array().cloned().unwrap_or_default();
+
+    let offer = items
+        .iter()
+        .find(|i| i["label"] == "util")
+        .unwrap_or_else(|| panic!("util offers: {items:?}"));
+
+    assert!(
+        offer["detail"].as_str().unwrap().contains("@shared/util"),
+        "auto style speaks the alias: {offer}"
+    );
+}
+
+/*
+The auto-import writes `const` unless the project says otherwise.
+
+This is a deliberate departure from luau-lsp, which defaults the setting off
+because Luau had no `const` when it was written. An auto-import binds a
+service and nothing reassigns it, which is the clearest case for the keyword.
+*/
+#[test]
+fn an_auto_import_writes_const_by_default() {
+    let server = issue_server("Enc");
+    let (detail, text) = import_edit(&server, 0, 3);
+
+    assert!(text.starts_with("const EncodingService ="), "{text}");
+    assert!(detail.contains("const EncodingService"), "{detail}");
+}
+
+/*
+The import writes the quote the formatter would keep.
+
+`[fmt] quote_style = "auto-prefer-single"` and an accepted import with
+double quotes fought each other one save later.
+*/
+#[test]
+fn an_auto_import_follows_the_project_quote_style() {
+    let mut server = issue_server("Enc");
+    server.fmt.quote_style = crate::fmt::config::QuoteStyle::AutoPreferSingle;
+
+    let (detail, text) = import_edit(&server, 0, 3);
+
+    assert!(
+        text.contains("game:GetService('EncodingService')"),
+        "{text}"
+    );
+    assert!(detail.contains("('EncodingService')"), "{detail}");
+}
+
+/// A project that has not adopted `const` turns the setting off and gets `local`.
+#[test]
+fn use_const_off_writes_local() {
+    let mut server = issue_server("Enc");
+    server.lsp.completion.imports.use_const = false;
+
+    let (detail, text) = import_edit(&server, 0, 3);
+
+    assert!(text.starts_with("local EncodingService ="), "{text}");
+    assert!(!text.contains("const"), "{text}");
+
+    // A user reads the detail before accepting, so it cannot say the other word.
+    assert!(detail.contains("local EncodingService"), "{detail}");
+    assert!(!detail.contains("const"), "{detail}");
+}
+
+/*
+The insertion point reads a `local` import as an import.
+
+With the setting off a file's preamble is bound with `local`, and a new
+import still has to land at the end of that preamble rather than above it.
+*/
+#[test]
+fn a_local_preamble_still_ends_where_the_import_goes() {
+    let src =
+        "-- header\nlocal Players = game:GetService(\"Players\")\n\nif x then return end\nEnc";
+    let mut server = issue_server(src);
+    server.lsp.completion.imports.use_const = false;
+
+    let items = completion_items(&server, 4, 3);
+    let import = items
+        .iter()
+        .find(|i| i["label"] == "EncodingService")
+        .expect("the service offers");
+
+    assert_eq!(
+        import["additionalTextEdits"][0]["range"]["start"]["line"], 2,
+        "the import must land after the preamble, not inside the guard"
+    );
+}
+
+// --- the parity requests, through the router -------------------------------
+
+/// Drive one request through the dispatch and give back the parsed reply.
+fn ask(server: &mut Server, method: &str, params: Value) -> Value {
+    let mut out = Vec::new();
+
+    server
+        .handle(&message(method, Some(77), params), &mut out)
+        .expect("the dispatch answers");
+
+    let text = String::from_utf8(out).expect("utf8");
+    let body = text
+        .split("\r\n\r\n")
+        .nth(1)
+        .unwrap_or_else(|| panic!("no body in {text}"));
+
+    let reply: Value = serde_json::from_str(body).expect("json");
+
+    assert!(
+        reply.get("error").is_none(),
+        "an editor must not see a failure from {method}: {reply}"
+    );
+
+    reply["result"].clone()
+}
+
+fn at(line: u32, character: u32) -> Value {
+    json!({
+        "textDocument": { "uri": "file:///t.luau" },
+        "position": { "line": line, "character": character },
+    })
+}
+
+/*
+Every advertised capability has a dispatch arm behind it.
+
+A capability the server claims and does not answer is worse than one it
+never claimed: the editor asks on every keystroke and logs a failure each
+time. This walks the advertised list rather than naming each one, so a
+capability added without a handler fails here.
+*/
+#[test]
+fn every_advertised_provider_answers() {
+    // `true` so the analyzer-only providers are walked as well.
+    let caps = capabilities(true);
+    let caps = caps["capabilities"].as_object().expect("a table");
+
+    let method_of = |provider: &str| match provider {
+        "documentFormattingProvider" => Some("textDocument/formatting"),
+        "documentSymbolProvider" => Some("textDocument/documentSymbol"),
+        "codeActionProvider" => Some("textDocument/codeAction"),
+        "definitionProvider" => Some("textDocument/definition"),
+        "workspaceSymbolProvider" => Some("workspace/symbol"),
+        "semanticTokensProvider" => Some("textDocument/semanticTokens/full"),
+        "referencesProvider" => Some("textDocument/references"),
+        "documentHighlightProvider" => Some("textDocument/documentHighlight"),
+        "renameProvider" => Some("textDocument/rename"),
+        "foldingRangeProvider" => Some("textDocument/foldingRange"),
+        "selectionRangeProvider" => Some("textDocument/selectionRange"),
+        "documentLinkProvider" => Some("textDocument/documentLink"),
+        "colorProvider" => Some("textDocument/documentColor"),
+        "hoverProvider" => Some("textDocument/hover"),
+        "typeDefinitionProvider" => Some("textDocument/typeDefinition"),
+        "signatureHelpProvider" => Some("textDocument/signatureHelp"),
+        "inlayHintProvider" => Some("textDocument/inlayHint"),
+        "completionProvider" => Some("textDocument/completion"),
+        _ => None,
+    };
+
+    for key in caps.keys() {
+        if !key.ends_with("Provider") {
+            continue;
+        }
+
+        let method = method_of(key).unwrap_or_else(|| {
+            panic!("{key} is advertised and this test does not know its method")
+        });
+
+        let mut server = server_with("local x = 1\nreturn x\n");
+
+        // The call panics on an error reply, which is the assertion.
+        let _ = ask(
+            &mut server,
+            method,
+            json!({
+                "textDocument": { "uri": "file:///t.luau" },
+                "position": { "line": 1, "character": 7 },
+                "positions": [{ "line": 1, "character": 7 }],
+                "context": { "includeDeclaration": true, "diagnostics": [] },
+                "newName": "y",
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 1 },
+                },
+            }),
+        );
+    }
+}
+
+/// Goto definition lands on the declaration, through the protocol.
+#[test]
+fn a_definition_request_points_at_the_declaration() {
+    let mut server = server_with("local widget = 1\nreturn widget\n");
+    let result = ask(&mut server, "textDocument/definition", at(1, 8));
+
+    assert_eq!(result["range"]["start"]["line"], 0);
+    assert_eq!(result["range"]["start"]["character"], 6);
+    assert_eq!(result["uri"], "file:///t.luau");
+}
+
+/// A shadowed name resolves to the binding the scope walk chose, not the text.
+#[test]
+fn a_definition_request_respects_shadowing() {
+    let src = "local x = 1\ndo\n\tlocal x = 2\n\tprint(x)\nend\nprint(x)\n";
+    let mut server = server_with(src);
+
+    let inner = ask(&mut server, "textDocument/definition", at(3, 8));
+    let outer = ask(&mut server, "textDocument/definition", at(5, 6));
+
+    assert_eq!(inner["range"]["start"]["line"], 2, "the inner x");
+    assert_eq!(outer["range"]["start"]["line"], 0, "the outer x");
+}
+
+#[test]
+fn a_references_request_lists_every_use() {
+    let mut server = server_with("local x = 1\nprint(x)\nprint(x)\n");
+
+    let result = ask(
+        &mut server,
+        "textDocument/references",
+        json!({
+            "textDocument": { "uri": "file:///t.luau" },
+            "position": { "line": 0, "character": 6 },
+            "context": { "includeDeclaration": true },
+        }),
+    );
+
+    let list = result.as_array().expect("a list");
+
+    assert_eq!(list.len(), 3, "the declaration and two reads: {result}");
+}
+
+/// A highlight tags the declaration as a write and each use as a read.
+#[test]
+fn a_highlight_request_tags_reads_and_writes() {
+    let mut server = server_with("local x = 1\nx = 2\nprint(x)\n");
+    let result = ask(&mut server, "textDocument/documentHighlight", at(0, 6));
+
+    let list = result.as_array().expect("a list");
+    let kinds: Vec<u64> = list.iter().filter_map(|h| h["kind"].as_u64()).collect();
+
+    assert!(kinds.contains(&3), "a write is kind 3: {result}");
+    assert!(kinds.contains(&2), "a read is kind 2: {result}");
+}
+
+#[test]
+fn a_rename_request_edits_every_use() {
+    let mut server = server_with("local x = 1\nprint(x)\n");
+
+    let result = ask(
+        &mut server,
+        "textDocument/rename",
+        json!({
+            "textDocument": { "uri": "file:///t.luau" },
+            "position": { "line": 0, "character": 6 },
+            "newName": "widget",
+        }),
+    );
+
+    let edits = result["changes"]["file:///t.luau"]
+        .as_array()
+        .expect("edits for this file");
+
+    assert_eq!(edits.len(), 2, "{result}");
+    assert_eq!(edits[0]["newText"], "widget");
+}
+
+/// A reserved word is refused, because the edit would not compile.
+#[test]
+fn a_rename_to_a_keyword_is_refused() {
+    let mut server = server_with("local x = 1\nprint(x)\n");
+
+    let result = ask(
+        &mut server,
+        "textDocument/rename",
+        json!({
+            "textDocument": { "uri": "file:///t.luau" },
+            "position": { "line": 0, "character": 6 },
+            "newName": "end",
+        }),
+    );
+
+    assert!(result.is_null(), "a keyword must not be accepted: {result}");
+}
+
+#[test]
+fn a_folding_request_finds_the_function_body() {
+    let src = "local function f()\n\tlocal a = 1\n\treturn a\nend\nreturn f\n";
+    let mut server = server_with(src);
+    let result = ask(
+        &mut server,
+        "textDocument/foldingRange",
+        json!({ "textDocument": { "uri": "file:///t.luau" } }),
+    );
+
+    let list = result.as_array().expect("a list");
+
+    assert!(
+        list.iter()
+            .any(|r| r["startLine"] == 0 && r["endLine"] == 3),
+        "{result}"
+    );
+}
+
+/// The chain grows outward, which is what the protocol asks of it.
+#[test]
+fn a_selection_range_request_returns_a_growing_chain() {
+    let mut server = server_with("local x = 1\nprint(x + 2)\n");
+    let result = ask(
+        &mut server,
+        "textDocument/selectionRange",
+        json!({
+            "textDocument": { "uri": "file:///t.luau" },
+            "positions": [{ "line": 1, "character": 6 }],
+        }),
+    );
+
+    let mut node = result[0].clone();
+    let mut seen = 0;
+
+    while !node.is_null() {
+        seen += 1;
+
+        let parent = node["parent"].clone();
+
+        if !parent.is_null() {
+            // A parent must start no later and end no earlier than its child.
+            assert!(
+                parent["range"]["start"]["line"].as_u64()
+                    <= node["range"]["start"]["line"].as_u64(),
+                "the chain does not grow: {result}"
+            );
+        }
+
+        node = parent;
+    }
+
+    assert!(seen >= 2, "a chain needs more than one step: {result}");
+}
+
+/// A Color3 written out in full gets a swatch, with the channels the editor wants.
+#[test]
+fn a_document_color_request_finds_a_literal_colour() {
+    let mut server = server_with("local red = Color3.fromRGB(255, 0, 0)\nreturn red\n");
+    let result = ask(
+        &mut server,
+        "textDocument/documentColor",
+        json!({ "textDocument": { "uri": "file:///t.luau" } }),
+    );
+
+    let list = result.as_array().expect("a list");
+
+    assert_eq!(list.len(), 1, "{result}");
+    assert_eq!(list[0]["color"]["red"], 1.0);
+    assert_eq!(list[0]["color"]["green"], 0.0);
+}
+
+/// A colour whose channels are not literals cannot be known, so no swatch.
+#[test]
+fn a_computed_colour_gets_no_swatch() {
+    let mut server = server_with("local c = Color3.fromRGB(n, 0, 0)\nreturn c\n");
+    let result = ask(
+        &mut server,
+        "textDocument/documentColor",
+        json!({ "textDocument": { "uri": "file:///t.luau" } }),
+    );
+
+    assert_eq!(result.as_array().expect("a list").len(), 0, "{result}");
+}
+
+/// The outline is a tree, so a nested function is a child and not a sibling.
+#[test]
+fn the_document_symbol_reply_nests() {
+    let src = "local function outer()\n\tlocal function inner()\n\tend\n\n\treturn inner\nend\n\nreturn outer\n";
+    let mut server = server_with(src);
+
+    let result = ask(
+        &mut server,
+        "textDocument/documentSymbol",
+        json!({ "textDocument": { "uri": "file:///t.luau" } }),
+    );
+
+    let list = result.as_array().expect("a list");
+    let outer = list.iter().find(|s| s["name"] == "outer").expect("outer");
+
+    let children = outer["children"].as_array().expect("children");
+
+    assert!(
+        children.iter().any(|c| c["name"] == "inner"),
+        "inner must nest under outer: {result}"
+    );
+}
+
+// --- the editor settings blob ----------------------------------------------
+
+/*
+The editor can speak, and the project wins where both do.
+
+The extension sends its `larvae-lsp` section at initialize and again on every
+change. Until the server read it, every editor setting it mirrors did
+nothing, including the `useConst` one the config doc promises.
+*/
+#[test]
+fn an_editor_setting_reaches_the_server() {
+    let mut server = Server::default();
+    let mut out = Vec::new();
+
+    server
+        .handle(
+            &message(
+                "initialize",
+                Some(1),
+                json!({
+                    "initializationOptions": {
+                        "settings": {
+                            "larvae-lsp": {
+                                "claimOnly": true,
+                                "completion": { "imports": { "useConst": false } },
+                            }
+                        }
+                    }
+                }),
+            ),
+            &mut out,
+        )
+        .expect("initializes");
+
+    assert!(server.lsp.claim_only, "claimOnly did not reach the server");
+    assert!(
+        !server.lsp.completion.imports.use_const,
+        "useConst did not reach the server"
+    );
+}
+
+/*
+A project wins the settings it spells, and only those.
+
+`[lsp]` used to be copied over the whole table, so any `larvae.toml` threw
+away every editor setting, including the ones it says nothing about. A user
+who turned the new solver on in the editor got the old one and no reason.
+*/
+#[test]
+fn the_project_wins_only_where_it_names_a_setting() {
+    let mut server = Server {
+        editor: json!({
+            "larvae-lsp": {
+                "claimOnly": true,
+                "fflags": { "enableNewSolver": true },
+                "hover": { "showTableKinds": true },
+            }
+        }),
+        ..Default::default()
+    };
+
+    let project = toml::from_str::<toml::Value>("[lsp]\nclaim_only = false\n").expect("parses");
+
+    server.apply_editor_settings(Some(&project));
+
+    // The project spelled this one, so it wins.
+    assert!(!server.lsp.claim_only);
+
+    // It said nothing about these, so the editor keeps them.
+    assert!(
+        server.lsp.fflags.enable_new_solver,
+        "the editor's enableNewSolver was thrown away"
+    );
+    assert!(server.lsp.hover.show_table_kinds);
+}
+
+/// A nested name is matched by its own path, and not by the table above it.
+#[test]
+fn a_project_that_names_one_flag_leaves_the_others_to_the_editor() {
+    let mut server = Server {
+        editor: json!({
+            "larvae-lsp": { "fflags": { "enableNewSolver": true, "enableByDefault": true } }
+        }),
+        ..Default::default()
+    };
+
+    let project =
+        toml::from_str::<toml::Value>("[lsp.fflags]\nenable_new_solver = false\n").expect("parses");
+
+    server.apply_editor_settings(Some(&project));
+
+    assert!(!server.lsp.fflags.enable_new_solver);
+    assert!(server.lsp.fflags.enable_by_default);
+}
+
+/*
+`larvae/bytecode` compiles the open document at the level the editor asked.
+
+The reply carries the analyzer's text, and the params reach it: the
+optimization level from the request, the debug level from `[lsp.bytecode]`,
+and the remarks flag from which method was called.
+*/
+#[test]
+fn the_bytecode_request_reaches_the_analyzer() {
+    let mut server = Server {
+        analysis: std::cell::RefCell::new(Some(Box::new(BytecodeAnalysis))),
+        ..Default::default()
+    };
+    let mut out = Vec::new();
+
+    let uri = "file:///project/a.luau";
+
+    server
+        .handle(
+            &message(
+                "textDocument/didOpen",
+                None,
+                json!({ "textDocument": { "uri": uri, "text": "return 1\n" } }),
+            ),
+            &mut out,
+        )
+        .unwrap();
+
+    let reply = ask(
+        &mut server,
+        "larvae/bytecode",
+        json!({ "textDocument": { "uri": uri }, "optimizationLevel": 1 }),
+    );
+
+    assert_eq!(
+        reply.as_str().unwrap(),
+        "O1 remarks=false debug=1 first=\"return 1\""
+    );
+
+    let reply = ask(
+        &mut server,
+        "larvae/compilerRemarks",
+        json!({ "textDocument": { "uri": uri } }),
+    );
+
+    // No level in the request compiles at O2, which is luau-lsp's default.
+    assert!(
+        reply.as_str().unwrap().starts_with("O2 remarks=true"),
+        "{reply}"
+    );
+}
+
+/*
+`[lsp] analyzer = false` serves what larvae always served, and no more.
+
+The lints, the format, and the actions stay on both kinds of file. The
+capabilities of the analyzer are not advertised, hover answers nothing even
+though the seam holds an analyzer, and the type findings stay out of a
+publish. That is the serving larvae had before the analyzer landed.
+*/
+#[test]
+fn analyzer_off_is_the_classic_server() {
+    let mut server = Server {
+        analysis: std::cell::RefCell::new(Some(Box::new(BytecodeAnalysis))),
+        ..Default::default()
+    };
+    server.lsp.analyzer = false;
+    let mut out = Vec::new();
+
+    // Not advertised, so the editor never asks.
+    let caps = capabilities(server.will_analyse() && server.lsp.analyzer);
+    assert!(caps["capabilities"]["hoverProvider"].is_null(), "{caps}");
+    assert!(caps["capabilities"]["completionProvider"].is_null());
+
+    // The classic half still is.
+    assert_eq!(
+        caps["capabilities"]["documentFormattingProvider"],
+        json!(true)
+    );
+    assert_eq!(caps["capabilities"]["codeActionProvider"], json!(true));
+
+    // An editor that asks anyway gets the honest nothing.
+    let uri = "file:///project/a.luau";
+    server
+        .handle(
+            &message(
+                "textDocument/didOpen",
+                None,
+                json!({ "textDocument": { "uri": uri, "text": "local unused = 1\nreturn 2\n" } }),
+            ),
+            &mut out,
+        )
+        .unwrap();
+
+    let hover = ask(
+        &mut server,
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": at(0, 7) }),
+    );
+    assert!(hover.is_null(), "{hover}");
+
+    // The lints still publish: the open above pushed diagnostics.
+    let text = String::from_utf8(out).unwrap();
+    assert!(text.contains("unused"), "the lint pass went quiet: {text}");
+}
+
+/*
+A require offer replaces exactly what the author typed of the segment.
+
+Without the edit range the editor guesses a word, and its guess holds no
+`@`: typing `@sh` filtered a list of `@shared/` offers against `sh`,
+nothing matched, and the list closed instead of narrowing.
+*/
+#[test]
+fn a_require_offer_carries_the_range_it_replaces() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::create_dir_all(dir.path().join("src")).expect("makes it");
+    std::fs::write(
+        dir.path().join(".luaurc"),
+        r#"{ "aliases": { "shared": "src" } }"#,
+    )
+    .expect("writes");
+    std::fs::write(dir.path().join("src/util.luau"), "return {}\n").expect("writes");
+
+    let mut server = Server::default();
+    server.root = Some(dir.path().to_path_buf());
+    let mut out = Vec::new();
+
+    let uri = format!("file://{}/src/main.luau", dir.path().display());
+    let text = "local a = require('@sh')\nreturn a\n";
+
+    server
+        .handle(
+            &message(
+                "textDocument/didOpen",
+                None,
+                json!({ "textDocument": { "uri": uri, "text": text } }),
+            ),
+            &mut out,
+        )
+        .unwrap();
+
+    // The cursor sits after `@sh`, inside the quotes.
+    let reply = ask(
+        &mut server,
+        "textDocument/completion",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 0, "character": 22 },
+        }),
+    );
+
+    let items = reply["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no items in {reply}"));
+    let offer = items
+        .iter()
+        .find(|i| i["label"] == "@shared/")
+        .unwrap_or_else(|| panic!("no @shared/ offer in {reply}"));
+
+    // The edit replaces from the `@` to the cursor, so the filter sees it.
+    let range = &offer["textEdit"]["range"];
+
+    assert_eq!(
+        range["start"],
+        json!({ "line": 0, "character": 19 }),
+        "{offer}"
+    );
+    assert_eq!(
+        range["end"],
+        json!({ "line": 0, "character": 22 }),
+        "{offer}"
+    );
+    assert_eq!(offer["textEdit"]["newText"], "@shared/");
+}
+
+/// A later change replaces what the editor said before.
+#[test]
+fn a_configuration_change_replaces_the_blob() {
+    let mut server = Server::default();
+    let mut out = Vec::new();
+
+    server.editor = json!({ "larvae-lsp": { "claimOnly": true } });
+
+    server.apply_editor_settings(None);
+
+    assert!(server.lsp.claim_only);
+
+    server
+        .handle(
+            &message(
+                "workspace/didChangeConfiguration",
+                None,
+                json!({ "settings": { "larvae-lsp": { "claimOnly": false } } }),
+            ),
+            &mut out,
+        )
+        .expect("handles");
+
+    assert!(!server.lsp.claim_only, "the change did not take");
+}
+
+/*
+A setting the server does not know is ignored, not refused.
+
+luau-lsp ships about ninety settings and the extension mirrors the names, so
+a server that failed on an unknown id would fail on every editor ahead of it.
+*/
+#[test]
+fn an_unknown_setting_is_ignored() {
+    let mut server = Server {
+        editor: json!({
+            "larvae-lsp": {
+                "inlayHints": { "parameterNames": "all" },
+                "somethingNobodyShipped": 7,
+                "completion": { "imports": { "useConst": false } },
+            }
+        }),
+        ..Default::default()
+    };
+
+    server.apply_editor_settings(None);
+
+    // The one it knows still lands.
+    assert!(!server.lsp.completion.imports.use_const);
+}
+
+/// An empty blob leaves the defaults alone.
+#[test]
+fn no_editor_settings_changes_nothing() {
+    let mut server = Server::default();
+    let before = (server.lsp.enabled, server.lsp.claim_only);
+
+    server.apply_editor_settings(None);
+
+    assert_eq!((server.lsp.enabled, server.lsp.claim_only), before);
+}
+
+/// Every knob the extension mirrors reaches the server.
+#[test]
+fn the_feature_knobs_reach_the_server() {
+    let mut server = Server {
+        editor: json!({
+            "larvae-lsp": {
+                "signatureHelp": { "enabled": false },
+                "hover": { "enabled": false },
+                "inlayHints": {
+                    "variableTypes": true,
+                    "parameterTypes": true,
+                    "typeHintMaxLength": 12,
+                },
+            }
+        }),
+        ..Default::default()
+    };
+
+    server.apply_editor_settings(None);
+
+    assert!(!server.lsp.signature_help.enabled);
+    assert!(!server.lsp.hover.enabled);
+    assert!(server.lsp.inlay_hints.variable_types);
+    assert!(server.lsp.inlay_hints.parameter_types);
+    assert_eq!(server.lsp.inlay_hints.type_hint_max_length, 12);
+}
+
+/*
+A hint is off until the project asks for it.
+
+The editor draws it into a line the author did not write, and a reader who
+did not ask reads that as the file changing under them.
+*/
+#[test]
+fn inlay_hints_are_off_by_default() {
+    let server = Server::default();
+
+    assert!(!server.lsp.inlay_hints.variable_types);
+    assert!(!server.lsp.inlay_hints.parameter_types);
+
+    let result = server.inlay_hints(&json!({
+        "textDocument": { "uri": "file:///t.luau" }
+    }));
+
+    assert_eq!(result, json!([]), "a hint appeared without being asked for");
+}
+
+/// Signature help and hover are on, because neither draws anything unasked.
+#[test]
+fn signature_help_and_hover_are_on_by_default() {
+    let server = Server::default();
+
+    assert!(server.lsp.signature_help.enabled);
+    assert!(server.lsp.hover.enabled);
+}
+
+// --- workspace/symbol ------------------------------------------------------
+
+/// The picker opens with an empty query, and a project dump is not an answer.
+#[test]
+fn an_empty_workspace_query_answers_with_nothing() {
+    let server = Server::default();
+    let result = server.workspace_symbols(&json!({ "query": "" }));
+
+    assert_eq!(result, json!([]));
+}
+
+/// A search finds a symbol in a file the editor never opened.
+#[test]
+fn a_workspace_search_reaches_the_whole_project() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+
+    std::fs::write(
+        dir.path().join("thing.luau"),
+        "local function getPlayerName()\n\treturn \"a\"\nend\n\nreturn getPlayerName\n",
+    )
+    .expect("writes");
+
+    let mut server = Server {
+        root: Some(dir.path().to_path_buf()),
+        ..Default::default()
+    };
+
+    server.reindex();
+
+    let result = server.workspace_symbols(&json!({ "query": "getPlayer" }));
+    let list = result.as_array().expect("a list");
+
+    assert_eq!(list.len(), 1, "{result}");
+    assert_eq!(list[0]["name"], "getPlayerName");
+    assert!(
+        list[0]["location"]["uri"]
+            .as_str()
+            .expect("a uri")
+            .ends_with("thing.luau"),
+        "{result}"
+    );
+}
+
+/// A server with no root indexes nothing rather than walking the cwd.
+#[test]
+fn no_root_indexes_nothing() {
+    let mut server = Server::default();
+
+    server.reindex();
+
+    assert_eq!(
+        server.workspace_symbols(&json!({ "query": "anything" })),
+        json!([])
+    );
+}
+
+/// The completion and index knobs reach the server too.
+#[test]
+fn the_completion_and_index_knobs_reach_the_server() {
+    let mut server = Server {
+        editor: json!({
+            "larvae-lsp": {
+                "completion": {
+                    "enabled": false,
+                    "showKeywords": false,
+                    "imports": { "enabled": false },
+                },
+                "index": { "enabled": false },
+            }
+        }),
+        ..Default::default()
+    };
+
+    server.apply_editor_settings(None);
+
+    assert!(!server.lsp.completion.enabled);
+    assert!(!server.lsp.completion.show_keywords);
+    assert!(!server.lsp.completion.imports.enabled);
+    assert!(!server.lsp.index.enabled);
+}
+
+/// An index that is off holds no symbols, so the search answers with nothing.
+#[test]
+fn an_index_that_is_off_finds_nothing() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+
+    std::fs::write(
+        dir.path().join("a.luau"),
+        "local function findMe()\nend\n\nreturn findMe\n",
+    )
+    .expect("writes");
+
+    let mut server = Server {
+        root: Some(dir.path().to_path_buf()),
+        ..Default::default()
+    };
+
+    server.reindex();
+    assert_ne!(
+        server.workspace_symbols(&json!({ "query": "findMe" })),
+        json!([]),
+        "the index should hold it while it is on"
+    );
+
+    server.lsp.index.enabled = false;
+    server.reindex();
+
+    assert_eq!(
+        server.workspace_symbols(&json!({ "query": "findMe" })),
+        json!([])
+    );
+}
+
+/// Every completion knob defaults on, because none of them hides anything.
+#[test]
+fn the_completion_knobs_default_on() {
+    let server = Server::default();
+
+    assert!(server.lsp.completion.enabled);
+    assert!(server.lsp.completion.show_keywords);
+    assert!(server.lsp.completion.imports.enabled);
+    assert!(server.lsp.index.enabled);
+}
+
+// --- [lsp.fflags] and [lsp.bytecode] ---------------------------------------
+
+/*
+The two tables the extension already sends reach the server.
+
+It sends them as of its commit 604baf1, and the server dropped them. A
+setting the server drops is worse than one it stores: the user changes it,
+nothing happens, and nothing says why.
+*/
+#[test]
+fn the_flag_and_bytecode_settings_reach_the_server() {
+    let mut server = Server {
+        editor: json!({
+            "larvae-lsp": {
+                "fflags": {
+                    "enableByDefault": true,
+                    "enableNewSolver": true,
+                    "override": { "LuauTarjanChildLimit": "20000", "LuauSolverV2": "false" },
+                },
+                "bytecode": {
+                    "debugLevel": 2,
+                    "typeInfoLevel": 0,
+                    "vectorLib": "Vec",
+                    "vectorCtor": "make",
+                    "vectorType": "Vec3",
+                },
+            }
+        }),
+        ..Default::default()
+    };
+
+    server.apply_editor_settings(None);
+
+    assert!(server.lsp.fflags.enable_by_default);
+    assert!(server.lsp.fflags.enable_new_solver);
+    assert_eq!(
+        server
+            .lsp
+            .fflags
+            .over
+            .get("LuauTarjanChildLimit")
+            .map(String::as_str),
+        Some("20000")
+    );
+    assert_eq!(
+        server
+            .lsp
+            .fflags
+            .over
+            .get("LuauSolverV2")
+            .map(String::as_str),
+        Some("false")
+    );
+
+    assert_eq!(server.lsp.bytecode.debug_level, 2);
+    assert_eq!(server.lsp.bytecode.type_info_level, 0);
+    assert_eq!(server.lsp.bytecode.vector_lib, "Vec");
+    assert_eq!(server.lsp.bytecode.vector_ctor, "make");
+    assert_eq!(server.lsp.bytecode.vector_type, "Vec3");
+}
+
+/*
+An override arrives as text whatever the editor sent.
+
+Luau keeps a boolean list and an integer list, and the flag name decides
+which one is asked, so a JSON number and a JSON string have to reach the
+same place.
+*/
+#[test]
+fn an_override_of_any_json_type_becomes_text() {
+    let mut server = Server {
+        editor: json!({
+            "larvae-lsp": {
+                "fflags": { "override": { "AsNumber": 120, "AsBool": true, "AsText": "no" } }
+            }
+        }),
+        ..Default::default()
+    };
+
+    server.apply_editor_settings(None);
+
+    let over = &server.lsp.fflags.over;
+
+    assert_eq!(over.get("AsNumber").map(String::as_str), Some("120"));
+    assert_eq!(over.get("AsBool").map(String::as_str), Some("true"));
+    assert_eq!(over.get("AsText").map(String::as_str), Some("no"));
+}
+
+/*
+Both default to what larvae is without them.
+
+`enable_by_default` is off, which departs from luau-lsp on purpose: larvae
+ships one pinned Luau and the same binary to everyone, so a flag that
+misbehaves misbehaves for every user at once.
+*/
+#[test]
+fn the_flag_defaults_are_conservative() {
+    let server = Server::default();
+
+    assert!(!server.lsp.fflags.enable_by_default);
+    assert!(!server.lsp.fflags.enable_new_solver);
+    assert!(server.lsp.fflags.over.is_empty());
+
+    assert_eq!(server.lsp.bytecode.debug_level, 1);
+    assert_eq!(server.lsp.bytecode.vector_lib, "Vector3");
 }

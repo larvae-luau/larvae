@@ -275,6 +275,15 @@
           "default": true,
           "description": "Read require(script.Parent.Foo) style requires as input and rewrite them to the configured target. Turn it off to leave instance requires exactly as written."
         },
+        "client_relative_requires": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": false,
+          "description": "Write a require whose two ends both sit in the StarterPlayer tree as a relative ./ or ../ path. Roblox clones a Starter container into each player, so the script that runs is a copy and a DataModel path names the template. Off by default: it lets a relative walk cross a mount boundary inside one container. A shared file that requires client code stays an error either way."
+        },
         "overrides": {
           "type": "object",
           "description": "A different require target for the paths a glob matches, relative to [process].input. First match wins. The value is a target name, or a table with target and indexing_style.",
@@ -810,7 +819,7 @@
       }
     },
     "fmt": {
-      "description": "Formatter settings for `larvae fmt`. Every stylua option under its own name, so a stylua.toml can move in here whole, plus the ones stylua does not have. A stylua.toml left in the project is still read, and these keys layer over it.\n\n[Formatting reference →](https://larvae-luau.github.io/docs/reference/formatting)",
+      "description": "Formatter settings for `larvae fmt`. Every stylua option under its own name, so a stylua.toml can move in here whole, plus the ones stylua does not have. A stylua.toml left in the project is still read, and these keys layer over it.\n\n[Formatting reference \u2192](https://larvae-luau.github.io/docs/reference/formatting)",
       "type": "object",
       "additionalProperties": {
         "type": "object",
@@ -823,7 +832,7 @@
             "preserve"
           ],
           "default": "never",
-          "description": "Whether a blank line the author left at the very start or end of a block survives.\n\n[block_newline_gaps →](https://larvae-luau.github.io/docs/reference/formatting#block-newline-gaps)"
+          "description": "Whether a blank line the author left at the very start or end of a block survives.\n\n[block_newline_gaps \u2192](https://larvae-luau.github.io/docs/reference/formatting#block-newline-gaps)"
         },
         "call_parentheses": {
           "enum": [
@@ -835,7 +844,7 @@
             "as-needed"
           ],
           "default": "always",
-          "description": "Whether a call with one string or table argument keeps its parentheses. \"input\" keeps whatever the author wrote. \"as-needed\" is the same setting as \"none\" under the name Biome and Prettier use. Both drop the parentheses only where Luau allows the bare form, which is one string or one table; a single identifier keeps them, because `h a` is a syntax error.\n\n[call_parentheses →](https://larvae-luau.github.io/docs/reference/formatting#call-parentheses)"
+          "description": "Whether a call with one string or table argument keeps its parentheses. \"input\" keeps whatever the author wrote. \"as-needed\" is the same setting as \"none\" under the name Biome and Prettier use. Both drop the parentheses only where Luau allows the bare form, which is one string or one table; a single identifier keeps them, because `h a` is a syntax error.\n\n[call_parentheses \u2192](https://larvae-luau.github.io/docs/reference/formatting#call-parentheses)"
         },
         "collapse_simple_statement": {
           "enum": [
@@ -845,13 +854,13 @@
             "always"
           ],
           "default": "never",
-          "description": "Which one-line bodies may stay on one line.\n\n[collapse_simple_statement →](https://larvae-luau.github.io/docs/reference/formatting#collapse-simple-statement)"
+          "description": "Which one-line bodies may stay on one line.\n\n[collapse_simple_statement \u2192](https://larvae-luau.github.io/docs/reference/formatting#collapse-simple-statement)"
         },
         "column_width": {
           "type": "integer",
           "minimum": 1,
           "default": 120,
-          "description": "The width to fit lines into. A line only breaks when it has to.\n\n[column_width →](https://larvae-luau.github.io/docs/reference/formatting#column-width)"
+          "description": "The width to fit lines into. A line only breaks when it has to.\n\n[column_width \u2192](https://larvae-luau.github.io/docs/reference/formatting#column-width)"
         },
         "enabled": {
           "type": "boolean",
@@ -860,11 +869,11 @@
             false
           ],
           "default": true,
-          "description": "Whether `larvae fmt` changes this project at all. `false` leaves every file as it is, `--check` included, and the editor gets a formatter with no edits. This is for a project that wants larvae for its lints and its requires and keeps another formatter.\n\n[enabled →](https://larvae-luau.github.io/docs/reference/formatting#enabled)"
+          "description": "Whether `larvae fmt` changes this project at all. `false` leaves every file as it is, `--check` included, and the editor gets a formatter with no edits. This is for a project that wants larvae for its lints and its requires and keeps another formatter.\n\n[enabled \u2192](https://larvae-luau.github.io/docs/reference/formatting#enabled)"
         },
         "exclude": {
           "$ref": "#/$defs/exclude",
-          "description": "Paths `larvae fmt` walks past, as globs relative to the project root, ex: [\"Packages/**\"]. Naming a directory is enough. A file named on the command line is still formatted, since naming it is saying you meant it.\n\n[exclude →](https://larvae-luau.github.io/docs/reference/formatting#exclude)"
+          "description": "Paths `larvae fmt` walks past, as globs relative to the project root, ex: [\"Packages/**\"]. Naming a directory is enough. A file named on the command line is still formatted, since naming it is saying you meant it.\n\n[exclude \u2192](https://larvae-luau.github.io/docs/reference/formatting#exclude)"
         },
         "final_newline": {
           "type": "boolean",
@@ -873,12 +882,12 @@
             false
           ],
           "default": true,
-          "description": "Whether the file ends with a newline. On by default. POSIX defines a line as text up to a newline, so a file without a final one ends in something that is not a line. This covers the single trailing newline only. Larvae removes whitespace at the end of every line whatever this says.\n\n[final_newline →](https://larvae-luau.github.io/docs/reference/formatting#final-newline)"
+          "description": "Whether the file ends with a newline. On by default. POSIX defines a line as text up to a newline, so a file without a final one ends in something that is not a line. This covers the single trailing newline only. Larvae removes whitespace at the end of every line whatever this says.\n\n[final_newline \u2192](https://larvae-luau.github.io/docs/reference/formatting#final-newline)"
         },
         "function_call": {
           "type": "object",
           "additionalProperties": false,
-          "description": "How the argument list of a call is laid out.\n\n[function_call →](https://larvae-luau.github.io/docs/reference/formatting#function-call)",
+          "description": "How the argument list of a call is laid out.\n\n[function_call \u2192](https://larvae-luau.github.io/docs/reference/formatting#function-call)",
           "properties": {
             "expand": {
               "enum": [
@@ -887,7 +896,7 @@
                 "never"
               ],
               "default": "when-needed",
-              "description": "When the argument list is opened over several lines. \"when-needed\" opens it only where the line does not fit, which is what larvae has always done. \"always\" opens every one. \"never\" holds it on one line, where a value inside it can still open and the line can run past \"column_width\".\n\n[function_call.expand →](https://larvae-luau.github.io/docs/reference/formatting#function-call-expand)"
+              "description": "When the argument list is opened over several lines. \"when-needed\" opens it only where the line does not fit, which is what larvae has always done. \"always\" opens every one. \"never\" holds it on one line, where a value inside it can still open and the line can run past \"column_width\".\n\n[function_call.expand \u2192](https://larvae-luau.github.io/docs/reference/formatting#function-call-expand)"
             },
             "style": {
               "enum": [
@@ -895,20 +904,20 @@
                 "hug-last"
               ],
               "default": "one-per-line",
-              "description": "The shape of an opened argument list. \"one-per-line\" gives every argument a line of its own. \"hug-last\" keeps the arguments on the line of the call and opens the last one, which applies where that argument is a table, a function, or a string carrying its own newlines. The arguments before it do not break, so a long list of them runs past \"column_width\".\n\n[function_call.style →](https://larvae-luau.github.io/docs/reference/formatting#function-call-style)"
+              "description": "The shape of an opened argument list. \"one-per-line\" gives every argument a line of its own. \"hug-last\" keeps the arguments on the line of the call and opens the last one, which applies where that argument is a table, a function, or a string carrying its own newlines. The arguments before it do not break, so a long list of them runs past \"column_width\".\n\n[function_call.style \u2192](https://larvae-luau.github.io/docs/reference/formatting#function-call-style)"
             },
             "indent": {
               "type": "integer",
               "minimum": 0,
               "default": 1,
-              "description": "The indent levels an opened argument takes. 0 puts it at the column of the bracket.\n\n[function_call.indent →](https://larvae-luau.github.io/docs/reference/formatting#function-call-indent)"
+              "description": "The indent levels an opened argument takes. 0 puts it at the column of the bracket.\n\n[function_call.indent \u2192](https://larvae-luau.github.io/docs/reference/formatting#function-call-indent)"
             }
           }
         },
         "function_declaration": {
           "type": "object",
           "additionalProperties": false,
-          "description": "How the parameter list of a declaration is laid out.\n\n[function_declaration →](https://larvae-luau.github.io/docs/reference/formatting#function-declaration)",
+          "description": "How the parameter list of a declaration is laid out.\n\n[function_declaration \u2192](https://larvae-luau.github.io/docs/reference/formatting#function-declaration)",
           "properties": {
             "expand": {
               "enum": [
@@ -917,20 +926,20 @@
                 "never"
               ],
               "default": "when-needed",
-              "description": "When the parameter list is opened over several lines. \"when-needed\" opens it only where the line does not fit, which is what larvae has always done. \"always\" opens every one. \"never\" holds it on one line, where a value inside it can still open and the line can run past \"column_width\".\n\n[function_declaration.expand →](https://larvae-luau.github.io/docs/reference/formatting#function-declaration-expand)"
+              "description": "When the parameter list is opened over several lines. \"when-needed\" opens it only where the line does not fit, which is what larvae has always done. \"always\" opens every one. \"never\" holds it on one line, where a value inside it can still open and the line can run past \"column_width\".\n\n[function_declaration.expand \u2192](https://larvae-luau.github.io/docs/reference/formatting#function-declaration-expand)"
             },
             "indent": {
               "type": "integer",
               "minimum": 0,
               "default": 1,
-              "description": "The indent levels an opened parameter takes. 0 puts it at the column of the bracket.\n\n[function_declaration.indent →](https://larvae-luau.github.io/docs/reference/formatting#function-declaration-indent)"
+              "description": "The indent levels an opened parameter takes. 0 puts it at the column of the bracket.\n\n[function_declaration.indent \u2192](https://larvae-luau.github.io/docs/reference/formatting#function-declaration-indent)"
             }
           }
         },
         "if_expression": {
           "type": "object",
           "additionalProperties": false,
-          "description": "How an \"if ... then ... else ...\" expression is laid out. Luau has an if expression and stylua has no option for it, so a long one runs off to the right.\n\n[if_expression →](https://larvae-luau.github.io/docs/reference/formatting#if-expression)",
+          "description": "How an \"if ... then ... else ...\" expression is laid out. Luau has an if expression and stylua has no option for it, so a long one runs off to the right.\n\n[if_expression \u2192](https://larvae-luau.github.io/docs/reference/formatting#if-expression)",
           "properties": {
             "expand": {
               "enum": [
@@ -939,13 +948,13 @@
                 "when-large"
               ],
               "default": "never",
-              "description": "When the expression is opened over several lines. \"never\" keeps it on one line where it fits, which is what larvae has always done. \"always\" opens every one. \"when-large\" opens one wider than \"width\".\n\n[if_expression.expand →](https://larvae-luau.github.io/docs/reference/formatting#if-expression-expand)"
+              "description": "When the expression is opened over several lines. \"never\" keeps it on one line where it fits, which is what larvae has always done. \"always\" opens every one. \"when-large\" opens one wider than \"width\".\n\n[if_expression.expand \u2192](https://larvae-luau.github.io/docs/reference/formatting#if-expression-expand)"
             },
             "width": {
               "type": "integer",
               "minimum": 0,
               "default": 60,
-              "description": "The width at which \"when-large\" opens an expression. It also governs a nested expression in every mode, so an if inside an if waits until it earns the room on its own.\n\n[if_expression.width →](https://larvae-luau.github.io/docs/reference/formatting#if-expression-width)"
+              "description": "The width at which \"when-large\" opens an expression. It also governs a nested expression in every mode, so an if inside an if waits until it earns the room on its own.\n\n[if_expression.width \u2192](https://larvae-luau.github.io/docs/reference/formatting#if-expression-width)"
             },
             "style": {
               "enum": [
@@ -953,7 +962,7 @@
                 "leading"
               ],
               "default": "block",
-              "description": "The shape of an opened expression. \"block\" puts the value below its keyword, in the shape of an if statement. \"leading\" starts the line with the keyword and takes its value: \"if bar\" / \"then a\" / \"else b\".\n\n[if_expression.style →](https://larvae-luau.github.io/docs/reference/formatting#if-expression-style)"
+              "description": "The shape of an opened expression. \"block\" puts the value below its keyword, in the shape of an if statement. \"leading\" starts the line with the keyword and takes its value: \"if bar\" / \"then a\" / \"else b\".\n\n[if_expression.style \u2192](https://larvae-luau.github.io/docs/reference/formatting#if-expression-style)"
             },
             "placement": {
               "enum": [
@@ -961,19 +970,19 @@
                 "next-line"
               ],
               "default": "same-line",
-              "description": "Where the \"if\" sits once the expression is opened. \"same-line\" keeps it on the line of the binding. \"next-line\" ends the line after \"=\" and starts the \"if\" below.\n\n[if_expression.placement →](https://larvae-luau.github.io/docs/reference/formatting#if-expression-placement)"
+              "description": "Where the \"if\" sits once the expression is opened. \"same-line\" keeps it on the line of the binding. \"next-line\" ends the line after \"=\" and starts the \"if\" below.\n\n[if_expression.placement \u2192](https://larvae-luau.github.io/docs/reference/formatting#if-expression-placement)"
             },
             "indent": {
               "type": "integer",
               "minimum": 0,
               "default": 1,
-              "description": "The indent levels between a keyword line and the value below it. 0 puts the value at the column of its keyword.\n\n[if_expression.indent →](https://larvae-luau.github.io/docs/reference/formatting#if-expression-indent)"
+              "description": "The indent levels between a keyword line and the value below it. 0 puts the value at the column of its keyword.\n\n[if_expression.indent \u2192](https://larvae-luau.github.io/docs/reference/formatting#if-expression-indent)"
             }
           }
         },
         "include": {
           "$ref": "#/$defs/exclude",
-          "description": "Paths `larvae fmt` reads even when an exclude matches them, as globs relative to the project root. This list wins over the `[fmt]` exclude and over the root lists.\n\n[include →](https://larvae-luau.github.io/docs/reference/formatting#include)"
+          "description": "Paths `larvae fmt` reads even when an exclude matches them, as globs relative to the project root. This list wins over the `[fmt]` exclude and over the root lists.\n\n[include \u2192](https://larvae-luau.github.io/docs/reference/formatting#include)"
         },
         "indent_type": {
           "enum": [
@@ -981,13 +990,13 @@
             "spaces"
           ],
           "default": "tabs",
-          "description": "What one level of indentation is made of.\n\n[indent_type →](https://larvae-luau.github.io/docs/reference/formatting#indent-type)"
+          "description": "What one level of indentation is made of.\n\n[indent_type \u2192](https://larvae-luau.github.io/docs/reference/formatting#indent-type)"
         },
         "indent_width": {
           "type": "integer",
           "minimum": 1,
           "default": 4,
-          "description": "Spaces per level, and the width a tab is assumed to display as when measuring a line.\n\n[indent_width →](https://larvae-luau.github.io/docs/reference/formatting#indent-width)"
+          "description": "Spaces per level, and the width a tab is assumed to display as when measuring a line.\n\n[indent_width \u2192](https://larvae-luau.github.io/docs/reference/formatting#indent-width)"
         },
         "line_endings": {
           "enum": [
@@ -995,7 +1004,7 @@
             "windows"
           ],
           "default": "unix",
-          "description": "The newline written out.\n\n[line_endings →](https://larvae-luau.github.io/docs/reference/formatting#line-endings)"
+          "description": "The newline written out.\n\n[line_endings \u2192](https://larvae-luau.github.io/docs/reference/formatting#line-endings)"
         },
         "magic_trailing_comma": {
           "type": "boolean",
@@ -1004,12 +1013,12 @@
             false
           ],
           "default": true,
-          "description": "A trailing comma the author left in a table means \"keep this expanded\", so line breaking becomes something an author decides per table rather than something width alone decides. Tables only: Luau rejects `f(a, b,)`, so a call has no trailing comma to read.\n\n[magic_trailing_comma →](https://larvae-luau.github.io/docs/reference/formatting#magic-trailing-comma)"
+          "description": "A trailing comma the author left in a table means \"keep this expanded\", so line breaking becomes something an author decides per table rather than something width alone decides. Tables only: Luau rejects `f(a, b,)`, so a call has no trailing comma to read.\n\n[magic_trailing_comma \u2192](https://larvae-luau.github.io/docs/reference/formatting#magic-trailing-comma)"
         },
         "prefer_const": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Turns a `local` that nothing reassigns into a `const`. The same rule the `prefer_const` lint reports, with the formatter making the edit. Off by default: it rewrites a keyword, which is a bigger step than moving spaces.\n\n[prefer_const →](https://larvae-luau.github.io/docs/reference/formatting#prefer-const)",
+          "description": "Turns a `local` that nothing reassigns into a `const`. The same rule the `prefer_const` lint reports, with the formatter making the edit. Off by default: it rewrites a keyword, which is a bigger step than moving spaces.\n\n[prefer_const \u2192](https://larvae-luau.github.io/docs/reference/formatting#prefer-const)",
           "properties": {
             "enabled": {
               "type": "boolean",
@@ -1018,7 +1027,7 @@
                 false
               ],
               "default": false,
-              "description": "Make the change.\n\n[prefer_const.enabled →](https://larvae-luau.github.io/docs/reference/formatting#prefer-const-enabled)"
+              "description": "Make the change.\n\n[prefer_const.enabled \u2192](https://larvae-luau.github.io/docs/reference/formatting#prefer-const-enabled)"
             },
             "mutated_tables_stay_local": {
               "type": "boolean",
@@ -1027,7 +1036,7 @@
                 false
               ],
               "default": false,
-              "description": "Keep `local` on a binding the file mutates through a field, `t.x = 1` or `table.insert(t, 1)`. Off by default, because `const` is correct there: Luau enforces it against reassignment of the name and says nothing about the value. The same choice as [lint.options.prefer_const].\n\n[prefer_const.mutated_tables_stay_local →](https://larvae-luau.github.io/docs/reference/formatting#prefer-const-mutated-tables-stay-local)"
+              "description": "Keep `local` on a binding the file mutates through a field, `t.x = 1` or `table.insert(t, 1)`. Off by default, because `const` is correct there: Luau enforces it against reassignment of the name and says nothing about the value. The same choice as [lint.options.prefer_const].\n\n[prefer_const.mutated_tables_stay_local \u2192](https://larvae-luau.github.io/docs/reference/formatting#prefer-const-mutated-tables-stay-local)"
             }
           }
         },
@@ -1040,7 +1049,7 @@
             "preserve"
           ],
           "default": "auto-prefer-double",
-          "description": "Where a string literal's quotes come from. The auto pair switches when the other quote needs fewer escapes; \"preserve\" leaves every literal exactly as written.\n\n[quote_style →](https://larvae-luau.github.io/docs/reference/formatting#quote-style)"
+          "description": "Where a string literal's quotes come from. The auto pair switches when the other quote needs fewer escapes; \"preserve\" leaves every literal exactly as written.\n\n[quote_style \u2192](https://larvae-luau.github.io/docs/reference/formatting#quote-style)"
         },
         "recommended": {
           "type": "boolean",
@@ -1048,7 +1057,7 @@
             true,
             false
           ],
-          "description": "Whether larvae's own defaults apply, or only the options this project wrote. Absent and `true` both mean the defaults apply. `false` starts from a base that changes as little as possible: `magic_trailing_comma`, `space_inside_braces` and `trailing_comma` go off, and the project turns back on what it wants. Every other default is either stylua's or a setting that does nothing until a project asks for it, so `false` does not move it. A `stylua.toml` states the style of the project already, so it is the base wherever one exists.\n\n[recommended →](https://larvae-luau.github.io/docs/reference/formatting#recommended)"
+          "description": "Whether larvae's own defaults apply, or only the options this project wrote. Absent and `true` both mean the defaults apply. `false` starts from a base that changes as little as possible: `magic_trailing_comma`, `space_inside_braces` and `trailing_comma` go off, and the project turns back on what it wants. Every other default is either stylua's or a setting that does nothing until a project asks for it, so `false` does not move it. A `stylua.toml` states the style of the project already, so it is the base wherever one exists.\n\n[recommended \u2192](https://larvae-luau.github.io/docs/reference/formatting#recommended)"
         },
         "require_binding": {
           "enum": [
@@ -1057,7 +1066,7 @@
             "local"
           ],
           "default": "preserve",
-          "description": "Selects which keyword binds a required module. Luau enforces \"const\", so a name that the file reassigns keeps \"local\" and does not become a syntax error. \"preserve\" keeps each declaration as written.\n\n[require_binding →](https://larvae-luau.github.io/docs/reference/formatting#require-binding)"
+          "description": "Selects which keyword binds a required module. Luau enforces \"const\", so a name that the file reassigns keeps \"local\" and does not become a syntax error. \"preserve\" keeps each declaration as written.\n\n[require_binding \u2192](https://larvae-luau.github.io/docs/reference/formatting#require-binding)"
         },
         "semicolons": {
           "enum": [
@@ -1066,12 +1075,12 @@
             "always"
           ],
           "default": "never",
-          "description": "Whether a statement ends with a semicolon. Luau requires one only before a statement opening with \"(\", and larvae emits that one whatever this says. \"never\" and \"as-needed\" therefore name the same output; both are accepted.\n\n[semicolons →](https://larvae-luau.github.io/docs/reference/formatting#semicolons)"
+          "description": "Whether a statement ends with a semicolon. Luau requires one only before a statement opening with \"(\", and larvae emits that one whatever this says. \"never\" and \"as-needed\" therefore name the same output; both are accepted.\n\n[semicolons \u2192](https://larvae-luau.github.io/docs/reference/formatting#semicolons)"
         },
         "sort_requires": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Sort the run of requires at the top of a file.\n\n[sort_requires →](https://larvae-luau.github.io/docs/reference/formatting#sort-requires)",
+          "description": "Sort the run of requires at the top of a file.\n\n[sort_requires \u2192](https://larvae-luau.github.io/docs/reference/formatting#sort-requires)",
           "properties": {
             "enabled": {
               "type": "boolean",
@@ -1080,7 +1089,7 @@
                 false
               ],
               "default": false,
-              "description": "\n\n[sort_requires.enabled →](https://larvae-luau.github.io/docs/reference/formatting#sort-requires-enabled)"
+              "description": "\n\n[sort_requires.enabled \u2192](https://larvae-luau.github.io/docs/reference/formatting#sort-requires-enabled)"
             },
             "grouping": {
               "enum": [
@@ -1088,7 +1097,7 @@
                 "by-kind"
               ],
               "default": "flat",
-              "description": "\"flat\" is one sorted run, which is what stylua does. \"by-kind\" puts aliases, then absolute, then relative, with a blank line between each.\n\n[sort_requires.grouping →](https://larvae-luau.github.io/docs/reference/formatting#sort-requires-grouping)"
+              "description": "\"flat\" is one sorted run, which is what stylua does. \"by-kind\" puts aliases, then absolute, then relative, with a blank line between each.\n\n[sort_requires.grouping \u2192](https://larvae-luau.github.io/docs/reference/formatting#sort-requires-grouping)"
             }
           }
         },
@@ -1100,7 +1109,7 @@
             "always"
           ],
           "default": "never",
-          "description": "Where a space goes between a function name and its parentheses.\n\n[space_after_function_names →](https://larvae-luau.github.io/docs/reference/formatting#space-after-function-names)"
+          "description": "Where a space goes between a function name and its parentheses.\n\n[space_after_function_names \u2192](https://larvae-luau.github.io/docs/reference/formatting#space-after-function-names)"
         },
         "space_inside_braces": {
           "type": "boolean",
@@ -1109,7 +1118,7 @@
             false
           ],
           "default": true,
-          "description": "`{ a }` rather than `{a}`, which is the Luau convention.\n\n[space_inside_braces →](https://larvae-luau.github.io/docs/reference/formatting#space-inside-braces)"
+          "description": "`{ a }` rather than `{a}`, which is the Luau convention.\n\n[space_inside_braces \u2192](https://larvae-luau.github.io/docs/reference/formatting#space-inside-braces)"
         },
         "space_inside_brackets": {
           "type": "boolean",
@@ -1118,7 +1127,7 @@
             false
           ],
           "default": false,
-          "description": "`t[ k ]` rather than `t[k]`.\n\n[space_inside_brackets →](https://larvae-luau.github.io/docs/reference/formatting#space-inside-brackets)"
+          "description": "`t[ k ]` rather than `t[k]`.\n\n[space_inside_brackets \u2192](https://larvae-luau.github.io/docs/reference/formatting#space-inside-brackets)"
         },
         "space_inside_parens": {
           "type": "boolean",
@@ -1127,21 +1136,21 @@
             false
           ],
           "default": false,
-          "description": "`f( a )` rather than `f(a)`.\n\n[space_inside_parens →](https://larvae-luau.github.io/docs/reference/formatting#space-inside-parens)"
+          "description": "`f( a )` rather than `f(a)`.\n\n[space_inside_parens \u2192](https://larvae-luau.github.io/docs/reference/formatting#space-inside-parens)"
         },
         "syntax": {
           "type": "string",
-          "description": "Accepted from stylua and ignored. larvae formats Luau and only Luau, which is what every value of this asks for here.\n\n[syntax →](https://larvae-luau.github.io/docs/reference/formatting#syntax)"
+          "description": "Accepted from stylua and ignored. larvae formats Luau and only Luau, which is what every value of this asks for here.\n\n[syntax \u2192](https://larvae-luau.github.io/docs/reference/formatting#syntax)"
         },
         "table_types": {
           "type": "object",
           "additionalProperties": false,
-          "description": "How a table type is laid out, in every position a type takes: an alias, an annotation, a parameter, a return type, and a :: assertion. A table wider than \"width\" opens with one field per line.\n\n[table_types →](https://larvae-luau.github.io/docs/reference/formatting#table-types)",
+          "description": "How a table type is laid out, in every position a type takes: an alias, an annotation, a parameter, a return type, and a :: assertion. A table wider than \"width\" opens with one field per line.\n\n[table_types \u2192](https://larvae-luau.github.io/docs/reference/formatting#table-types)",
           "properties": {
             "enabled": {
               "type": "boolean",
               "default": true,
-              "description": "Off keeps the one-line replay, byte for byte what larvae wrote before.\n\n[table_types.enabled →](https://larvae-luau.github.io/docs/reference/formatting#table-types-enabled)",
+              "description": "Off keeps the one-line replay, byte for byte what larvae wrote before.\n\n[table_types.enabled \u2192](https://larvae-luau.github.io/docs/reference/formatting#table-types-enabled)",
               "enum": [
                 true,
                 false
@@ -1151,7 +1160,7 @@
               "type": "integer",
               "minimum": 0,
               "default": 60,
-              "description": "The width at which a table type opens over several lines. The measure is the flat form of one table alone, so a short table nested in a long one keeps its line.\n\n[table_types.width →](https://larvae-luau.github.io/docs/reference/formatting#table-types-width)"
+              "description": "The width at which a table type opens over several lines. The measure is the flat form of one table alone, so a short table nested in a long one keeps its line.\n\n[table_types.width \u2192](https://larvae-luau.github.io/docs/reference/formatting#table-types-width)"
             },
             "separator": {
               "enum": [
@@ -1159,7 +1168,48 @@
                 "semicolon"
               ],
               "default": "comma",
-              "description": "The separator between fields, in both layouts. Luau reads both.\n\n[table_types.separator →](https://larvae-luau.github.io/docs/reference/formatting#table-types-separator)"
+              "description": "The separator between fields, in both layouts. Luau reads both.\n\n[table_types.separator \u2192](https://larvae-luau.github.io/docs/reference/formatting#table-types-separator)"
+            }
+          }
+        },
+        "sort_table_types": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Sorts the properties of a table type by the length of their names, in a type position only. A value table keeps the order the author wrote. A table type that holds a comment stays as written, because a token replay has no position to put a comment back, and a sort reads the fields the table type layout finds, so table_types.enabled = false leaves every order alone.\n\n[sort_table_types \u2192](https://larvae-luau.github.io/docs/reference/formatting#sort-table-types)",
+          "properties": {
+            "order": {
+              "enum": [
+                "none",
+                "ascending",
+                "descending"
+              ],
+              "default": "none",
+              "description": "The order of the properties. \"none\" keeps the order the author wrote, which is the default: a formatter that reorders code nobody asked it to reorder loses the order the author chose. \"ascending\" puts the shortest name first and \"descending\" the longest. Two names of one length sort alphabetically, so the output does not depend on the order of the input.\n\n[sort_table_types.order \u2192](https://larvae-luau.github.io/docs/reference/formatting#sort-table-types-order)"
+            },
+            "indexer_first": {
+              "type": "boolean",
+              "enum": [
+                true,
+                false
+              ],
+              "default": true,
+              "description": "An indexer such as [number]: any goes above the named properties, because it states the shape of every key instead of one key. Off puts it in its sorted position: an indexer names nothing, so it measures zero and lands first under \"ascending\" anyway, and last under \"descending\". This does nothing until \"order\" asks for a sort.\n\n[sort_table_types.indexer_first \u2192](https://larvae-luau.github.io/docs/reference/formatting#sort-table-types-indexer-first)"
+            }
+          }
+        },
+        "type_operators": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "How a union and an intersection are laid out, in every position a type takes. One option covers | and &, because they share one shape: members with an operator between them.\n\n[type_operators \u2192](https://larvae-luau.github.io/docs/reference/formatting#type-operators)",
+          "properties": {
+            "expand": {
+              "enum": [
+                "auto",
+                "always",
+                "never"
+              ],
+              "default": "auto",
+              "description": "When the chain is opened over several lines. \"auto\" leaves it to the replay, which is the layout larvae always had, so a chain wider than \"column_width\" runs past it. \"always\" puts every member on a line of its own, with the operator leading the line. \"never\" holds one line whatever table_types.width says about a table inside it, and opens one member per line only where the line passes \"column_width\": the order is column_width first, then type_operators, then table_types.width.\n\n[type_operators.expand \u2192](https://larvae-luau.github.io/docs/reference/formatting#type-operators-expand)"
             }
           }
         },
@@ -1170,7 +1220,7 @@
             false
           ],
           "default": true,
-          "description": "A table that broke over several lines keeps a trailing comma on its last field.\n\n[trailing_comma →](https://larvae-luau.github.io/docs/reference/formatting#trailing-comma)"
+          "description": "A table that broke over several lines keeps a trailing comma on its last field.\n\n[trailing_comma \u2192](https://larvae-luau.github.io/docs/reference/formatting#trailing-comma)"
         },
         "unused_imports": {
           "enum": [
@@ -1179,7 +1229,7 @@
             "remove"
           ],
           "default": "ignore",
-          "description": "What to do with a required module that nothing uses. \"ignore\" leaves it as written. \"underscore\" renames it to `_Name`, which keeps the module and silences the lint. \"remove\" deletes the declaration.\n\nThe default is \"ignore\" for a reason worth knowing: `require` runs a module the first time a file asks for it, so a module can do its work by being required at all, and deleting the line stops that work while the file still compiles. A name that only a type reads counts as used, so `const jecs = require(\"@pkg/jecs\")` with `type C = jecs.Component` below it survives both modes. A name that already opens with `_` is left alone, and a statement inside a `fmt off` region is never removed.\n\n[unused_imports →](https://larvae-luau.github.io/docs/reference/formatting#unused-imports)"
+          "description": "What to do with a required module that nothing uses. \"ignore\" leaves it as written. \"underscore\" renames it to `_Name`, which keeps the module and silences the lint. \"remove\" deletes the declaration.\n\nThe default is \"ignore\" for a reason worth knowing: `require` runs a module the first time a file asks for it, so a module can do its work by being required at all, and deleting the line stops that work while the file still compiles. A name that only a type reads counts as used, so `const jecs = require(\"@pkg/jecs\")` with `type C = jecs.Component` below it survives both modes. A name that already opens with `_` is left alone, and a statement inside a `fmt off` region is never removed.\n\n[unused_imports \u2192](https://larvae-luau.github.io/docs/reference/formatting#unused-imports)"
         }
       }
     },
@@ -1835,6 +1885,15 @@
           ],
           "description": "A `local function` that nothing calls. The Luau compiler separates this from an unused variable and separates it by the declaring form, so `local f = function() end` is `unused_variable` and `local function f() end` is this. Both read [lint.options.unused_variable]. Default: warn."
         },
+        "unused_import": {
+          "enum": [
+            "allow",
+            "info",
+            "warn",
+            "deny"
+          ],
+          "description": "A module required and never used. Split from unused_variable: the fix is to delete the line. Reads [lint.options.unused_variable]. Default: warn."
+        },
         "unused_variable": {
           "enum": [
             "allow",
@@ -2090,6 +2149,15 @@
           ],
           "default": true,
           "description": "Drop the modules that the entry cannot reach. Turn off to keep modules that only a dynamic require reaches."
+        },
+        "module_ids": {
+          "type": "string",
+          "enum": [
+            "paths",
+            "opaque"
+          ],
+          "default": "paths",
+          "description": "What the registry calls each module. `paths` reads well in errors and ships the project layout. `opaque` numbers the modules, so the bundle names no file and no package."
         }
       }
     },
@@ -2102,7 +2170,7 @@
           "type": "integer",
           "minimum": 0,
           "default": 120,
-          "description": "The column where the dense emitter breaks the line. Line numbers in crash reports stay meaningful this way. A token wider than the span stays whole."
+          "description": "The column where the dense emitter breaks the line. Line numbers in crash reports stay meaningful this way. A token wider than the span stays whole. Written here, this number also beats the unlimited span that obfuscate implies."
         },
         "rename_variables": {
           "type": "boolean",
@@ -2112,6 +2180,15 @@
           ],
           "default": false,
           "description": "Give every local a short name while minifying. The same rule as [rules] rename_variables, turned on for dense builds only."
+        },
+        "obfuscate": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": false,
+          "description": "Make the output hard to read: the dense emitter whatever generator says, no types, every local named _0x0 upward, and every string literal as the \\xNN form of its own bytes. The file lands on one line unless column_span says otherwise. Roblox has no loadstring, so this is what obfuscation can be: the file still has to be Luau the compiler reads."
         }
       }
     },
@@ -2160,7 +2237,10 @@
     "lsp": {
       "description": "How `larvae lsp`, the editor server, behaves.",
       "type": "object",
-      "additionalProperties": false,
+      "additionalProperties": {
+        "type": "object",
+        "description": "The editor settings of one worm, by its name: [lsp.oop] holds the settings the oop worm declares under [options] in its manifest. The server checks every key against that declaration."
+      },
       "properties": {
         "enabled": {
           "type": "boolean",
@@ -2179,6 +2259,73 @@
           ],
           "default": false,
           "description": "On serves only the files that a worm claims, so stock luau-lsp can own the plain Luau. Off serves every Luau file, which is what larvae always did."
+        },
+        "analyzer": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": true,
+          "description": "Off serves what larvae always served and nothing the analyzer adds: lints, format, code actions, and the outline stay, on claimed and plain files alike, while hover, completion, and type diagnostics go quiet and the session is never built."
+        },
+        "character_type": {
+          "type": "string",
+          "enum": [
+            "r15",
+            "r6",
+            "not_set"
+          ],
+          "default": "r15",
+          "description": "What Player.Character types to. r15 and r6 carry the body parts of their rig, so player.Character.Humanoid resolves with no cast. not_set types it as the union of the two, for a place that allows both."
+        },
+        "sourcemap": {
+          "type": "string",
+          "default": "sourcemap.json",
+          "description": "The rojo sourcemap to read, relative to the root of the project. It gives every script the type of its own instance, so script.Parent and its neighbours resolve. A project without the file gets no instance tree and no message."
+        },
+        "sourcemap_autogenerate": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": true,
+          "description": "The server runs the sourcemap command itself, so the map follows every file the project adds or moves. With no command set, rojo is inferred from its project file; a generator that does not start is said once and costs the autogeneration alone."
+        },
+        "rojo_project_file": {
+          "type": "string",
+          "default": "default.project.json",
+          "description": "The rojo project the inferred sourcemap command reads, relative to the root of the project."
+        },
+        "sourcemap_command": {
+          "type": "string",
+          "default": "",
+          "description": "The command that generates the sourcemap, run through the shell in the project root. Empty infers rojo: with a rojo project file in the root, larvae runs rojo sourcemap --watch; without one, nothing runs. A project on another sync tool names its own generator here, ideally one that watches."
+        },
+        "completion": {
+          "$ref": "#/$defs/lsp_completion"
+        },
+        "inlay_hints": {
+          "$ref": "#/$defs/lsp_inlay_hints"
+        },
+        "signature_help": {
+          "$ref": "#/$defs/lsp_signature_help"
+        },
+        "hover": {
+          "$ref": "#/$defs/lsp_hover"
+        },
+        "index": {
+          "$ref": "#/$defs/lsp_index"
+        },
+        "studio": {
+          "$ref": "#/$defs/lsp_studio"
+        },
+        "fflags": {
+          "$ref": "#/$defs/lsp_fflags"
+        },
+        "bytecode": {
+          "$ref": "#/$defs/lsp_bytecode"
         }
       }
     },
@@ -2210,6 +2357,281 @@
         "roblox": {
           "$ref": "#/$defs/lint_level",
           "description": "A Roblox data type used in a way that does not hold. Every lint of this kind that [lint.rules] does not name takes this level."
+        }
+      }
+    },
+    "lsp_imports": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "`[lsp.completion.imports]`, the auto-import settings. The names mirror luau-lsp's `completion.imports.*`, so a user moving between the two servers keeps the setting they know. The editor extension exposes the same ids under `larvae-lsp.`; where both speak, this file wins.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": true,
+          "description": "Offer a service or module the file has not imported yet, with the binding inserted above the first statement."
+        },
+        "require_style": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "always_relative",
+            "always_absolute",
+            "nearest_absolute"
+          ],
+          "default": "auto",
+          "description": "How a module auto-import spells its require. `auto` writes an alias where one covers the module and the relative form elsewhere; `always_absolute` writes the `@game` path; `nearest_absolute` takes the shortest stable anchor: an alias, then `@game`, then relative. Default: auto."
+        },
+        "use_const": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": true,
+          "description": "Whether an auto-import writes `const` or `local`. On by default, which departs from luau-lsp on purpose: that server defaults it off because Luau had no `const` when the setting was written, and larvae's platform has the keyword. An auto-import binds a service and nothing reassigns it, which is the clearest case for it. Off writes `local` instead.\n\nThis setting is its own thing and does not read `[fmt] require_binding`, because that option governs a `require` binding and a `game:GetService` line is not one."
+        }
+      }
+    },
+    "lsp_completion": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "`[lsp.completion]`, which mirrors luau-lsp's `completion.*` settings.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": true,
+          "description": "Off answers every completion request with an empty list, so another server owns the list."
+        },
+        "hide_deprecated": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": false,
+          "description": "Drop deprecated entries from the completion list whole. Off, they stay listed with a strikethrough. Default: off."
+        },
+        "show_keywords": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": true,
+          "description": "Offer the keywords that fit the position, beside the names."
+        },
+        "imports": {
+          "$ref": "#/$defs/lsp_imports"
+        }
+      }
+    },
+    "lsp_inlay_hints": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "`[lsp.inlay_hints]`, mirroring luau-lsp's `inlayHints.*`. Every one is off by default: a hint is text the editor draws into a line the author did not write, and a reader who did not ask for it reads that as the file changing under them.",
+      "properties": {
+        "variable_types": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": false,
+          "description": "Draw the inferred type of a local the author left unannotated."
+        },
+        "parameter_types": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": false,
+          "description": "Draw the inferred type of a parameter the author left unannotated."
+        },
+        "function_return_types": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": false,
+          "description": "Show the inferred return type of a function, after its parameter list. Default: off."
+        },
+        "parameter_names": {
+          "type": "string",
+          "enum": [
+            "none",
+            "literals",
+            "all"
+          ],
+          "default": "none",
+          "description": "Show the name of each parameter before the argument that fills it: on no call, on literal arguments, or on every one. An argument spelled like its parameter stays bare. Default: none."
+        },
+        "update_delay": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 700,
+          "description": "How long the hints hold still while the author types, in milliseconds. A request mid-edit answers with the last settled hints, and one refresh follows the pause. 0 recomputes on every request. Default: 700."
+        },
+        "type_hint_max_length": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 50,
+          "description": "How long a hint can be before it is cut. A hint longer than the code it annotates hides the code. luau-lsp uses 50."
+        }
+      }
+    },
+    "lsp_signature_help": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "`[lsp.signature_help]`, mirroring luau-lsp's `signatureHelp.*`. Needs a binary built with the analyzer, because the signature comes from the type of the callee.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": true,
+          "description": "Show the signature of the call the caret sits in, with the active parameter marked."
+        }
+      }
+    },
+    "lsp_hover": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "`[lsp.hover]`, mirroring luau-lsp's `hover.*`.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": true,
+          "description": "Answer a hover with the type under the cursor."
+        },
+        "show_table_kinds": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": false,
+          "description": "Keep the `{| |}` markers that say a table is sealed. Off, as luau-lsp has it: the marker answers a question somebody writing a type asks, and a reader hovering a value is not asking it."
+        }
+      }
+    },
+    "lsp_index": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "`[lsp.index]`, mirroring luau-lsp's `index.*`. The index reads and parses every Luau file the project holds, which measured 25ms over 300 files. A project that feels it turns the index off and keeps `documentSymbol` for the file in front of it.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": true,
+          "description": "Build the project wide symbol index that `workspace/symbol` searches."
+        }
+      }
+    },
+    "lsp_studio": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "`[lsp.studio]`, the link to the Roblox Studio plugin. The plugin mirrors the live DataModel into larvae, so the type checker knows the instances the place actually holds and not only the ones a sourcemap describes.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": false,
+          "description": "Open the listener the plugin posts to. Off by default, and the default is a decision rather than caution: turning it on opens a listening socket, and a tool that opens one without being asked has changed what it is. The socket binds to loopback and nothing else, so the tree never leaves the machine, but any process on that machine can still reach it."
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 3773,
+          "description": "The port the plugin posts to. The plugin ships with the same number."
+        }
+      }
+    },
+    "lsp_fflags": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "`[lsp.fflags]`, Luau's own feature flags. Luau ships a change behind a flag long before the flag flips, so a server that reads only the defaults reads an older Luau than the one it links. They apply in order: every flag on, then this table's overrides, then the two values larvae cannot work without, so a later step wins.",
+      "properties": {
+        "enable_by_default": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": false,
+          "description": "Turn on every Luau analysis flag that Luau does not mark experimental. luau-lsp defaults this on; larvae defaults it off, because larvae ships one pinned Luau and the same binary to everyone, so a flag that misbehaves misbehaves for every user at once."
+        },
+        "enable_new_solver": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": false,
+          "description": "Turn on Luau's new type solver."
+        },
+        "over": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "One value per flag name, which wins over the two switches above. The value is text because Luau keeps a boolean list and an integer list, and the name decides which one is asked: \"true\" and \"120\" are both written the same way. The editor spells this `override`, which is a Rust keyword."
+        }
+      }
+    },
+    "lsp_bytecode": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "`[lsp.bytecode]`, how the analyzer would compile. Nothing reads these yet. They are here because the editor extension sends them, and a setting the server drops is worse than one it stores: the user changes it, nothing happens, and nothing says why.",
+      "properties": {
+        "debug_level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2,
+          "default": 1,
+          "description": "0 none, 1 lines, 2 lines and locals."
+        },
+        "type_info_level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 1,
+          "description": "0 none, 1 the types the compiler knows."
+        },
+        "vector_lib": {
+          "type": "string",
+          "default": "Vector3",
+          "description": "The library a vector literal comes from, for a project with its own."
+        },
+        "vector_ctor": {
+          "type": "string",
+          "default": "new"
+        },
+        "vector_type": {
+          "type": "string",
+          "default": "Vector3"
         }
       }
     }

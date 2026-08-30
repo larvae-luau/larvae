@@ -11,7 +11,8 @@ whitespace, and every comment must stay.
 use larvae::fmt::config::{
     CallParens, CallStyle, CollapseSimpleStatement, FunctionCall, FunctionDeclaration, IfExpansion,
     IfExpression, IfPlacement, IfStyle, IndentType, LineEndings, ListExpansion, PreferConst,
-    QuoteStyle, SpaceAfterFunctionNames, TableTypes, TypeSeparator, UnusedImports,
+    PropertyOrder, QuoteStyle, SortTableTypes, SpaceAfterFunctionNames, TableTypes, TypeExpansion,
+    TypeOperators, TypeSeparator, UnusedImports,
 };
 use larvae::fmt::{FmtConfig, format};
 
@@ -1992,6 +1993,444 @@ fn an_author_wrapped_short_alias_collapses() {
         fmt("type T = {\n\tx: number,\n\ty: number,\n}\n"),
         "type T = { x: number, y: number }\n"
     );
+}
+
+// --- the order of the properties of a table type -------------------------
+
+fn sorted(order: PropertyOrder, indexer_first: bool) -> FmtConfig {
+    FmtConfig {
+        sort_table_types: SortTableTypes {
+            order,
+            indexer_first,
+        },
+        ..Default::default()
+    }
+}
+
+/// Mixed name lengths, two ties, and an indexer that the author left in the middle.
+const ROW: &str = "type Row = { id: string, [number]: any, description: string, hp: number, mana: number, name: string }\n";
+
+/// The default reorders nothing. A formatter must not move code nobody asked it to move.
+#[test]
+fn the_property_order_of_the_author_is_the_default() {
+    assert_eq!(
+        fmt(ROW),
+        "type Row = {\n\tid: string,\n\t[number]: any,\n\tdescription: string,\n\thp: number,\n\tmana: number,\n\tname: string,\n}\n"
+    );
+}
+
+/// The shortest name first, and two of one length in alphabetical order.
+#[test]
+fn ascending_sorts_the_shortest_name_first() {
+    assert_eq!(
+        fmt_with(ROW, sorted(PropertyOrder::Ascending, true)),
+        "type Row = {\n\t[number]: any,\n\thp: number,\n\tid: string,\n\tmana: number,\n\tname: string,\n\tdescription: string,\n}\n"
+    );
+}
+
+/// The longest name first, and a tie still breaks alphabetically.
+#[test]
+fn descending_sorts_the_longest_name_first() {
+    assert_eq!(
+        fmt_with(ROW, sorted(PropertyOrder::Descending, true)),
+        "type Row = {\n\t[number]: any,\n\tdescription: string,\n\tmana: number,\n\tname: string,\n\thp: number,\n\tid: string,\n}\n"
+    );
+}
+
+/*
+The toggle decides where an indexer lands, and it only shows under
+`descending`. An indexer names nothing, so it measures zero and `ascending`
+puts it first either way.
+*/
+#[test]
+fn the_indexer_toggle_decides_where_an_indexer_lands() {
+    let ascending = fmt_with(ROW, sorted(PropertyOrder::Ascending, true));
+
+    assert_eq!(
+        fmt_with(ROW, sorted(PropertyOrder::Ascending, false)),
+        ascending
+    );
+
+    assert_eq!(
+        fmt_with(ROW, sorted(PropertyOrder::Descending, false)),
+        "type Row = {\n\tdescription: string,\n\tmana: number,\n\tname: string,\n\thp: number,\n\tid: string,\n\t[number]: any,\n}\n"
+    );
+}
+
+/// A short table sorts on its one line too.
+#[test]
+fn a_flat_table_type_sorts_as_well() {
+    assert_eq!(
+        fmt_with(
+            "type S = { name: string, id: number }\n",
+            sorted(PropertyOrder::Ascending, true)
+        ),
+        "type S = { id: number, name: string }\n"
+    );
+}
+
+/*
+A comment holds its table still.
+
+The emitter prints a type that holds a comment exactly as the author wrote
+it, because a token replay has no position to put a comment back. So the
+sort cannot separate a comment from the property it sits on, and it leaves
+the table alone instead.
+*/
+#[test]
+fn a_comment_holds_the_properties_of_its_table_where_they_are() {
+    let src = "type C = {\n\t-- the id of the row\n\tidentifier: string,\n\tx: number,\n}\n";
+
+    assert_eq!(fmt_with(src, sorted(PropertyOrder::Ascending, true)), src);
+    assert_eq!(fmt_with(src, sorted(PropertyOrder::Descending, true)), src);
+}
+
+/*
+A field the sort cannot read leaves the whole table as written. The element
+type of `{ string }` names nothing, and a key written as a string carries
+quotes that no name length compares against.
+*/
+#[test]
+fn a_field_with_no_name_leaves_its_table_as_written() {
+    let cfg = sorted(PropertyOrder::Ascending, true);
+
+    assert_eq!(
+        fmt_with("type A = { string }\n", cfg.clone()),
+        "type A = { string }\n"
+    );
+
+    let quoted = "type Q = { [\"a b\"]: number, zz: string }\n";
+
+    assert_eq!(fmt_with(quoted, cfg), quoted);
+}
+
+/// `read` and `write` qualify a name, so they travel with the property.
+#[test]
+fn a_read_or_write_modifier_travels_with_its_property() {
+    assert_eq!(
+        fmt_with(
+            "type M = { read identifier: string, write hp: number, [string]: any }\n",
+            sorted(PropertyOrder::Ascending, true)
+        ),
+        "type M = { [string]: any, write hp: number, read identifier: string }\n"
+    );
+}
+
+/// A property named `read` is a name and not a modifier. The `:` after it says which.
+#[test]
+fn a_property_named_read_sorts_under_that_name() {
+    assert_eq!(
+        fmt_with(
+            "type K = { abcdef: boolean, write: string, read: number }\n",
+            sorted(PropertyOrder::Ascending, true)
+        ),
+        "type K = { read: number, write: string, abcdef: boolean }\n"
+    );
+}
+
+/// The sort reads the fields the table type layout finds, so `enabled = false` stops it.
+#[test]
+fn the_sort_needs_the_table_type_layout() {
+    let cfg = FmtConfig {
+        table_types: TableTypes {
+            enabled: false,
+            ..Default::default()
+        },
+        sort_table_types: SortTableTypes {
+            order: PropertyOrder::Ascending,
+            indexer_first: true,
+        },
+        ..Default::default()
+    };
+
+    let src = "type O = { description: string, id: number }\n";
+
+    assert_eq!(fmt_with(src, cfg), src);
+}
+
+/*
+Every setting must format its own output to itself, and the output must be in
+the same language as the input. A sort that is not a fixed point would move a
+property on every run.
+*/
+#[test]
+fn every_property_order_is_idempotent_and_parses() {
+    let sources = [
+        ROW,
+        "type S = { name: string, id: number }\n",
+        "type A = { string }\n",
+        "type Q = { [\"a b\"]: number, zz: string }\n",
+        "type C = {\n\t-- a note\n\tid: string,\n\tx: number,\n}\n",
+        "type M = { read identifier: string, write hp: number, [string]: any }\n",
+        "type N = { inner: { deep: boolean, a: number }, other: Gamma }\n",
+        "local x: { name: string, id: number } = t\n",
+        "local function f(a: { name: string, id: number })\nend\n",
+        "local x = y :: { name: string, id: number }\n",
+    ];
+
+    let mut configs = Vec::new();
+
+    for order in [
+        PropertyOrder::None,
+        PropertyOrder::Ascending,
+        PropertyOrder::Descending,
+    ] {
+        for indexer_first in [true, false] {
+            for column_width in [40, 120] {
+                configs.push(FmtConfig {
+                    column_width,
+                    sort_table_types: SortTableTypes {
+                        order,
+                        indexer_first,
+                    },
+                    ..Default::default()
+                });
+            }
+        }
+    }
+
+    for src in sources {
+        for cfg in &configs {
+            let once = fmt_with(src, cfg.clone());
+            let twice = fmt_with(&once, cfg.clone());
+
+            assert_eq!(once, twice, "unstable for {src:?}");
+
+            let lexed = larvae::syntax::lexer::lex(&once)
+                .unwrap_or_else(|e| panic!("{src:?} gave unlexable output, {}", e.message));
+
+            larvae::syntax::parser::parse(&once, &lexed.toks)
+                .unwrap_or_else(|e| panic!("{src:?} gave unparsable output, {}", e.message));
+
+            for line in once.lines() {
+                assert_eq!(line, line.trim_end(), "trailing whitespace from {src:?}");
+            }
+        }
+    }
+}
+
+// --- unions and intersections --------------------------------------------
+
+fn operators(expand: TypeExpansion) -> FmtConfig {
+    FmtConfig {
+        type_operators: TypeOperators { expand },
+        ..Default::default()
+    }
+}
+
+const LONG_UNION: &str =
+    "type Long = AlphaAlphaAlpha | BetaBetaBetaBeta | GammaGammaGamma | DeltaDeltaDelta\n";
+
+/// `auto` is the layout larvae always had: one line, past the column and all.
+#[test]
+fn auto_replays_a_chain_on_one_line() {
+    assert_eq!(fmt(LONG_UNION), LONG_UNION);
+
+    let narrow = FmtConfig {
+        column_width: 40,
+        ..Default::default()
+    };
+
+    assert_eq!(fmt_with(LONG_UNION, narrow), LONG_UNION);
+}
+
+/// `always` gives every member a line, with the operator leading it.
+#[test]
+fn always_opens_every_member_under_its_operator() {
+    assert_eq!(
+        fmt_with(
+            "type U = Alpha | Beta | Gamma\n",
+            operators(TypeExpansion::Always)
+        ),
+        "type U =\n\t| Alpha\n\t| Beta\n\t| Gamma\n"
+    );
+}
+
+/// The same option covers an intersection. One shape takes one setting.
+#[test]
+fn always_opens_an_intersection_too() {
+    assert_eq!(
+        fmt_with(
+            "type I = { a: number } & { b: string }\n",
+            operators(TypeExpansion::Always)
+        ),
+        "type I =\n\t& { a: number }\n\t& { b: string }\n"
+    );
+}
+
+/// Every position a type takes gets the same layout.
+#[test]
+fn always_reaches_every_type_position() {
+    let cfg = operators(TypeExpansion::Always);
+
+    for src in [
+        "local x: Alpha | Beta = nil\n",
+        "local function f(a: Alpha | Beta)\nend\n",
+        "local function f(): Alpha | Beta\n\treturn nil\nend\n",
+        "local x = y :: Alpha | Beta\n",
+    ] {
+        let out = fmt_with(src, cfg.clone());
+
+        assert!(out.contains("| Alpha\n"), "{src} gave {out}");
+        assert!(out.contains("| Beta"), "{src} gave {out}");
+    }
+}
+
+/// A chain inside a member follows the option at that level as well.
+#[test]
+fn a_nested_chain_opens_with_its_parent() {
+    assert_eq!(
+        fmt_with(
+            "type N = { inner: Alpha | Beta } | nil\n",
+            operators(TypeExpansion::Always)
+        ),
+        "type N =\n\t| {\n\t\tinner:\n\t\t\t| Alpha\n\t\t\t| Beta,\n\t}\n\t| nil\n"
+    );
+}
+
+/*
+`never` holds the line over `table_types.width`. The same source opens the
+table under the default, which is what the option overrides.
+*/
+#[test]
+fn never_holds_one_line_over_the_table_type_width() {
+    let src = "type W = { alpha: number, beta: string, gamma: boolean, delta: Vector3 } | nil\n";
+
+    assert_eq!(fmt_with(src, operators(TypeExpansion::Never)), src);
+
+    assert_eq!(
+        fmt(src),
+        "type W = {\n\talpha: number,\n\tbeta: string,\n\tgamma: boolean,\n\tdelta: Vector3,\n} | nil\n"
+    );
+}
+
+/// `column_width` outranks `never`, so a line that cannot fit opens anyway.
+#[test]
+fn column_width_outranks_never() {
+    let cfg = FmtConfig {
+        column_width: 40,
+        type_operators: TypeOperators {
+            expand: TypeExpansion::Never,
+        },
+        ..Default::default()
+    };
+
+    assert_eq!(
+        fmt_with(LONG_UNION, cfg),
+        "type Long =\n\t| AlphaAlphaAlpha\n\t| BetaBetaBetaBeta\n\t| GammaGammaGamma\n\t| DeltaDeltaDelta\n"
+    );
+}
+
+/// A chain that fits keeps its line under `never`, and the members join with one space.
+#[test]
+fn never_keeps_a_chain_that_fits_on_its_line() {
+    let src = "type U = Alpha | Beta | Gamma\n";
+
+    assert_eq!(fmt_with(src, operators(TypeExpansion::Never)), src);
+}
+
+/*
+Luau allows a leading `|`, and an opened chain writes one. So the second
+pass reads a chain the first pass wrote and reaches the same members.
+*/
+#[test]
+fn a_leading_operator_reads_as_the_chain_it_opens() {
+    let src = "type L = | Alpha | Beta\n";
+
+    assert_eq!(
+        fmt_with(src, operators(TypeExpansion::Always)),
+        "type L =\n\t| Alpha\n\t| Beta\n"
+    );
+
+    assert_eq!(
+        fmt_with(src, operators(TypeExpansion::Never)),
+        "type L = Alpha | Beta\n"
+    );
+}
+
+/// An operator inside `<>` or `()` belongs to no chain of this level.
+#[test]
+fn an_operator_inside_brackets_opens_nothing() {
+    let cfg = operators(TypeExpansion::Always);
+
+    for src in [
+        "type G = Map<Alpha | Beta, Gamma>\n",
+        "type P = (Alpha | Beta)?\n",
+    ] {
+        assert_eq!(fmt_with(src, cfg.clone()), src, "{src}");
+    }
+}
+
+/*
+Every setting of both options must format its own output to itself, and the
+output must be in the same language as the input.
+*/
+#[test]
+fn every_type_layout_is_idempotent_and_parses() {
+    let sources = [
+        ROW,
+        LONG_UNION,
+        "type U = Alpha | Beta | Gamma\n",
+        "type L = | Alpha | Beta\n",
+        "type I = { a: number } & { b: string }\n",
+        "type N = { inner: Alpha | Beta, other: Gamma } | nil\n",
+        "type W = { alpha: number, beta: string, gamma: boolean, delta: Vector3 } | nil\n",
+        "type A = { string }\n",
+        "type C = {\n\t-- a note\n\tid: string,\n\tx: number,\n}\n",
+        "type M = { read identifier: string, write hp: number, [string]: any }\n",
+        "local x: Alpha | Beta = nil\n",
+        "local function f(a: Alpha | Beta): Gamma | Delta\n\treturn a\nend\n",
+        "local x = y :: Alpha | Beta\n",
+        "type Fn = (a: number) -> string | nil\n",
+        "type G = Map<string, Set<number>> | Alpha\n",
+    ];
+
+    let mut configs = Vec::new();
+
+    for order in [
+        PropertyOrder::None,
+        PropertyOrder::Ascending,
+        PropertyOrder::Descending,
+    ] {
+        for indexer_first in [true, false] {
+            for expand in [
+                TypeExpansion::Auto,
+                TypeExpansion::Always,
+                TypeExpansion::Never,
+            ] {
+                for column_width in [40, 120] {
+                    configs.push(FmtConfig {
+                        column_width,
+                        sort_table_types: SortTableTypes {
+                            order,
+                            indexer_first,
+                        },
+                        type_operators: TypeOperators { expand },
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+    }
+
+    for src in sources {
+        for cfg in &configs {
+            let once = fmt_with(src, cfg.clone());
+            let twice = fmt_with(&once, cfg.clone());
+
+            assert_eq!(once, twice, "unstable for {src:?}");
+
+            let lexed = larvae::syntax::lexer::lex(&once)
+                .unwrap_or_else(|e| panic!("{src:?} gave unlexable output, {}", e.message));
+
+            larvae::syntax::parser::parse(&once, &lexed.toks)
+                .unwrap_or_else(|e| panic!("{src:?} gave unparsable output, {}", e.message));
+
+            for line in once.lines() {
+                assert_eq!(line, line.trim_end(), "trailing whitespace from {src:?}");
+            }
+        }
+    }
 }
 
 // --- classes and export by value -----------------------------------------

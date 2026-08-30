@@ -51,14 +51,31 @@ pub struct Settings {
     pub fmt: String,
     /// The resolved lint levels, by lint name
     pub lint: String,
+    /*
+    The root of the project, as an absolute path.
+
+    A worm that reads a file of its own resolves it against this. The
+    working directory cannot answer that question: `larvae process` runs in
+    the project and the editor server runs wherever the editor started it,
+    so a worm that read a relative path found its config for one and not the
+    other. The luaux worm did, and its `luaux.toml` went missing in the
+    editor: every markup file then compiled with the default library name
+    and every require of one gave an error type.
+    */
+    pub root: String,
 }
 
 impl Settings {
     /// The settings a project resolved, for the worms it loads
-    pub fn new(fmt: &crate::fmt::FmtConfig, lint: &crate::lint::LintConfig) -> Self {
+    pub fn new(
+        fmt: &crate::fmt::FmtConfig,
+        lint: &crate::lint::LintConfig,
+        root: &std::path::Path,
+    ) -> Self {
         Self {
             fmt: serde_json::to_string(fmt).unwrap_or_default(),
             lint: serde_json::to_string(&lint.rules).unwrap_or_default(),
+            root: root.to_string_lossy().into_owned(),
         }
     }
 }

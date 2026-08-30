@@ -443,6 +443,27 @@ fn a_one_line_guard_is_not_two_statements() {
 #[test]
 fn unused_variable_catches_a_local_nothing_reads() {
     assert!(fires("unused_variable", "local x = 1\n"));
+}
+
+/*
+An unused require is its own lint, split from `unused_variable`.
+
+The fix differs: an unused variable hides a possible bug around it, an
+unused import is a leftover and the fix is to delete the line. A method
+named require belongs to something else and stays a variable.
+*/
+#[test]
+fn an_unused_require_is_an_unused_import() {
+    assert!(fires("unused_import", "local x = require('./util')\n"));
+    assert!(!fires("unused_variable", "local x = require('./util')\n"));
+
+    assert!(!fires(
+        "unused_import",
+        "local x = require('./util')\nprint(x)\n"
+    ));
+
+    assert!(fires("unused_variable", "local x = t.require(1)\n"));
+    assert!(!fires("unused_import", "local x = t.require(1)\n"));
 
     // A `local function` is `unused_function` now, as the Luau compiler has it.
     assert!(fires("unused_function", "local function helper() end\n"));
@@ -2205,8 +2226,9 @@ fn every_type_position_counts_as_a_use() {
 /// A require that no type and no code uses is still reported.
 #[test]
 fn a_name_no_type_uses_is_still_unused() {
+    // A required binding reports as `unused_import` since the split.
     assert!(fires(
-        "unused_variable",
+        "unused_import",
         "const jecs = require(\"@pkg/jecs\")\ntype T = { e: string }\n"
     ));
 }

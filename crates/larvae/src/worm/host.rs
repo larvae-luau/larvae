@@ -553,6 +553,13 @@ impl WasmWorm {
             self.free(rls)?;
         }
 
+        /*
+        The wasm form takes the two JSON blobs and not the root.
+
+        Its `accept` is a fixed arity in the ABI, so a third pair would
+        break every worm built against it. No wasm worm reads a file of its
+        own today, and the native form is the one that does.
+        */
         if let Some(accept) = self.settings {
             let fmt = self.push(settings.fmt.as_bytes())?;
             let lint = self.push(settings.lint.as_bytes())?;

@@ -61,6 +61,7 @@ run_order = 1                            # where our rules sit relative to worms
 target = "roblox-string"                 # or "path" (Lune), or "roblox-instance"
 strict = false                           # missing target file becomes an error
 instance_input = true                    # read require(script.Parent.X) as input
+client_relative_requires = false         # write a require inside StarterPlayer as ./ or ../
 # sourcemap = "sourcemap.json"           # Rojo's file to instance map, when you have one
 
 # Only when target = "roblox-instance": how emitted chains index children.
@@ -341,6 +342,7 @@ tree_shake = true                        # drop the modules the entry never reac
 [minify]
 column_span = 120                        # break the line near this column, so line numbers stay useful
 rename_variables = false                 # short local names while minifying; same rule as [rules] rename_variables
+obfuscate = false                        # dense whatever generator says: no types, _0x names, strings as \xNN bytes, one line
 
 
 # --- lsp ---------------------------------------------------------------------

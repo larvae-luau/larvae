@@ -6,6 +6,28 @@ Notable changes land here. Format follows
 
 ## Unreleased
 
+### Beyond luau-lsp
+
+The server tracks luau-lsp feature for feature. The points below have no
+counterpart there:
+
+- Worms extend the server itself. A worm lowers the modules it claims,
+  so `require("./data.json")` and a `.luaux` component carry real types.
+  A worm transforms hover, completions, and diagnostics before the
+  editor sees them, and lints plain Luau with its own rules. luau-lsp
+  has no extension point inside the server.
+- larvae's own lints run beside Luau's diagnostics, with levels up to
+  deny, in the editor and in `larvae lint` alike.
+- The dialect is served, not tolerated: `const` and `export local`
+  parse, type, and hover in the author's own words.
+- The oop worm holds the privacy line: an underscore or `@private`
+  member neither completes nor passes the lint outside its class.
+- `Player.Character` types as a real rig, R15 or R6, each part with its
+  own class and no cast.
+- The formatter lives in the same server: format follows `[fmt]`, and a
+  completion that rewrites `t.Jump Force` into bracket access keeps the
+  project's quote style.
+
 ### Added
 
 - larvae-lsp, the language server binary with Luau's analysis frontend
@@ -49,12 +71,96 @@ Notable changes land here. Format follows
 - A nightly workflow that keeps the analyzer's inputs current: it moves
   the Luau submodule pin when upstream releases and refreshes the
   vendored Roblox global types, each as a pull request that CI validates
+- The instance tree of the rojo sourcemap, as types. Each node becomes a
+  declared type, and each file learns the name of its own. The server binds
+  `script` per module, because `script` names a different instance in every
+  file. So `script.Providers`, `script.Parent.Config`, and
+  `game.ReplicatedStorage.Packages` resolve. A card reads the class of the
+  instance, ex: `ModuleScript`, and not the name the generator made up. A
+  file that a worm claims joins the tree beside the files rojo mapped: rojo
+  writes the extensions it knows, and the build makes a module of a
+  `.luaux` all the same. A folder that holds only claimed files joins
+  too: rojo omits the whole folder, so the server synthesizes its node,
+  and the children hang from it. `[lsp] sourcemap` names the file. A rewrite of it
+  reloads the tree on the next request
+- Completions inside `require("...")`. The list holds the aliases of
+  `.luaurc` and of `larvae.toml`, then `@self/`, `@game/`, and the two
+  relative marks. Under one of those it holds the directories and the files.
+  Every file is offered, and not only Luau. A worm that claims `.json`
+  gives the type of a data file. A file that no worm claims is offered too,
+  because a require of it reports an unsupported path, which is a truer
+  answer than an empty list. The list comes from the filesystem, so it
+  answers while the type session is still loading
+- Luau's own error number on a type diagnostic. The editor shows it as
+  `Luau(1061)` and links it to the page that explains the checker, which is
+  what luau-lsp shows
+- `R15Character` and `R6Character`, larvae's own types beside the Roblox
+  globals, in a definitions file the nightly refresh never touches. Each
+  carries the parts of its rig, typed as their real classes, and stays a
+  `Model` through the intersection. `[lsp] character_type` picks what
+  `Player.Character` types to: `r15` by default, `r6`, or `not_set` for
+  the union, so `local character: R15Character = player.Character` needs
+  no cast and `player.Character.` offers the body parts
+- `[lsp] analyzer`, the switch back to the classic server. Off serves what
+  larvae always served: the lints, the format, the code actions, and the
+  outline, on claimed and plain files alike, while the Luau parity goes
+  quiet and the session is never built. On mid-session builds it then
+- The comment an author wrote reaches the card. A `--- ` line or a
+  `--[[ ]]` block above a declaration renders under the type, on the
+  definition and on every use, across a require, with moonwave tags
+  formatted the way luau-lsp formats them: `@param` and `@return` become
+  their sections, and a plain `-- ` line stays code
+- `Instance.new` answers with the class the string names, so
+  `Instance.new("Part")` is a `Part` and its methods read as the class a
+  reader is looking at
+- A type position offers the project's own types. The list capped at 256
+  entries out of an unordered map, so the generated instance-tree names
+  crowded a file's own aliases out at random. The generated names are
+  hidden, the cap holds a full scope, and a type entry carries the kind
+  luau-lsp gives one
+- The Roblox reference under the type on a hover card, and on a completion.
+  The trimmed database ships with the binary: 3.7MB of JSON, 438KB deflated,
+  inflated on the thread that builds the session. Luau names the page for a
+  member and for a global, and a local or a type reference answers with the
+  page of its class, which is what the reader is looking at either way
+- A completion carries what luau-lsp sends: the type as the detail, the
+  argument names as the label detail, the reference or the comment above the
+  declaration as the documentation, the parentheses of a call as the
+  insertion, and the deprecated tag. The order is luau-lsp's too, and it is
+  the answer Luau gives rather than a guess from the kind: an entry that fits
+  the type the position expects comes first, which is what puts the props of
+  a component above the whole global scope
+- The root of the project reaches a worm at init, so a worm resolves a file
+  of its own against it. A host older than the field sends nothing and the
+  working directory stays the fallback
+- `larvae/bytecode` and `larvae/compilerRemarks`, the two compiled views a
+  reader asks for. The editor sends a document and an optimization level,
+  `[lsp.bytecode]` supplies the rest, and a claimed file compiles through its
+  worm's lowering, because that is the Luau the place receives. luau-lsp
+  serves the same two views under its own prefix
+
 
 - `[lsp]`, the table for the editor server. `enabled = false` answers every
   request with nothing, so another server owns the files. `claim_only =
   true` serves only the files that worms claim, empty diagnostics and
   declined requests for the rest, so stock luau-lsp can own the plain Luau
   of a project while larvae serves the claimed files beside it
+
+- A double click accepts an inlay hint into the file. The edit writes
+  the whole type, so a label the display truncated still accepts what
+  it stands for. A hint whose text is display notation and not syntax,
+  ex: `@metatable` or a type Luau's printer cut off, stays display
+  only, and a parameter name never inserts, because a call site has no
+  written form for one
+- Hovering an inlay hint answers with the same card as hovering the
+  name it annotates, through `inlayHint/resolve`. A hint on a linted
+  require showed the lint alone, because an editor never sends a hover
+  for the hint's own pixels
+- A types-only module says what it is for. A require of a module that
+  returns `{ }` and carries `export type` lines hinted and hovered as
+  the empty table, which is true and says nothing. The card and the
+  hint read `{ type PlayerData, type Slot }` instead. The view is
+  display speech, not type syntax, so a double click never writes it
 
 ### Changed
 
@@ -80,6 +186,305 @@ Notable changes land here. Format follows
   alone, and a statement inside a `fmt off` region is never removed. A removal
   keeps every comment around it: a formatter may rewrite code and may not
   delete prose
+- `[minify] obfuscate`, off by default. On, every emitted file prints through
+  the dense emitter whatever `generator` says, with three changes: every type
+  is gone, every local takes a name from `_0x0` upward, and every string
+  literal becomes the `\xNN` form of its own bytes. The file lands on one line,
+  because `obfuscate` sets the column span to unlimited. A project that wrote
+  its own `[minify] column_span` keeps that number, the same way an explicit
+  key beats an implied one everywhere else. Roblox has no `loadstring`, so a
+  file cannot ship as a decoded blob: it has to be Luau the compiler reads, and
+  hiding the names, the strings, and the shape is what obfuscation can be. A
+  backtick string stays whole, because splitting its static text from its holes
+  means implementing interpolation twice and a wrong split is a broken build;
+  the names inside a hole are pinned instead of renamed. With `[bundle]` set,
+  the bundle output gets the same treatment, because a bundle prints through
+  the generator like any file
+- The last two inlay hint kinds: `function_return_types` draws what an
+  unannotated function returns, after its parameter list, and
+  `parameter_names` draws the name of each parameter before the argument
+  that fills it, on literal arguments or on all of them. The skips are
+  luau-lsp's: an argument spelled like its parameter stays bare, compared
+  case folded, and a platform call a handler refines names nothing, so no
+  `className:` in front of every `game:GetService` line. The variables of
+  a `for ... in` hint their types before the `in` keyword
+- Module auto-imports. Every module of the workspace offers itself by
+  its stem, and accepting one writes the require above the first real
+  statement, in the quote `[fmt] quote_style` keeps and the style
+  `[lsp.completion.imports] require_style` picks: `auto` writes an alias
+  where one covers the module, `always_absolute` writes the `@game`
+  path, and `nearest_absolute` takes the shortest stable anchor. The
+  service auto-import reads the same quote setting
+- A renamed file offers to carry its requires along. The server matches
+  every spec that named the old place, rewrites each in the form it was
+  written in, and asks with one dialog before anything applies
+- `.config.luau` speaks its own shape: the keys typecheck, complete,
+  and error at the file's own bytes, with every lint name spelled out
+- The data worm narrows a matched string to its literal:
+  `[worms.data.config] force_string_singletons` maps a file glob to
+  value globs, and `"kind"` lowers as `"kind" :: "kind"`
+- A doc fence hides a line that starts with `$`, on hover and on
+  completion docs alike; prose keeps its dollars
+- `unused_import`, split from `unused_variable` and warn by default: a
+  require bound to a name nothing reads is a leftover, and the fix is
+  always to delete the line. A method named require stays a variable
+- `[lsp.inlay_hints] update_delay`: the hints hold still while the
+  author types, follow their lines as edits move them, and recompute
+  once after the pause
+- A key a dot cannot reach rewrites itself into brackets on accept:
+  `Jump Force` after `t.` writes `t["Jump Force"]`, in the quote
+  `[fmt] quote_style` keeps, and the dot the author typed goes with it
+- Deprecated uses draw a strikethrough in the file, from Luau's own
+  linter, as hints that raise no squiggle. The completion list already
+  struck them through; `[lsp.completion] hide_deprecated` drops them
+  from the list whole, and stays off by default. Where the platform
+  marks a use, larvae's own `deprecated` finding stands down, so a
+  name the project deprecated itself still gets larvae's message
+- `ScopedInstanceIdentity` carries `ResolveInstance`, patched over the
+  dump's stub until upstream ships the real shape
+- `[bundle] module_ids = "opaque"` numbers the modules of a bundle instead
+  of naming their paths. A path id reads well in an error and also ships
+  the whole project layout: every file, package, and vendor directory in a
+  table key anyone who reads the bundle can read, and obfuscation alone
+  hex-escapes those bytes without changing them. Numbers, not hashes, on
+  purpose: a hash of a path is deterministic, so a list of likely paths
+  recovers the names, and a number carries nothing to recover. The
+  numbering follows the sorted paths, so a rebundle emits the same bytes
+- `export local x = 3` parses, types, and hovers. The syntax is Luau's,
+  behind its LuauExportValueSyntax flag, and larvae turns the flag on
+  because the dialect owns the spelling; `[lsp.fflags]` with
+  `LuauExportValueSyntax = "false"` restores stock parsing, and the
+  keyword then hovers as the error it is. A hover on `export`, `local`,
+  or `const` answers with the declaration itself, and the card speaks
+  the author's words: `export local test: number`, `const t: number`,
+  never a bare `local` for a binding the author spelled otherwise
+- `[lsp.<worm>]` holds the editor settings of one worm: `[lsp.oop]`
+  `hide_private_completions = false` reaches the oop worm as config.
+  Each key checks against the `[options]` the worm declares, so a typo,
+  a wrong type, or a name that is no worm warns instead of doing
+  nothing. An unknown `[lsp]` key warns the same way now, where it used
+  to refuse the whole config at parse
+- Instance-form requires resolve: `require(script.Parent.Widget)`,
+  `require(game.ReplicatedStorage.App)`, and the call spellings
+  `GetService`, `FindFirstChild`, and `WaitForChild`. The chain maps
+  through the same mounts that answer `@game`, one hop at a time, the
+  way Luau traces it. A worm-claimed target lowers as it does for a
+  string require, so a `.luaux` component or a data file types through
+  the chain too
+- Worms reach the files they do not claim. A worm that sets `lints_luau`
+  in its manifest runs its Lint op over every plain Luau file, after the
+  builtin lints and on the same levels and suppressions. A claiming worm
+  that sets `shared` under `[frontend]` consents to the same for its own
+  files: the foreign worm reads the byte-true Luau shadow, so a finding
+  lands on the author's line. The oop worm is the first reader: its
+  class conventions hold in `.luau` files and in shared `.luaux` files
+  alike, while resolve and respond hooks already served both
+- The server runs the sourcemap generator itself, so the map follows
+  every file the project adds or moves, and `script.Parent.` completes
+  on a file made a minute ago. `[lsp] sourcemap_command` names the
+  generator for any sync tool, run through the shell in the project
+  root; empty infers rojo from `[lsp] rojo_project_file` and runs
+  `rojo sourcemap --watch`. `[lsp] sourcemap_autogenerate` turns the
+  whole thing off. A generator that does not start is said once and
+  costs the autogeneration alone. The generator and everything it
+  started die with the server, on Unix even when the editor kills it
+
+### Changed
+
+- Every child of the character rigs is optional: `["Left Arm"]` is
+  `Part?` now, the Humanoid and its Animator too. A part can be
+  destroyed, detached, or not yet streamed in, and a guaranteed type
+  hid the nil the runtime can hand back
+
+### Fixed
+
+- An edit crosses files without a restart. `./test2` resolved to
+  `Data/./test2.luau`, the frontend keys modules by the path string, and
+  the same file lived as two modules: the open buffer under the clean
+  name, the disk text under the dotted one. A require read the disk
+  twin, so removing the `return` of a module never reached the file
+  requiring it until a restart. Resolved paths now fold `.` and `..`
+  away. The dotted twins also duplicated whole package graphs, each
+  checked on its own, which is where the slow session and the long
+  `Loading...` spells came from
+- The `Loading...` hover card stops coloring its dots; the fence is
+  plain text now, because luau read `...` as its vararg token
+- A member hover carries its name: `t.hp` answers `hp: number` where it
+  answered `number` alone, which no theme colored. The name goes on for
+  member accesses and keys; every card that already starts with its own
+  keyword keeps its words
+- The editor reports a cross-realm require, the same finding `larvae
+  check` reports and with the same words: the resolver validation runs
+  over every open file, on the string forms and the instance forms
+  alike. The require compiles and resolves, so the analyzer was content
+  and only the build ever said anything
+
+- A read from inside a type is a token index, as every other read is. It was
+  the byte offset of the token, so `Binding::reads` held two units at once the
+  moment a type named a binding. `shadowing` compares a read against the token
+  span of the declaration that hides it, and a byte offset that lands in that
+  range silences a real finding. Nine lines reproduce it
+- `@game` resolves in the editor from a file the DataModel map does not cover.
+  The spec is absolute and reads nothing from the file that writes it, but it
+  went through the `.luaurc` alias branch, where it resolved only if the
+  project defined a name called `game`. It answers before the alias lookup
+  now, through the mount table the pipeline already builds, so the editor and
+  `larvae process` read one require the same way. A `.luaurc` that defines
+  `game` still wins. This is the larvae half of luau-lsp#1598
+- The settings of the editor reach the server. `[lsp]` was copied over the
+  whole table, so a project with any `larvae.toml` threw away every setting
+  the user made in the editor. That included the names the file says nothing
+  about. The project wins the names it spells, and only those, which is the
+  rule the config always stated
+- `[lsp.fflags] enable_new_solver` builds the session under the new solver.
+  The flags went in after the session existed. A Luau flag decides which
+  solver the globals are registered under, so the setting did nothing. The
+  build starts once the project is read, and the flags go in first. A file
+  that writes `f<<T>>()` or `setmetatable<A, B>` needs this: the old solver
+  reports `Cannot instantiate type parameters on something without type
+  parameters` for code that is correct
+- A require of a file that no worm claims resolves to nothing, and Luau
+  reports an unsupported path. It resolved to the file, and the analyzer
+  read the JSON as Luau. The first brace became a syntax error, inside a
+  file the author cannot see
+- The type session reaches the editor by itself. The server took it on the
+  next request that needed one, so a file opened before the load finished
+  kept its parser-only findings until the author typed. The landing is an
+  event of the loop now. The session arrives, the config applies to it, and
+  every open document is checked again
+- The flags, the DataModel map, and the worm hooks reach the session that a
+  thread built. They applied while the analyzer did not exist, so they
+  applied to nothing. `@game` resolved to nothing, and a worm that claims a
+  file answered no require in the editor
+- A worm pool that fails to build says why. One worm whose name does not
+  match its manifest took every worm with it, in silence. The files of a
+  working worm went back to being read as Luau, and its requires reported as
+  unknown. The message names the reason. It repeats only when the reason
+  changes
+- The analyzer builds on Windows and macOS. Four of the six release legs
+  could not have produced a working library: the seal step was GNU only.
+  The archiver and the driver now come from the build's own toolchain, and
+  each platform names and links the library its own way
+- A hover on an unchanged file reads the cached check. Every hover marked
+  the module dirty through its open, so the next check rebuilt it from
+  nothing, which read as the types reloading for no reason
+- A completion never reads a type whose arena is gone. Luau's autocomplete
+  frees its local arena before it returns, so an entry's type can point into
+  freed memory; the documentation path followed one into a crash. The
+  session now gathers the arenas it still owns after the check, and reads
+  nothing outside them. Size assertions on both sides of the FFI structs
+  keep a one-sided edit from shipping again
+- The hover card says `Loading...` while the type session is still being
+  built. It said `...`, which says nothing to the person who reads it
+- A message the server cannot read as a request is skipped inside the read.
+  `None` used to mean both "the stream ended" and "this body did not parse",
+  and the loop read the second as the first: one response from the editor
+  was a clean shutdown. The server sends `workspace/inlayHint/refresh` now,
+  so responses arrive
+- The editor redraws its inlay hints when the session lands and when a
+  setting changes. The hints on screen were drawn before there were types,
+  and nothing else makes the editor ask again
+- `variable_types` and `parameter_types` gate their own hints. Both kinds
+  render as a type hint of the protocol, so only the collector can tell a
+  local's hint from a parameter's, and the settings now reach it
+- The sourcemap reloads when its file or its `[lsp] sourcemap` path changes,
+  and not on every configuration message. Each re-read declared the whole
+  tree into the global scope again
+- A worm reads a file of its own against the root of the project. The luaux
+  worm reads `luaux.toml` that way, and the working directory answered for
+  `larvae process` and not for the editor: the file went missing, every
+  markup file compiled with the default factory name, and a require of one
+  gave an error type while the same require built correctly
+- A comment holds prose, and prose has no type. Every word of a doc comment
+  hovered as the type of whatever stood under it, because the lookup answers
+  for the innermost node that holds the position and a comment inside a table
+  is held by that table
+- A method reads as the type of the receiver the author wrote.
+  `game:GetService` read as `ServiceProvider:GetService` and
+  `player:IsDescendantOf` read as `Instance:IsDescendantOf`, which is where
+  each is declared and not what the reader is looking at
+- A signature prints a named type by its name. `self: World` became the whole
+  of `World` inlined, and `ClientImp & { ... }` lost the half a reader can
+  recognise. A card for a value still expands what it holds
+- A call names the signature it was declared with. `table.create<V>(count,
+  value)` read as `table.create(count: number, value: nil)`, because the
+  recorded type of the expression is the one the call solved
+- An alias carries its parameters: `type Entity<T = nil>`, and not
+  `type Entity`, which says nothing about where `T` comes from
+- A local on the left of an assignment answers from the scope. `SendSize =
+  Save.Size` records no type for the name it writes to, so the card showed
+  the function the line stands in
+- A keyword inside a function answers with that function, as luau-lsp does,
+  and the card goes out unnamed. It carried the name of whatever the cursor
+  was on, which read as a function that does not exist
+- The Luau flags go back to their startup values when a test that changed
+  them ends. They are global to the process, so the flag tests decided what
+  every later test in the same binary inferred, and every hover test failed
+  when the whole suite ran
+- `[fmt.sort_table_types]`, which orders the properties of a table type by the
+  length of their names. `order` takes `none`, `ascending` or `descending`, and
+  `none` is the default: a formatter must not reorder code nobody asked it to
+  reorder. Two names of one length sort alphabetically, so the output does not
+  depend on the order of the input. `indexer_first` puts an indexer such as
+  `[number]: any` above the named properties, because it states the shape of
+  every key instead of one key. This reaches a type position only, so a value
+  table keeps the order the author wrote. Two limits: a table type that holds a
+  comment stays as written, because a token replay has no position to put a
+  comment back, and the sort reads the fields the table type layout finds, so
+  `table_types.enabled = false` leaves every order alone
+- `[fmt.type_operators] expand`, which lays out a union and an intersection in
+  every position a type takes. One option covers `|` and `&`, because they
+  share one shape. `auto` is the default and it is the layout larvae always
+  had, byte for byte: the operator breaks no line, so a long chain runs past
+  `column_width`. `always` puts every member on a line of its own, with the
+  operator leading the line, which is the position a long binary chain already
+  gives its operator. `never` holds one line whatever `table_types.width` says
+  about a table inside the chain, and opens one member per line only where the
+  line passes `column_width`. So the order is `column_width` first, then
+  `type_operators`, then `table_types.width`
+- The new solver builds one globals table, not two. The second table
+  serves the old solver's autocomplete, and the new solver never reads
+  it, so the session loaded the platform types twice for nothing. The
+  first hover card lands at 2.4 seconds where it landed at 19
+- A require offer narrows as the author types. The offers carried no
+  edit range, so the editor guessed a word range with no `@` in it,
+  filtered `@shared/` against `sh`, and closed the list. Every offer
+  now carries the edit and the filter text that match what was typed
+- Editing a claimed data file updates the types that read it. The
+  analyzer kept the module it built from the old text, so a hover on a
+  require of the file answered the old shape until a restart. Publishing
+  a claimed file invalidates its module, and the next check rebuilds
+  every dependent
+- A flag override before the first snapshot poisoned the reset: the
+  snapshot was taken after the change and the reset put the change back.
+  In the tests, the first flag test decided the solver for every later
+  session in the binary. Every write path snapshots first now
+- A hint no longer repeats the binding's own name. Luau names a table
+  type after the binding that holds it, so `const EmptyStats = { ... }`
+  drew a hint of `: EmptyStats`, which says nothing
+- `game:GetService("X")` answers with the sourcemap's service, children
+  and all, so `ReplicatedStorage.Shared` resolves the way
+  `game.ReplicatedStorage.Shared` always did
+- Every binding of a multi-return call hints its type, and a hint
+  survives the old solver's empty scopes by reading the value expression
+- A claimed hover reaches the worm with the analyzer's answer, so a
+  component hover carries the signature the element calls and follows it
+  when it changes
+- A data file offers no Luau completions: a ctrl-space in a `.toml`
+  answered with the Luau global scope, which is noise in a file that
+  holds no code
+- With the analyzer landed, a syntax error is reported once, in Luau's
+  own words
+- A repeated member of a union or intersection says its name once: two
+  different tree nodes both spelling `Folder` drew `Folder | Folder`
+- A zero-argument function reads `()` across modules. The exported pack
+  collapses to a bare hidden variadic, and the vendored stringifier
+  printed it as `(...any)`; the build applies a display patch until
+  upstream hides the bare form the way it hides the wrapped one
+- A worm-lowered module checks strict, a claimed edit reflects before
+  the save, and a refused lowering says why at the require that names it
+- A signature popup ends where the parameters end, and a component's
+  attribute list holds props alone
 
 ## 0.6.0 - 2026-08-21
 

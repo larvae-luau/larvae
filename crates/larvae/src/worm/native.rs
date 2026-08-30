@@ -56,6 +56,8 @@ enum Request<'a> {
         fmt: &'a str,
         /// The resolved lint levels of the project, as JSON
         lint: &'a str,
+        /// The root of the project, so a worm resolves its own paths
+        root: &'a str,
     },
     /// Turn a claimed file into Luau
     Transform {
@@ -226,6 +228,7 @@ impl NativeWorm {
             doc_version: proto::DOC_VERSION,
             fmt: &settings.fmt,
             lint: &settings.lint,
+            root: &settings.root,
         })?;
 
         Ok(())

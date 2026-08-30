@@ -48,6 +48,16 @@ pub struct Resolver<'a> {
     is correct.
     */
     pub claimed: &'a [String],
+    /*
+    `[requires] client_relative_requires`: write a require inside the
+    StarterPlayer tree as a relative path.
+
+    Roblox clones a Starter container per player, so the script that runs is
+    a copy and the DataModel path names the template. A relative require
+    walks the tree the copy sits in, which is the one form that holds after
+    the clone. See [`emit::Resolver::emit_roblox_string`].
+    */
+    pub client_relative_requires: bool,
 }
 
 /// The context for one file, computed once
@@ -187,6 +197,80 @@ impl<'a> Resolver<'a> {
         );
 
         Rewrite::Keep
+    }
+}
+
+/*
+A resolver over a project that exists only as a mount table.
+
+The realm rules and the emitted form both read the DataModel and never the
+disk, so a test states the tree in one place and calls the resolver. The
+fixture lives here because [`validate`] and [`emit`] both build one.
+*/
+#[cfg(test)]
+pub(super) mod fixture {
+    use super::*;
+    use crate::requires::datamodel::Mount;
+
+    pub(crate) struct Project {
+        mounts: MountTable,
+        aliases: HashMap<String, String>,
+        luaurc: LuaurcIndex,
+        claimed: Vec<String>,
+    }
+
+    impl Project {
+        /// A shared, a server and two client mounts, which covers every realm pair
+        pub(crate) fn new() -> Self {
+            let mount = |fs: &str, dm: &[&str]| Mount {
+                fs: fs.into(),
+                dm: dm.iter().map(|s| (*s).to_string()).collect(),
+            };
+
+            Self {
+                mounts: MountTable::new(vec![
+                    mount("/proj/src/shared", &["ReplicatedStorage", "shared"]),
+                    mount("/proj/src/server", &["ServerScriptService"]),
+                    mount(
+                        "/proj/src/client",
+                        &["StarterPlayer", "StarterPlayerScripts", "App"],
+                    ),
+                    mount(
+                        "/proj/src/ui",
+                        &["StarterPlayer", "StarterPlayerScripts", "Ui"],
+                    ),
+                    mount("/proj/src/gui", &["StarterGui"]),
+                ]),
+                aliases: HashMap::new(),
+                luaurc: LuaurcIndex::default(),
+                claimed: Vec::new(),
+            }
+        }
+
+        pub(crate) fn resolver(&self, client_relative_requires: bool) -> Resolver<'_> {
+            Resolver {
+                root: Path::new("/proj"),
+                toml_aliases: &self.aliases,
+                luaurc: &self.luaurc,
+                mounts: &self.mounts,
+                target: Target::RobloxString,
+                style: IndexingStyle::default(),
+                quote: '"',
+                strict: false,
+                claimed: &self.claimed,
+                client_relative_requires,
+            }
+        }
+
+        /// The requiring file, which the mounts place in the DataModel
+        pub(crate) fn ctx<'a>(&self, path: &'a Path) -> FileCtx<'a> {
+            FileCtx::new(
+                path,
+                &self.mounts,
+                Target::RobloxString,
+                IndexingStyle::default(),
+            )
+        }
     }
 }
 

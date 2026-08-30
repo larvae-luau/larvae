@@ -64,6 +64,21 @@ fn install() -> Result<ExitCode> {
     let bin_dir = paths::bin_dir()?;
     let target = paths::installed_exe()?;
 
+    /*
+    A debug install works, and says what it costs.
+
+    Installing a work-in-progress build is the development loop, so it is
+    not refused. The cost still deserves one line: the editor server runs
+    every keystroke, and the debug profile serves each one about twenty
+    times slower, which reads as larvae being broken when the line is
+    missing.
+    */
+    if cfg!(debug_assertions) {
+        eprintln!(
+            "note: installing a debug build; the editor server runs about twenty times slower than a release build"
+        );
+    }
+
     if let Some(tool) = paths::managing_tool(&me) {
         eprintln!(
             "note: {tool} already manages this binary, a copy in {} may shadow it on PATH",
@@ -84,9 +99,101 @@ fn install() -> Result<ExitCode> {
         ui::print_success(&format!("Installed larvae to {}", target.display()));
     }
 
+    install_server(&me, &bin_dir);
     add_to_path(&bin_dir);
 
     Ok(ExitCode::SUCCESS)
+}
+
+/*
+Put the language server beside `larvae`, with the library it needs.
+
+The editor extension looks for `larvae-lsp` next to the binary it resolved,
+so a release that installs one and not the other gives a user the fallback
+server: lint and format, no hover, no completion.
+
+The analyzer lives in a shared library, and the server finds it through an
+rpath of `$ORIGIN`, which is the directory the server sits in. So the library
+travels with it. A server installed without the library does not fall back,
+it refuses to start:
+
+```text
+larvae-lsp: error while loading shared libraries: libeclipse_analysis.so
+```
+
+The editor then restarts it five times and gives up, which is a worse
+failure than not installing the server at all.
+
+A silent skip is right when a file is not there. A build without the analyzer
+has the server and no library, `larvae lsp` still runs, and a user who
+installed the CLI alone has not done anything wrong.
+*/
+fn install_server(me: &Path, bin_dir: &Path) {
+    let Some(from) = me.parent() else {
+        return;
+    };
+
+    let server = format!("larvae-lsp{}", std::env::consts::EXE_SUFFIX);
+
+    if !from.join(&server).is_file() {
+        return;
+    }
+
+    /*
+    The library is named the way the platform names one. The server's build
+    script writes a `.so` today, and the constants keep this right if it
+    ever writes the other two.
+    */
+    let library = format!(
+        "{}eclipse_analysis{}",
+        std::env::consts::DLL_PREFIX,
+        std::env::consts::DLL_SUFFIX
+    );
+
+    /*
+    A server without the analyzer never replaces one that has it.
+
+    The workspace builds larvae-lsp without the feature for its tests, so a
+    featureless binary sits beside larvae after any test run. Installing it
+    silently took hover and completion away from the editor, and nothing
+    said why. The analyzer build carries the shim's exported names; the
+    check reads for one of them.
+    */
+    let sibling = from.join(&server);
+
+    if sibling.is_file() && !file_mentions(&sibling, b"larvae_session_new") {
+        eprintln!(
+            "note: larvae-lsp beside this binary was built without the analyzer, so the installed server is kept"
+        );
+        eprintln!("      a test run builds that form; build the real one with:");
+        eprintln!("          cargo build -p larvae-lsp --features analyzer          (debug)");
+        eprintln!("          cargo build --release -p larvae-lsp --features analyzer (release)");
+
+        return;
+    }
+
+    for name in [server.as_str(), library.as_str()] {
+        let source = from.join(name);
+
+        if !source.is_file() {
+            continue;
+        }
+
+        let target = bin_dir.join(name);
+
+        if paths::same_file(&source, &target) {
+            continue;
+        }
+
+        match replace_exe(&source, &target) {
+            Ok(()) => ui::print_success(&format!("Installed {name} to {}", target.display())),
+
+            // The CLI is on disk and works; the message says what was lost.
+            Err(e) => eprintln!(
+                "note: could not install {name}, the editor falls back to `larvae lsp`: {e:#}"
+            ),
+        }
+    }
 }
 
 /*
@@ -327,6 +434,15 @@ Put the bin directory on PATH. On Windows, the command writes the registry.
 Unix shells differ too much for a safe profile edit without user consent, so
 the command prints the line instead.
 */
+/// True when the file holds the byte string, read in one pass
+fn file_mentions(path: &Path, needle: &[u8]) -> bool {
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+
+    bytes.windows(needle.len()).any(|w| w == needle)
+}
+
 fn add_to_path(bin_dir: &Path) {
     let on_path = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).any(|entry| entry == bin_dir))

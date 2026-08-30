@@ -657,7 +657,16 @@ impl<'a> Binder<'a> {
             let name = self.tok(i);
 
             if let Some(b) = self.lookup(name) {
-                self.out.bindings[b].reads.push(self.toks[i as usize].start);
+                /*
+                A token index, which is what `reads` holds everywhere else.
+
+                This pushed the byte offset of the token, and `reads` mixes
+                the two units the moment a type reads a name. `shadowing`
+                compares a read against the token span of a declaration, so
+                a byte offset that happens to fall inside that span silences
+                a real finding. A nine line file reproduces it.
+                */
+                self.out.bindings[b].reads.push(i);
             }
         }
     }
@@ -674,7 +683,6 @@ impl<'a> Binder<'a> {
     fn interp_reads(&mut self, span: TokSpan) {
         let tok = &self.toks[span.start as usize];
         let text = tok.text(self.src);
-        let base = tok.start;
 
         let bytes = text.as_bytes();
         let mut i = 0;
@@ -710,7 +718,12 @@ impl<'a> Binder<'a> {
                     let name = &text[start..i];
 
                     if let Some(b) = self.lookup(name) {
-                        self.out.bindings[b].reads.push(base + start as u32);
+                        /*
+                        The whole string is one token, so the name inside it
+                        has no index of its own. The string's index is the
+                        honest answer, and it keeps `reads` in one unit.
+                        */
+                        self.out.bindings[b].reads.push(span.start);
                     }
                 }
 
@@ -969,5 +982,73 @@ mod tests {
 
         assert!(names.bindings[0].is_ignored());
         assert!(!names.bindings[1].is_ignored());
+    }
+
+    /*
+    Every read is a token index, whatever kind of read it is.
+
+    `read` pushed a token index while `type_reads` pushed the byte offset of
+    the token, so `reads` held two units at once the moment a type named a
+    binding. Nothing noticed while only the length was read. `shadowing`
+    reads more than the length: it asks whether a use sits inside the token
+    span of the declaration that hides it, and a byte offset that lands in
+    that range silences a real finding.
+
+    The file below is the smallest case found. The outer `x` is read by the
+    type on line 2, and the inner `local x` sits where its token span covers
+    that byte number.
+    */
+    #[test]
+    fn a_read_from_a_type_is_a_token_index() {
+        let src = "local x = {}\n\
+                   type T = x.U\n\
+                   local f1 = 1\n\
+                   local f2 = 1\n\
+                   do\n\tlocal x = 1\n\tprint(x)\nend\n\
+                   return nil :: T?\n";
+
+        let r = parse(src);
+        let names = r.names();
+
+        let outer = &names.bindings[0];
+
+        assert_eq!(outer.name, "x");
+        assert_eq!(outer.reads.len(), 1, "the type reads it");
+
+        /*
+        The declaration of the inner `x` must not contain the read. With a
+        byte offset it did, and `shadowing` went quiet.
+        */
+        let inner = names
+            .bindings
+            .iter()
+            .find(|b| b.name == "x" && !std::ptr::eq(*b, outer))
+            .expect("the inner x");
+
+        let read = outer.reads[0];
+
+        assert!(
+            read < inner.declared_in.start || read >= inner.declared_in.end,
+            "a read of the outer x reads as though it sits inside the \
+             declaration that hides it: read {read}, declaration {:?}",
+            inner.declared_in
+        );
+    }
+
+    /// A name inside a backtick hole carries the index of the string that holds it.
+    #[test]
+    fn a_read_from_an_interpolation_is_a_token_index() {
+        let src = "local name = \"a\"\nprint(`hello {name}`)\n";
+        let r = parse(src);
+        let names = r.names();
+
+        assert_eq!(names.bindings[0].name, "name");
+        assert_eq!(names.bindings[0].reads.len(), 1);
+
+        // A token index is small; the byte offset of that hole is not.
+        assert!(
+            (names.bindings[0].reads[0] as usize) < r.lexed.toks.len(),
+            "the read is not a token index"
+        );
     }
 }

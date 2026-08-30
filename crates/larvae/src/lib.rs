@@ -11,6 +11,7 @@ pub mod generate;
 pub mod lint;
 pub mod lsp;
 pub mod net;
+pub mod obfuscate;
 pub mod pipeline;
 pub mod project;
 pub mod requires;

@@ -24,7 +24,7 @@ jobs:
       - name: rustfmt
         run: cargo fmt --all --check
       - name: clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
     name: Test (${{ matrix.os }})
@@ -43,17 +43,54 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build
-        run: cargo build --all-targets
+        run: cargo build --workspace --all-targets
       - name: Unit & integration tests
-        run: cargo test
+        run: cargo test --workspace
       - name: Parser conformance
-        # corpus round trip, coverage, mutation and truncation sweeps
-        run: cargo test -p larvae --test parser
+        # corpus round trip, coverage, mutation and truncation sweeps. The
+        # suite moved to eclipse_luau with the parser it exercises.
+        run: cargo test -p eclipse_luau --test parser
 
       - name: Parser agrees with Luau
         # Recorded verdicts of the real Luau parser, so this needs no Luau.
         # scripts/parser_oracle.sh makes the recording and checks it again.
         run: cargo test -p larvae --test parser_oracle
+
+  # The shim only compiles where someone builds with the feature, and nothing
+  # else in CI does. Without this job the C++ could stop compiling and every
+  # check would stay green until a release tried to build it.
+  analyzer:
+    name: Analyzer build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: analyzer
+      - name: Build larvae-lsp with the vendored Luau
+        run: cargo build -p larvae-lsp --features larvae-lsp/analyzer
+
+      - name: The server answers with the analyzer capabilities
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          body='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":null}}'
+          printf 'Content-Length: %d\r\n\r\n%s' "${#body}" "$body" \
+            | target/debug/larvae-lsp > caps.txt || true
+
+          for want in hoverProvider completionProvider signatureHelpProvider inlayHintProvider; do
+            if ! grep -q "\"$want\"" caps.txt; then
+              echo "the analyzer build does not advertise $want" >&2
+              cat caps.txt >&2
+              exit 1
+            fi
+          done
+
+          echo "the analyzer build advertises every capability that needs it"
 
   smoke:
     name: CLI smoke test

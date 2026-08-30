@@ -7,10 +7,16 @@ repository = "https://github.com/larvae-luau/larvae"
 homepage = "https://github.com/larvae-luau/larvae"
 description = "The larvae language server, with Luau's analysis frontend behind a feature"
 
+[dev-dependencies]
+tempfile = "3"
+
 [dependencies]
 anyhow = "1"
+# The vendored Roblox reference ships deflated; 438KB rather than 3.7MB.
+flate2 = "1"
 larvae = { path = "../larvae" }
 json5 = "0.4"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [build-dependencies]

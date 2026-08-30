@@ -50,24 +50,45 @@ jobs:
         include:
           # asset is what `self update` looks for, it is larvae-{os}-{arch}
           # spelled exactly as std::env::consts reports them at runtime
+          # `analyzer` builds the vendored Luau C++ into larvae-lsp. It is on
+          # wherever the runner can produce that target's C++. A target that
+          # turns it off still ships a server: `larvae lsp` lints and formats,
+          # and the editor falls back to it. Turning one off is one line here
+          # and costs that platform hover and completion, not the release.
           - asset: larvae-linux-x86_64
             target: x86_64-unknown-linux-musl
             runs-on: ubuntu-latest
+            analyzer: true
+            native: true
           - asset: larvae-linux-aarch64
             target: aarch64-unknown-linux-musl
             runs-on: ubuntu-24.04-arm
+            analyzer: true
+            native: true
           - asset: larvae-macos-x86_64
             target: x86_64-apple-darwin
             runs-on: macos-latest
+            analyzer: true
+            native: false
           - asset: larvae-macos-aarch64
             target: aarch64-apple-darwin
             runs-on: macos-latest
+            analyzer: true
+            native: true
           - asset: larvae-windows-x86_64
             target: x86_64-pc-windows-msvc
             runs-on: windows-latest
+            analyzer: true
+            native: true
+          # The runner is x86_64 and the target is not, so this one asks MSVC
+          # to cross compile the whole Luau tree. It is the least proven of the
+          # six; turn it off here if it breaks and the platform keeps the
+          # fallback server.
           - asset: larvae-windows-aarch64
             target: aarch64-pc-windows-msvc
             runs-on: windows-latest
+            analyzer: true
+            native: false
     runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v4
@@ -88,6 +109,9 @@ jobs:
       # because JavaScript actions do not run in an Alpine container on an
       # arm runner. The explicit --target keeps proc macros off crt-static,
       # which is the documented alpine quirk.
+      # Both packages are named outright. A bare `cargo build` follows
+      # `default-members`, and a release that silently stopped building the
+      # server would look exactly like a release that built it.
       - name: Build
         if: contains(matrix.target, 'musl')
         run: |
@@ -95,23 +119,79 @@ jobs:
             set -eu
             apk add --no-cache g++ make
             rustup target add ${{ matrix.target }} >/dev/null 2>&1 || true
-            cargo build --release --locked --target ${{ matrix.target }}
+            cargo build --release --locked --target ${{ matrix.target }} \
+              -p larvae -p larvae-lsp ${{ matrix.analyzer && '--features larvae-lsp/analyzer' || '' }}
           '
 
       - name: Build
         if: ${{ !contains(matrix.target, 'musl') }}
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        run: >
+          cargo build --release --locked --target ${{ matrix.target }}
+          -p larvae -p larvae-lsp
+          ${{ matrix.analyzer && '--features larvae-lsp/analyzer' || '' }}
+
+      # A server that answers hover proves the C++ actually went in. Without
+      # this the analyzer feature could quietly stop compiling in and every
+      # release after would ship the fallback while the build stayed green.
+      #
+      # Only a binary the runner can execute is probed. Two of the six are
+      # built for another architecture, and those rely on the build itself
+      # failing when the C++ does not cross compile.
+      - name: Check the server carries the analyzer
+        if: ${{ matrix.analyzer && matrix.native }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="target/${{ matrix.target }}/release/larvae-lsp${{ runner.os == 'Windows' && '.exe' || '' }}"
+
+          body='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":null}}'
+          printf 'Content-Length: %d\r\n\r\n%s' "${#body}" "$body" | "$BIN" > caps.txt || true
+
+          if ! grep -q '"hoverProvider"' caps.txt; then
+            echo "larvae-lsp was built without the analyzer: no hoverProvider" >&2
+            cat caps.txt >&2
+            exit 1
+          fi
+
+          echo "the analyzer is in: hoverProvider is advertised"
 
       # The archive takes the asset name, the binary inside keeps its own, so
       # `self update` knows what to pull out no matter which one it downloaded.
+      # Both binaries travel together. The editor extension looks for
+      # `larvae-lsp` beside the `larvae` it resolved, and an archive with only
+      # the CLI gives every user the fallback server. `self update` picks
+      # `larvae` out by its exact name, so the second file does not confuse it.
       - name: Package
         if: runner.os != 'Windows'
-        run: zip -j -9 "${{ matrix.asset }}.zip" "target/${{ matrix.target }}/release/larvae"
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="target/${{ matrix.target }}/release"
+
+          # The analyzer lives in a shared library that the server finds
+          # through an rpath of $ORIGIN, so it has to be in the archive with
+          # it. Without it the server does not fall back, it refuses to
+          # start, and the editor gives up after five restarts.
+          FILES=("$OUT/larvae" "$OUT/larvae-lsp")
+
+          for lib in "$OUT"/libeclipse_analysis.*; do
+            [ -e "$lib" ] && FILES+=("$lib")
+          done
+
+          zip -j -9 "${{ matrix.asset }}.zip" "${FILES[@]}"
+          unzip -l "${{ matrix.asset }}.zip"
 
       - name: Package
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path "target\${{ matrix.target }}\release\larvae.exe" -DestinationPath "${{ matrix.asset }}.zip"
+        run: |
+          $out = "target\${{ matrix.target }}\release"
+          $files = @("$out\larvae.exe", "$out\larvae-lsp.exe")
+          $files += (Get-ChildItem "$out\*eclipse_analysis*" -ErrorAction SilentlyContinue).FullName
+
+          Compress-Archive -DestinationPath "${{ matrix.asset }}.zip" -Path $files
+          Expand-Archive -Path "${{ matrix.asset }}.zip" -DestinationPath check -Force
+          Get-ChildItem check
 
       - uses: actions/upload-artifact@v4
         with:

@@ -61,6 +61,7 @@ pub fn run(
         &root.join(&entry),
         &resolved.graph,
         config.bundle.tree_shake,
+        config.bundle.module_ids,
     )?;
     let mut diags = std::mem::take(&mut plan.diags);
     let mut modules = Vec::new();

@@ -36,6 +36,22 @@ pub struct RequiresConfig {
 
     #[serde(default)]
     pub indexing_style: Option<IndexingStyle>,
+
+    /*
+    Write a require inside the StarterPlayer tree as a relative path.
+
+    Roblox clones a Starter container into each player, so the script that
+    runs is a copy and a DataModel path names the template it came from. A
+    relative require walks the tree the copy sits in, so a script in
+    PlayerScripts reaches its siblings after the clone.
+
+    The default is off, because it lowers the floor of a relative walk from
+    the mount to the container, and a project that splits StarterPlayerScripts
+    over two mounts asked for that split. A shared file that requires client
+    code is still an error, with the setting on or off.
+    */
+    #[serde(default)]
+    pub client_relative_requires: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -85,6 +101,7 @@ impl Default for RequiresConfig {
             instance_input: true,
             overrides: None,
             indexing_style: None,
+            client_relative_requires: false,
         }
     }
 }

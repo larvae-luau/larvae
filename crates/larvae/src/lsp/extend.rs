@@ -83,9 +83,23 @@ pub fn code_actions(worms: &Pool, uri: &str, text: &str, range: &Value) -> Vec<V
             appears on the problem and not in a general list.
             */
             if let Some(lint) = &action.fixes {
+                /*
+                A diagnostic requires its range and its message, or the
+                editor's client throws converting it and the whole code
+                action reply is lost. The range of the first edit is where
+                the fix lands, which is where the finding sits.
+                */
+                let at = action
+                    .edits
+                    .first()
+                    .map(|edit| lines.range(text, edit.span))
+                    .unwrap_or_else(|| lines.range(text, (span.0, span.0)));
+
                 out["diagnostics"] = json!([{
+                    "range": at,
                     "source": "larvae",
                     "code": format!("{worm}.{lint}"),
+                    "message": format!("a finding of {worm}.{lint}"),
                 }]);
             }
 
