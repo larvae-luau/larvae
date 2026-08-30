@@ -4,6 +4,21 @@ Notable changes land here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow
 [semver](https://semver.org/spec/v2.0.0.html).
 
+## 0.7.2 - 2026-08-30
+
+### Added
+
+- `larvae analyze`: type diagnostics in the terminal, from the same
+  analyzer the editor runs. The session mirrors the editor's, so the
+  platform globals, the worms' lowering, the mounts, and the sourcemap
+  tree all hold, and the diagnostics carry Luau's own error numbers.
+  Errors fail the run. The analyzer lives in larvae-lsp, so the command
+  finds that binary and hands the arguments over
+- `[lsp] definitions` names extra type definition files, loaded after
+  the platform globals, in the editor and under `larvae analyze` alike.
+  `--definitions` adds to the list per run, and the extension mirrors
+  the key. luau-lsp users know the idea as definitionFiles
+
 ## 0.7.1 - 2026-08-30
 
 ### Fixed

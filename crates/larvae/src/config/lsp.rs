@@ -114,6 +114,15 @@ pub struct LspConfig {
     pub sourcemap_command: String,
 
     /*
+    Extra type definition files, loaded into the analyzer after the
+    platform globals. Paths are relative to the root of the project.
+    `larvae analyze --definitions` adds to this list, and luau-lsp
+    users know the same idea as `types.definitionFiles`.
+    */
+    #[serde(default)]
+    pub definitions: Vec<String>,
+
+    /*
     The editor settings of the worms: `[lsp.oop]` holds the settings of
     the worm named oop. The keys are free here because each worm
     declares its own under `[options]` in its manifest; the server

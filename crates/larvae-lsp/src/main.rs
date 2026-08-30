@@ -16,6 +16,17 @@ mod resolve;
 
 fn main() -> std::process::ExitCode {
     /*
+    `analyze` runs the analyzer once and prints, no server involved.
+    `larvae analyze` spawns this binary with the same arguments, because
+    the analyzer is compiled in here and not into the CLI.
+    */
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    if args.first().map(String::as_str) == Some("analyze") {
+        return analyze(&args[1..]);
+    }
+
+    /*
     The session is built on a thread, because Luau's type definitions take a
     few seconds to load and the editor should not wait for them.
 
@@ -53,4 +64,37 @@ fn main() -> std::process::ExitCode {
             std::process::ExitCode::FAILURE
         }
     }
+}
+
+#[cfg(feature = "analyzer")]
+fn analyze(args: &[String]) -> std::process::ExitCode {
+    let run = || -> anyhow::Result<std::process::ExitCode> {
+        let opts = larvae::commands::analyze::parse(args)?;
+
+        // The flags go in before the session exists, as the server orders it.
+        let lsp = larvae::commands::analyze::lsp_config(&opts)?;
+        analyzer::apply_flags(&lsp.fflags);
+
+        let analysis =
+            Box::new(analyzer::LuauAnalysis::new()) as Box<dyn larvae::lsp::analysis::Analysis>;
+
+        larvae::commands::analyze::engine(analysis, &opts)
+    };
+
+    match run() {
+        Ok(code) => code,
+
+        Err(e) => {
+            eprintln!("larvae analyze: {e:#}");
+
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(not(feature = "analyzer"))]
+fn analyze(_args: &[String]) -> std::process::ExitCode {
+    eprintln!("larvae analyze: this build carries no analyzer");
+
+    std::process::ExitCode::FAILURE
 }

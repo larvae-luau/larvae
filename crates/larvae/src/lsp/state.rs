@@ -256,6 +256,13 @@ impl Server {
             self.lsp.sourcemap_command = text.to_owned();
         }
 
+        if let Some(list) = editor(&["definitions"]).as_array() {
+            self.lsp.definitions = list
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect();
+        }
+
         /*
         Both spellings of each value are read, because the editor writes
         camelCase and the project file writes snake_case, and a value is
@@ -380,6 +387,8 @@ impl Server {
         }
 
         mark("flags");
+        self.load_user_definitions(out)?;
+        mark("user definitions");
         self.link_studio(out)?;
         mark("studio link");
 
@@ -577,6 +586,59 @@ impl Server {
     generator that does not start is said once and costs the
     autogeneration alone.
     */
+    /*
+    The definition files of the project, into the analyzer.
+
+    `[lsp] definitions` names them, relative to the root. They load
+    after the platform globals and before any file checks, so the
+    session types against them the way luau-lsp types against its
+    definitionFiles. A file that cannot be read warns and costs itself
+    alone.
+    */
+    fn load_user_definitions(&mut self, out: &mut impl Write) -> Result<()> {
+        if self.lsp.definitions.is_empty() {
+            return Ok(());
+        }
+
+        let Some(root) = self.root.clone() else {
+            return Ok(());
+        };
+
+        let mut analysis = self.analysis.borrow_mut();
+
+        let Some(analysis) = analysis.as_mut() else {
+            return Ok(());
+        };
+
+        let mut complaints = Vec::new();
+
+        for entry in &self.lsp.definitions {
+            let path = root.join(entry);
+
+            let text = match std::fs::read_to_string(&path) {
+                Ok(text) => text,
+
+                Err(e) => {
+                    complaints.push(format!("[lsp] definitions: cannot read {entry}: {e}"));
+
+                    continue;
+                }
+            };
+
+            if !analysis.definitions(&format!("@user/{entry}"), &text) {
+                complaints.push(format!(
+                    "[lsp] definitions: Luau refused {entry}; it is skipped"
+                ));
+            }
+        }
+
+        for complaint in complaints {
+            warn(out, &complaint)?;
+        }
+
+        Ok(())
+    }
+
     pub(super) fn ensure_sourcemap_watch(&mut self, out: &mut impl Write) -> Result<()> {
         let wanted = self
             .root

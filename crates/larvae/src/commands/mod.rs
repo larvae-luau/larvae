@@ -1,3 +1,4 @@
+pub mod analyze;
 pub mod bundle;
 pub mod check;
 pub mod code;

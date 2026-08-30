@@ -2303,6 +2303,14 @@
           "default": "",
           "description": "The command that generates the sourcemap, run through the shell in the project root. Empty infers rojo: with a rojo project file in the root, larvae runs rojo sourcemap --watch; without one, nothing runs. A project on another sync tool names its own generator here, ideally one that watches."
         },
+        "definitions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra type definition files, loaded into the analyzer after the platform globals. Paths are relative to the root of the project. larvae analyze --definitions adds to this list."
+        },
         "completion": {
           "$ref": "#/$defs/lsp_completion"
         },

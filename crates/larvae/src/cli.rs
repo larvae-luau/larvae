@@ -102,6 +102,18 @@ enum Command {
         config: Option<PathBuf>,
     },
 
+    /// Type diagnostics in the terminal, from the editor's analyzer
+    Analyze {
+        /// Files or directories; the default is the input of the project
+        paths: Vec<PathBuf>,
+        /// Extra type definition files, on top of [lsp] definitions
+        #[arg(long)]
+        definitions: Vec<PathBuf>,
+        /// Path to larvae.toml (defaults to ./larvae.toml when present)
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+
     /// Serve diagnostics and formatting to an editor over stdio
     Lsp,
 
@@ -212,6 +224,16 @@ fn run() -> Result<ExitCode> {
             explain,
             config,
         } => commands::lint::run(&root, paths, stdin, stdin_filepath, explain, config),
+
+        Command::Analyze {
+            paths,
+            definitions,
+            config,
+        } => commands::analyze::spawn(&commands::analyze::Options {
+            paths,
+            definitions,
+            config,
+        }),
 
         Command::Lsp => {
             crate::lsp::run()?;
