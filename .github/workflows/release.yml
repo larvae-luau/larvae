@@ -193,7 +193,11 @@ jobs:
         run: |
           $out = "target\${{ matrix.target }}\release"
           $files = @("$out\larvae.exe", "$out\larvae-lsp.exe")
-          $files += (Get-ChildItem "$out\*eclipse_analysis*" -ErrorAction SilentlyContinue).FullName
+
+          # A platform without the analyzer has no library, and appending
+          # the empty lookup puts a null in the list Compress-Archive reads.
+          $lib = Get-ChildItem "$out\*eclipse_analysis*" -ErrorAction SilentlyContinue
+          if ($lib) { $files += $lib.FullName }
 
           Compress-Archive -DestinationPath "${{ matrix.asset }}.zip" -Path $files
           Expand-Archive -Path "${{ matrix.asset }}.zip" -DestinationPath check -Force
