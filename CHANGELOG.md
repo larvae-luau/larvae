@@ -282,6 +282,12 @@ counterpart there:
 
 ### Fixed
 
+- The editor reports a cross-realm require, the same finding `larvae
+  check` reports and with the same words: the resolver validation runs
+  over every open file, on the string forms and the instance forms
+  alike. The require compiles and resolves, so the analyzer was content
+  and only the build ever said anything
+
 - A read from inside a type is a token index, as every other read is. It was
   the byte offset of the token, so `Binding::reads` held two units at once the
   moment a type named a binding. `shadowing` compares a read against the token

@@ -1734,6 +1734,72 @@ while True:
 }
 
 /*
+The editor reports a cross-realm require, the same one `larvae check`
+reports.
+
+The require compiles and resolves, so the analyzer is content, and the
+build was the only reader that said anything. A client file requiring
+server code now squiggles in the open file too.
+*/
+#[test]
+fn a_cross_realm_require_squiggles() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+
+    for file in ["src/client/main.luau", "src/server/net.luau"] {
+        let path = dir.path().join(file);
+        std::fs::create_dir_all(path.parent().expect("a parent")).expect("makes it");
+        std::fs::write(&path, "return {}\n").expect("writes");
+    }
+
+    let mut server = Server {
+        root: Some(dir.path().to_path_buf()),
+        ..Default::default()
+    };
+
+    server.mounts = crate::requires::datamodel::MountTable::new(vec![
+        crate::requires::datamodel::Mount {
+            fs: dir.path().join("src/client"),
+            dm: vec![
+                "StarterPlayer".into(),
+                "StarterPlayerScripts".into(),
+                "Client".into(),
+            ],
+        },
+        crate::requires::datamodel::Mount {
+            fs: dir.path().join("src/server"),
+            dm: vec!["ServerScriptService".into()],
+        },
+    ]);
+
+    let uri = format!("file://{}/src/client/main.luau", dir.path().display());
+    server.documents.insert(
+        uri.clone(),
+        "local net = require('../server/net')\nreturn net\n".into(),
+    );
+
+    let text = published(&server, &uri).to_string();
+
+    assert!(
+        text.contains("cross_realm_require") && text.contains("does not replicate"),
+        "the crossing never published: {text}"
+    );
+
+    // The legal direction stays quiet.
+    let uri = format!("file://{}/src/server/main.luau", dir.path().display());
+    server.documents.insert(
+        uri.clone(),
+        "local net = require('./net')\nreturn net\n".into(),
+    );
+
+    let text = published(&server, &uri).to_string();
+
+    assert!(
+        !text.contains("cross_realm_require"),
+        "the server side is allowed to require its own: {text}"
+    );
+}
+
+/*
 `[lsp.<worm>]` reaches the worm as config, checked against its options.
 
 The worm declares what it takes under `[options]`; a key outside that

@@ -153,6 +153,11 @@ impl Server {
             },
         };
 
+        // The realm findings, the same ones `larvae check` reports.
+        if let Some(path) = path.as_deref() {
+            diagnostics.extend(self.realm_diagnostics(path, src, &lines));
+        }
+
         /*
         The analyzer's findings join the lint findings in one publish. The
         analyzer reads plain Luau, so a claimed file stays out until the
@@ -287,6 +292,97 @@ impl Server {
             "textDocument/publishDiagnostics",
             json!({ "uri": uri, "diagnostics": diagnostics }),
         )
+    }
+
+    /*
+    The realm findings of one open file, the way `larvae check` finds
+    them.
+
+    A cross-realm require compiles, resolves, and then fails in a live
+    game, and the resolver is the only reader that sees both ends. The
+    build reported it and the editor said nothing. The same validation
+    runs here, filtered to the realm findings: everything else the
+    resolver says is the build's business, and the analyzer already
+    covers the requires that resolve to nothing.
+    */
+    fn realm_diagnostics(&self, path: &Path, src: &str, lines: &rpc::Lines) -> Vec<Value> {
+        let Some(root) = self.root.as_deref() else {
+            return Vec::new();
+        };
+
+        let Ok(lexed) = crate::syntax::lexer::lex(src) else {
+            return Vec::new();
+        };
+
+        let scanned = crate::syntax::scan::scan(src, &lexed.toks);
+
+        if scanned.sites.is_empty() && scanned.instances.is_empty() {
+            return Vec::new();
+        }
+
+        let luaurc = super::decorate::luaurc_upward(path, root);
+        let claimed = self.worms.claimed();
+
+        let resolver = crate::requires::resolve::Resolver {
+            root,
+            toml_aliases: &self.aliases,
+            luaurc: &luaurc,
+            mounts: &self.mounts,
+            target: crate::config::Target::RobloxString,
+            style: crate::config::IndexingStyle::default(),
+            quote: '"',
+            strict: false,
+            claimed: &claimed,
+            client_relative_requires: false,
+        };
+
+        let ctx = crate::requires::resolve::FileCtx::new(
+            path,
+            &self.mounts,
+            crate::config::Target::RobloxString,
+            crate::config::IndexingStyle::default(),
+        );
+
+        let mut found = Vec::new();
+
+        let mut keep = |diags: Vec<crate::diag::Diag>, span: (u32, u32)| {
+            for d in diags {
+                let Some(message) = d.message.strip_suffix(" (cross_realm_require)") else {
+                    continue;
+                };
+
+                let message = match &d.help {
+                    Some(help) => format!("{message}\n{help}"),
+
+                    None => message.to_owned(),
+                };
+
+                found.push(json!({
+                    "range": lines.range(src, span),
+                    "severity": 1,
+                    "source": "larvae",
+                    "code": "cross_realm_require",
+                    "message": message,
+                }));
+            }
+        };
+
+        for site in &scanned.sites {
+            let spec = &src[site.inner_start as usize..site.inner_end as usize];
+            let mut diags = Vec::new();
+            let _ = resolver.resolve(&ctx, spec, src, site.at as usize, &mut diags);
+
+            keep(diags, (site.tok_start, site.tok_end));
+        }
+
+        for site in &scanned.instances {
+            let mut diags = Vec::new();
+            let _ = resolver.resolve_instance(&ctx, site, src, &mut diags);
+
+            keep(diags, (site.start, site.end));
+        }
+
+        found
     }
 
     /*
