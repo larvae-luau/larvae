@@ -177,36 +177,43 @@ pub fn rewrite(src: &str, path: &Path, plan: &Plan, diags: &mut Vec<Diag>) -> Re
     Every change is one splice list, sorted and applied back to front, so
     each earlier offset stays valid whatever order the changes were found
     in. Two kinds of change land here. A require splice points the call
-    into the bundle. An `export type` loses its `export`: the keyword is
-    legal at the top level of a module only, the bundle wraps every module
-    in a function, and a plain `type` alias is legal in any block while
-    changing nothing at run time.
+    into the bundle. An exported declaration loses its `export`: the
+    keyword is legal at the top level of a module only, the bundle wraps
+    every module in a function, and the declaration without it is legal
+    in any block while binding the same names.
 
-    `export local` and its siblings stay, because their run time meaning
-    is the module's value, and a bundle cannot erase that without changing
-    what the module returns. A runtime that accepts them at the top level
-    is the runtime this bundle targets.
+    That covers `export local`, `export function`, and their siblings,
+    not only `export type`. The declaration is what the module's own code
+    reads, and the module's value is its `return`, so the keyword can go
+    where the statement cannot.
     */
     let mut splices: Vec<(usize, usize, String)> = Vec::new();
 
     if let Ok(chunk) = crate::syntax::parser::parse(src, &lexed.toks) {
+        use crate::syntax::ast::Stmt;
+
         for stmt in &chunk.block.stmts {
-            if let crate::syntax::ast::Stmt::TypeAlias(alias) = stmt
-                && alias.exported
-            {
-                let tok = &lexed.toks[alias.span.start as usize];
+            let span = match stmt {
+                Stmt::TypeAlias(n) if n.exported => n.span,
+                Stmt::Local(n) if n.exported => n.span,
+                Stmt::Function(n) if n.exported => n.span,
+                Stmt::LocalFunction(n) if n.exported => n.span,
 
-                if tok.text(src) == "export" {
-                    let start = tok.start as usize;
-                    let end = start
-                        + "export".len()
-                        + src[start + "export".len()..]
-                            .chars()
-                            .take_while(|c| *c == ' ')
-                            .count();
+                _ => continue,
+            };
 
-                    splices.push((start, end, String::new()));
-                }
+            let tok = &lexed.toks[span.start as usize];
+
+            if tok.text(src) == "export" {
+                let start = tok.start as usize;
+                let end = start
+                    + "export".len()
+                    + src[start + "export".len()..]
+                        .chars()
+                        .take_while(|c| *c == ' ')
+                        .count();
+
+                splices.push((start, end, String::new()));
             }
         }
     }

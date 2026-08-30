@@ -642,6 +642,36 @@ fn an_export_type_loses_its_export_inside_the_bundle() {
 }
 
 /*
+The value spellings lose their `export` the same way: `export local` and
+`export function` are top-level-only syntax behind a flag, the bundle
+wraps every module in a function, and the declaration without the
+keyword binds the same names. The module's value is its `return`.
+*/
+#[test]
+fn export_value_declarations_lose_their_export_inside_the_bundle() {
+    let text = bundle(
+        &[
+            (
+                "main.luau",
+                "local m = require(\"./mod\")\nreturn m.word()\n",
+            ),
+            (
+                "mod.luau",
+                "export local base = \"typed\"\nexport function word()\n\treturn base\nend\nreturn { word = word }\n",
+            ),
+        ],
+        "src/main.luau",
+    )
+    .expect("bundles");
+
+    assert!(
+        !text.contains("export local") && !text.contains("export function"),
+        "{text}"
+    );
+    assert_eq!(run_luau(&text).expect("runs"), "typed");
+}
+
+/*
 The bundle prints through the generator of the project, so `obfuscate`
 reaches it with no key of its own. The bundle is the file most projects
 ship, so it is the one that matters most here.

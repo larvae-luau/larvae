@@ -415,7 +415,23 @@ fn seal_msvc(
         None => std::process::Command::new("link.exe"),
     };
 
+    /*
+    Every input here is an archive, and LINK reads the machine off the
+    first object it sees, so an all-archive link falls back to X64. On a
+    cross build the archives are not X64, LINK then ignores their
+    members, and every export comes out unresolved. The machine is
+    spelled from the target instead.
+    */
+    let machine = match target.split('-').next() {
+        Some("aarch64") => "ARM64",
+        Some("i686") => "X86",
+        Some(head) if head.starts_with("arm") || head.starts_with("thumb") => "ARM",
+
+        _ => "X64",
+    };
+
     link.arg("/NOLOGO")
+        .arg(format!("/MACHINE:{machine}"))
         .arg("/DLL")
         .arg(format!("/DEF:{}", definition.display()))
         .arg(format!("/OUT:{}", lib.display()))

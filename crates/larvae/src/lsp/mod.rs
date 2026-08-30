@@ -653,6 +653,27 @@ impl Server {
                     hint["tooltip"] = json!({ "kind": "markdown", "value": value });
                 }
 
+                /*
+                The deferred accept: the type names an alias, and the
+                printer writes a required module's alias bare, so the
+                name can be one this file never sees. The probe proves
+                it: the type lands in a throwaway alias at the end of
+                the file, and only a clean check attaches the edit.
+                */
+                if hint["textEdits"].is_null()
+                    && let Some(insert) = hint["data"]["insert"].as_str().map(str::to_owned)
+                    && let Some(uri) = hint["data"]["uri"].as_str().map(str::to_owned)
+                    && self.type_resolves_here(&uri, &insert)
+                {
+                    hint["textEdits"] = json!([{
+                        "range": {
+                            "start": hint["position"],
+                            "end": hint["position"],
+                        },
+                        "newText": insert,
+                    }]);
+                }
+
                 self.reply(message, out, hint)?;
             }
 

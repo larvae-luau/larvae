@@ -89,10 +89,25 @@ fn strip_and_rename(src: &str) -> Result<String, String> {
 /// Rewrite each string literal as the `\xNN` form of its own bytes.
 fn hex_strings(src: &str) -> Result<String, String> {
     let lexed = lexer::lex(src).map_err(|e| e.message)?;
+
+    /*
+    A require's spec stays as written. The engine decodes either
+    spelling, so escaping the path hides nothing, and it breaks every
+    reader that checks the spec textually: larvae's own checker, the
+    RFC validation of another tool, a person tracing a module.
+    */
+    let scanned = crate::syntax::scan::scan(src, &lexed.toks);
+    let specs: std::collections::HashSet<u32> =
+        scanned.sites.iter().map(|site| site.tok_start).collect();
+
     let mut out = String::with_capacity(src.len());
     let mut cursor = 0usize;
 
     for tok in &lexed.toks {
+        if specs.contains(&tok.start) {
+            continue;
+        }
+
         let TokKind::Str {
             inner_start,
             inner_end,
@@ -328,6 +343,15 @@ mod tests {
         assert!(!out.contains("Entity"), "{out}");
         assert!(out.contains("_0x1=_0x0.new()"), "{out}");
         parses(&out);
+    }
+
+    /// The spec is a path a later reader has to read, so it stays plain.
+    #[test]
+    fn a_require_spec_stays_readable() {
+        let out = run("local t = require(\"./mod\")\nlocal s = \"secret\"\nreturn t\n");
+
+        assert!(out.contains("\"./mod\""), "{out}");
+        assert!(!out.contains("secret"), "{out}");
     }
 
     #[test]

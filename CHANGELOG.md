@@ -4,6 +4,31 @@ Notable changes land here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow
 [semver](https://semver.org/spec/v2.0.0.html).
 
+## 0.7.1 - 2026-08-30
+
+### Fixed
+
+- The Windows ARM build carries the analyzer. The sealed library links
+  from archives alone, LINK reads the machine off the first object it
+  sees, and an all-archive cross link fell back to X64: the ARM64
+  members were ignored and every export came out unresolved. The build
+  script spells `/MACHINE` from the target now, so no platform ships
+  without the type half
+- Accepting a type hint proves the type first. The printer writes a
+  required module's alias bare, so a double click could write a name
+  the file never sees. A type spelled from primitives accepts at once;
+  one that names an alias accepts only after the server lands it in a
+  throwaway alias and the check comes back clean, so a global class
+  accepts and a foreign alias does not
+- The bundler strips `export` from the value spellings too: `export
+  local` and `export function` are top-level syntax, the bundle wraps
+  every module in a function, and the declaration without the keyword
+  binds the same names
+- Obfuscation leaves require specs as written. The engine decodes
+  either spelling, so escaping a path hides nothing, and it broke
+  every reader that checks specs textually, larvae's own checker
+  included
+
 ## 0.7.0 - 2026-08-30
 
 ### Beyond luau-lsp

@@ -87,13 +87,14 @@ jobs:
           # to cross compile the whole Luau tree. It is the least proven of the
           # six; turn it off here if it breaks and the platform keeps the
           # fallback server.
-          # The analyzer is off here: the cross link of the sealed dll
-          # runs with x64 defaults and drops every export. The platform
-          # keeps the fallback server, as the note above says.
+          # The cross link of the sealed dll needs its /MACHINE spelled,
+          # which the build script does from the target. The host is x64,
+          # so the carries-the-analyzer check cannot run the binary here;
+          # the link succeeding is the proof this platform gets.
           - asset: larvae-windows-aarch64
             target: aarch64-pc-windows-msvc
             runs-on: windows-latest
-            analyzer: false
+            analyzer: true
             native: false
     runs-on: ${{ matrix.runs-on }}
     steps:

@@ -590,15 +590,29 @@ impl Server {
                 `@metatable` is display notation, not a type, and a
                 parameter name has no written form at a call site, so
                 those hints stay display only.
+
+                A type spelled from primitives alone accepts right away. A
+                type that names an alias waits for the resolve, where the
+                server proves the name means something in this file: the
+                printer writes a required module's alias bare, and
+                accepting that would write a name the file cannot see.
                 */
                 if h.kind == 1 && insertable_type(&text) {
-                    hint["textEdits"] = json!([{
-                        "range": {
-                            "start": { "line": h.line, "character": h.character },
-                            "end": { "line": h.line, "character": h.character },
-                        },
-                        "newText": text,
-                    }]);
+                    match primitives_only(&text) {
+                        true => {
+                            hint["textEdits"] = json!([{
+                                "range": {
+                                    "start": { "line": h.line, "character": h.character },
+                                    "end": { "line": h.line, "character": h.character },
+                                },
+                                "newText": text,
+                            }]);
+                        }
+
+                        false => {
+                            hint["data"]["insert"] = json!(text);
+                        }
+                    }
                 }
 
                 hint
@@ -625,6 +639,147 @@ fn insertable_type(label: &str) -> bool {
     crate::syntax::parse_one(&format!("type __hint = {ty}\n")).is_ok()
 }
 
+impl Server {
+    /*
+    Prove one type text means something in this file.
+
+    The type lands in a throwaway alias appended to the buffer, and the
+    analyzer checks the whole thing. A diagnostic on the appended line
+    is a name this file cannot see, and the accept stays away. The real
+    text goes back in afterward, so the next request reads the buffer
+    the author has.
+    */
+    pub(super) fn type_resolves_here(&self, uri: &str, insert: &str) -> bool {
+        // A claimed file's analyzer view is the worm's lowering, and the
+        // probe would splice into the wrong text.
+        let Some(path) = super::uri::path_of_uri(uri) else {
+            return false;
+        };
+
+        if self.worms.frontend_for(&path).is_some() {
+            return false;
+        }
+
+        let Some(src) = self.documents.get(uri) else {
+            return false;
+        };
+
+        let ty = insert.trim_start().trim_start_matches(':').trim_start();
+
+        /*
+        The alias splices in before the last top-level return, because a
+        statement after one is a parse error and every module ends with
+        one. A file without a return takes the alias at its end.
+        */
+        let at = last_top_level_return(src).unwrap_or(src.len());
+        let alias = format!("type __larvae_probe = {ty}\n");
+        let probe = format!("{}{alias}{}", &src[..at], &src[at..]);
+        let inserted = at..at + alias.len();
+
+        let mut analysis = self.analysis.borrow_mut();
+
+        let Some(analysis) = analysis.as_mut() else {
+            return false;
+        };
+
+        analysis.open(&path, &super::analysis::plain_view(&probe));
+
+        let clean = analysis
+            .check(&path)
+            .into_iter()
+            .all(|d| !inserted.contains(&(d.span.0 as usize)));
+
+        analysis.open(&path, &super::analysis::plain_view(src));
+
+        clean
+    }
+}
+
+/*
+The byte where the last top-level `return` starts.
+
+`function`, `if`, `do`, and `repeat` open a block; `while` and `for` do
+not, because their own `do` opens it. A `return` at depth zero is the
+module's, and the last one is where the module ends.
+*/
+fn last_top_level_return(src: &str) -> Option<usize> {
+    use crate::syntax::lexer::TokKind;
+
+    let lexed = crate::syntax::lexer::lex(src).ok()?;
+    let mut depth = 0i32;
+    let mut found = None;
+
+    for tok in &lexed.toks {
+        if tok.kind != TokKind::Ident {
+            continue;
+        }
+
+        match tok.text(src) {
+            "function" | "if" | "do" | "repeat" => depth += 1,
+            "end" | "until" => depth -= 1,
+            "return" if depth == 0 => found = Some(tok.start as usize),
+
+            _ => {}
+        }
+    }
+
+    found
+}
+
+/*
+Report if a type spells itself from primitives alone.
+
+Such a type means the same thing in every file, so the accept needs no
+scope proof. Anything with a name in it waits for the resolve check.
+*/
+fn primitives_only(label: &str) -> bool {
+    let mut chars = label.char_indices().peekable();
+
+    while let Some((at, c)) = chars.next() {
+        if !(c.is_ascii_alphabetic() || c == '_') {
+            continue;
+        }
+
+        let mut end = at + c.len_utf8();
+
+        while let Some(&(next, nc)) = chars.peek() {
+            if nc.is_ascii_alphanumeric() || nc == '_' {
+                end = next + nc.len_utf8();
+                chars.next();
+            } else {
+                break;
+            }
+        }
+
+        let word = &label[at..end];
+
+        // A word a colon follows is a field or a parameter name, not a
+        // type reference, and a name is what the scope proof is for.
+        if label[end..].trim_start().starts_with(':') {
+            continue;
+        }
+
+        if !matches!(
+            word,
+            "number"
+                | "string"
+                | "boolean"
+                | "nil"
+                | "any"
+                | "unknown"
+                | "never"
+                | "thread"
+                | "buffer"
+                | "true"
+                | "false"
+        ) {
+            return false;
+        }
+    }
+
+    true
+}
+
 /*
 An analyzer location in protocol shape.
 
@@ -647,6 +802,22 @@ fn location(at: &super::analysis::AnalysisLocation) -> Value {
 #[cfg(test)]
 mod hint_accepts {
     use super::insertable_type;
+
+    /// Primitives accept at once; a named type waits for the scope proof.
+    #[test]
+    fn primitives_accept_at_once() {
+        use super::primitives_only;
+
+        assert!(primitives_only(": number"));
+        assert!(primitives_only(": { a: number, b: string? }"));
+        assert!(primitives_only(": (number) -> string"));
+        assert!(primitives_only(": nil"));
+
+        assert!(!primitives_only(": Config"));
+        assert!(!primitives_only(": { part: Part }"));
+        assert!(!primitives_only(": Folder | Part"));
+        assert!(!primitives_only(": typeof(x)"));
+    }
 
     /// Real type syntax inserts; display notation stays display.
     #[test]
