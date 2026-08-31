@@ -2355,6 +2355,14 @@
           "default": [],
           "description": "Extra type definition files, loaded into the analyzer after the platform globals. Paths are relative to the root of the project. larvae analyze --definitions adds to this list."
         },
+        "documentation": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "luau-lsp documentationFiles JSON databases for hover and completion. Paths are relative to the root of the project. Later files win when they document the same symbol."
+        },
         "completion": {
           "$ref": "#/$defs/lsp_completion"
         },

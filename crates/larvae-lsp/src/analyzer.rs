@@ -52,15 +52,15 @@ of the full file say nothing a reader needs.
 */
 const API_DOCS: &[u8] = include_bytes!("../types/api-docs.deflate");
 
-/// One page of the Roblox reference, as the trimmed database spells it
+/// One reference page, in the compact bundled or public luau-lsp spelling
 #[derive(serde::Deserialize)]
 struct DocEntry {
-    #[serde(default, rename = "d")]
+    #[serde(default, rename = "d", alias = "documentation")]
     documentation: String,
-    #[serde(default, rename = "l")]
+    #[serde(default, rename = "l", alias = "learn_more_link")]
     link: String,
     /// The example the reference prints under the page
-    #[serde(default, rename = "c")]
+    #[serde(default, rename = "c", alias = "code_sample")]
     code_sample: String,
 }
 
@@ -97,23 +97,63 @@ so a failure means the binary is damaged, and every other answer still holds
 without it.
 */
 /*
-One page, found under the symbol Luau reports or under `@roblox`.
+One page, found under the symbol Luau reports.
 
-Luau names a symbol after the package that declared the thing, and larvae
-re-declares some Roblox globals: the sourcemap tree declares `game`, and the
-Studio mirror does too. `@sourcemap/global/game` then matches no page, while
-`@roblox/global/game` is the page the reader wants. The tail is the same
-thing either way, so the retry is safe: a name the reference does not hold
-still answers nothing.
+A configured definition file loads under an internal `@user/<path>` name,
+while a luau-lsp documentationFiles database names the package from the
+editor's definitionFiles map, ex: `@package`. Their package names differ and
+the symbol tail is their common identity. A unique project tail therefore
+answers the internal name. Two project packages that document one tail are
+ambiguous and answer nothing unless one matches exactly.
+
+The Roblox fallback keeps the existing sourcemap and Studio behaviour:
+`@sourcemap/global/game` reaches `@roblox/global/game`.
 */
-fn page<'a>(docs: &'a HashMap<String, DocEntry>, symbol: &str) -> Option<&'a DocEntry> {
-    if let Some(found) = docs.get(symbol) {
+fn documentation_tail(symbol: &str) -> Option<&str> {
+    [symbol.find("/global/"), symbol.find("/globaltype/")]
+        .into_iter()
+        .flatten()
+        .min()
+        .map(|at| &symbol[at + 1..])
+}
+
+fn documentation_tails(docs: &HashMap<String, DocEntry>) -> HashMap<String, Option<String>> {
+    let mut tails = HashMap::new();
+
+    for symbol in docs.keys() {
+        let Some(tail) = documentation_tail(symbol) else {
+            continue;
+        };
+
+        let entry = tails
+            .entry(tail.to_owned())
+            .or_insert_with(|| Some(symbol.clone()));
+
+        if entry.as_deref() != Some(symbol) {
+            *entry = None;
+        }
+    }
+
+    tails
+}
+
+fn page<'a>(
+    docs: &'a HashMap<String, DocEntry>,
+    project_docs: &'a HashMap<String, DocEntry>,
+    project_doc_tails: &HashMap<String, Option<String>>,
+    symbol: &str,
+) -> Option<&'a DocEntry> {
+    if let Some(found) = project_docs.get(symbol).or_else(|| docs.get(symbol)) {
         return Some(found);
     }
 
-    let (_, tail) = symbol.strip_prefix('@')?.split_once('/')?;
+    let tail = documentation_tail(symbol)?;
+    let project = project_doc_tails
+        .get(tail)
+        .and_then(Option::as_deref)
+        .and_then(|key| project_docs.get(key));
 
-    docs.get(&format!("@roblox/{tail}"))
+    project.or_else(|| docs.get(&format!("@roblox/{tail}")))
 }
 
 fn read_api_docs() -> HashMap<String, DocEntry> {
@@ -129,6 +169,99 @@ fn read_api_docs() -> HashMap<String, DocEntry> {
     }
 
     serde_json::from_str(&text).unwrap_or_default()
+}
+
+fn read_documentation(source: &str) -> Option<HashMap<String, DocEntry>> {
+    serde_json::from_str(source).ok()
+}
+
+#[cfg(test)]
+mod documentation_files {
+    use super::*;
+
+    #[test]
+    fn the_luau_lsp_shape_becomes_markdown() {
+        let docs = read_documentation(
+            r#"{
+                "@package/global/resolve_name": {
+                    "documentation": "Resolves a display name.",
+                    "learn_more_link": "https://example.com/reference/resolve-name",
+                    "code_sample": "local name = resolve_name()"
+                }
+            }"#,
+        )
+        .expect("the database parses");
+        let bundled = HashMap::new();
+        let tails = documentation_tails(&docs);
+        let entry = page(
+            &bundled,
+            &docs,
+            &tails,
+            "@user/types/globals.d.luau/global/resolve_name",
+        )
+        .expect("the definition file name reaches the package documentation");
+
+        assert_eq!(
+            entry.markdown().as_deref(),
+            Some(
+                "Resolves a display name.\n\n[Learn More](https://example.com/reference/resolve-name)\n\n```luau\nlocal name = resolve_name()\n```"
+            )
+        );
+    }
+
+    #[test]
+    fn two_packages_with_one_tail_need_an_exact_symbol() {
+        let docs = read_documentation(
+            r#"{
+                "@one/global/shared": { "documentation": "one" },
+                "@two/global/shared": { "documentation": "two" }
+            }"#,
+        )
+        .expect("the database parses");
+        let bundled = HashMap::new();
+        let tails = documentation_tails(&docs);
+
+        assert!(page(&bundled, &docs, &tails, "@user/types/global/shared").is_none());
+        assert_eq!(
+            page(&bundled, &docs, &tails, "@two/global/shared")
+                .and_then(DocEntry::markdown)
+                .as_deref(),
+            Some("two")
+        );
+    }
+
+    #[test]
+    fn a_non_object_is_not_a_documentation_database() {
+        assert!(read_documentation("[]").is_none());
+    }
+
+    #[test]
+    fn configured_documentation_reaches_a_real_hover() {
+        let _luau = super::luau_globals::shared();
+        let mut analysis = LuauAnalysis::new();
+
+        assert!(analysis.definitions(
+            "@user/types/globals.d.luau",
+            "declare function resolve_name(): string\n",
+        ));
+        assert!(analysis.documentation(
+            r#"{
+                "@package/global/resolve_name": {
+                    "documentation": "Resolves a display name."
+                }
+            }"#,
+        ));
+
+        let path = Path::new("/main.luau");
+        let source = "return resolve_name()\n";
+        analysis.open(path, source);
+        analysis.hover(path, 8, false, true);
+
+        assert_eq!(
+            analysis.hover_documentation(path, 8).as_deref(),
+            Some("Resolves a display name.")
+        );
+    }
 }
 
 use larvae::lsp::analysis::{Analysis, AnalysisCompletion, AnalysisDiag, ModuleHooks};
@@ -658,6 +791,10 @@ pub struct LuauAnalysis {
     services: Vec<String>,
     /// The Roblox reference, by documentation symbol
     docs: HashMap<String, DocEntry>,
+    /// The documentationFiles databases of the project, layered in order
+    project_docs: HashMap<String, DocEntry>,
+    /// A unique package-independent symbol tail to its full project key
+    project_doc_tails: HashMap<String, Option<String>>,
     /*
     Where the `.config.luau` wrap sits, per open config file.
 
@@ -700,6 +837,8 @@ impl LuauAnalysis {
             keys: HashMap::new(),
             services: Vec::new(),
             docs: read_api_docs(),
+            project_docs: HashMap::new(),
+            project_doc_tails: HashMap::new(),
             config_wraps: HashMap::new(),
         };
 
@@ -968,6 +1107,21 @@ impl Analysis for LuauAnalysis {
         unsafe { larvae_set_definitions(self.session, name.as_ptr(), source.as_ptr()) == 0 }
     }
 
+    fn clear_documentation(&mut self) {
+        self.project_docs.clear();
+        self.project_doc_tails.clear();
+    }
+
+    fn documentation(&mut self, source: &str) -> bool {
+        let Some(entries) = read_documentation(source) else {
+            return false;
+        };
+
+        self.project_docs.extend(entries);
+        self.project_doc_tails = documentation_tails(&self.project_docs);
+        true
+    }
+
     fn set_script_types(&mut self, types: &HashMap<PathBuf, String>) {
         unsafe { larvae_clear_script_types(self.session) };
 
@@ -1127,8 +1281,10 @@ impl Analysis for LuauAnalysis {
 
         unsafe { raw.set_len(n) };
 
-        // The borrow of the map ends before the closure takes `self` again.
+        // The borrows of the maps end before the closure takes `self` again.
         let docs = &self.docs;
+        let project_docs = &self.project_docs;
+        let project_doc_tails = &self.project_doc_tails;
 
         raw.iter()
             /*
@@ -1157,7 +1313,7 @@ impl Analysis for LuauAnalysis {
                 */
                 documentation: text(c.documentation).or_else(|| {
                     text(c.documentation_symbol)
-                        .and_then(|symbol| page(docs, &symbol))
+                        .and_then(|symbol| page(docs, project_docs, project_doc_tails, &symbol))
                         .and_then(DocEntry::markdown)
                 }),
                 deprecated: c.deprecated == 1,
@@ -1183,8 +1339,17 @@ impl Analysis for LuauAnalysis {
         let at = wrapped(at, self.config_wraps.get(path));
         let key = self.key(path);
 
-        let page = text(unsafe { larvae_documentation_symbol(self.session, key, at) })
-            .and_then(|symbol| page(&self.docs, &symbol).and_then(DocEntry::markdown));
+        let page = text(unsafe { larvae_documentation_symbol(self.session, key, at) }).and_then(
+            |symbol| {
+                page(
+                    &self.docs,
+                    &self.project_docs,
+                    &self.project_doc_tails,
+                    &symbol,
+                )
+                .and_then(DocEntry::markdown)
+            },
+        );
 
         if page.is_some() {
             return page;

@@ -123,6 +123,16 @@ pub struct LspConfig {
     pub definitions: Vec<String>,
 
     /*
+    Documentation databases in luau-lsp's documentationFiles JSON shape.
+
+    The analyzer loads them after its bundled Roblox reference. Paths are
+    relative to the root of the project, and a project entry wins when it
+    documents the same symbol.
+    */
+    #[serde(default)]
+    pub documentation: Vec<String>,
+
+    /*
     The editor settings of the worms: `[lsp.oop]` holds the settings of
     the worm named oop. The keys are free here because each worm
     declares its own under `[options]` in its manifest; the server
