@@ -22,7 +22,16 @@ fn enum_complaints() -> Vec<String> {
         "--!strict\n\
          local key: Enum.KeyCode = Enum.KeyCode.A\n\
          local direction: Enum.EasingDirection = Enum.EasingDirection.In\n\
-         return key, direction\n",
+         local state: Enum.UserInputState = Enum.UserInputState.Begin\n\
+         local list: { Enum.KeyCode } = {}\n\
+         local by: { [Enum.KeyCode]: Enum.UserInputState } = {}\n\
+         local maybe: Enum.Material? = nil\n\
+         local function on(s: Enum.UserInputState): Enum.KeyCode\n\
+         \treturn Enum.KeyCode.A\n\
+         end\n\
+         -- The global is the class the dump declares, beside its table of enums.\n\
+         local every: Enums = Enum\n\
+         return key, direction, state, list, by, maybe, on, every\n",
     );
 
     analysis

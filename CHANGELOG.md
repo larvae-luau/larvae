@@ -4,6 +4,17 @@ Notable changes land here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow
 [semver](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- The `Enum` global answers to `Enums`, the class the API dump declares
+  for it. The generated definitions type it as a flat table of every
+  enum, because that table is what `Enum.KeyCode` indexes, and the two
+  never met: a value annotated `Enums`, or a parameter asking for one,
+  refused the global that is one. The global takes both now, so the
+  indexing reads the table and the name answers the class
+
 ## 0.7.4 - 2026-08-31
 
 ### Added

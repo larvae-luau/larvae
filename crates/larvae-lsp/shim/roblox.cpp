@@ -64,5 +64,44 @@ void registerRobloxEnums(Luau::GlobalTypes& globals)
     }
 
     globals.globalScope->importedTypeBindings.emplace("Enum", std::move(enumTypes));
+
+    enumGlobalCarriesItsClass(globals);
+}
+
+/*
+`Enum` answers to `Enums`, the class the API dump gives it.
+
+The generated definitions type the global as a flat table of every
+enum, because the table is what `Enum.KeyCode` indexes. The dump also
+declares an `Enums` class with the methods the object really has, and
+the two never met: a value annotated `Enums`, or a parameter that asks
+for one, refused the global that is one.
+
+The global takes the intersection of the two. Indexing still reads the
+table, and the class half answers a name that asks for `Enums`, which
+is what the runtime object is.
+*/
+void enumGlobalCarriesItsClass(Luau::GlobalTypes& globals)
+{
+    auto binding = globals.globalScope->bindings.find(
+        globals.globalNames.names->getOrAdd("Enum")
+    );
+
+    if (binding == globals.globalScope->bindings.end())
+        return;
+
+    auto declared = globals.globalScope->exportedTypeBindings.find("Enums");
+
+    if (declared == globals.globalScope->exportedTypeBindings.end())
+        return;
+
+    Luau::TypeId table = Luau::follow(binding->second.typeId);
+    Luau::TypeId klass = Luau::follow(declared->second.type);
+
+    if (table == klass)
+        return;
+
+    binding->second.typeId =
+        globals.globalTypes.addType(Luau::IntersectionType{{table, klass}});
 }
 }
