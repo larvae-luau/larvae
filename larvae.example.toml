@@ -352,6 +352,8 @@ obfuscate = false                        # dense whatever generator says: no typ
 [lsp]
 enabled = true
 claim_only = false
+# definitions = ["types/global.d.luau"]
+# documentation = ["types/documentation.json"]
 
 
 # --- profiles ----------------------------------------------------------------

@@ -2869,6 +2869,7 @@ fn an_editor_setting_reaches_the_server() {
                             "larvae-lsp": {
                                 "claimOnly": true,
                                 "completion": { "imports": { "useConst": false } },
+                                "documentation": ["types/docs.json"],
                             }
                         }
                     }
@@ -2883,6 +2884,7 @@ fn an_editor_setting_reaches_the_server() {
         !server.lsp.completion.imports.use_const,
         "useConst did not reach the server"
     );
+    assert_eq!(server.lsp.documentation, ["types/docs.json"]);
 }
 
 /*

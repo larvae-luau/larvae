@@ -263,6 +263,13 @@ impl Server {
                 .collect();
         }
 
+        if let Some(list) = editor(&["documentation"]).as_array() {
+            self.lsp.documentation = list
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect();
+        }
+
         /*
         Both spellings of each value are read, because the editor writes
         camelCase and the project file writes snake_case, and a value is
@@ -389,6 +396,8 @@ impl Server {
         mark("flags");
         self.load_user_definitions(out)?;
         mark("user definitions");
+        self.load_user_documentation(out)?;
+        mark("user documentation");
         self.link_studio(out)?;
         mark("studio link");
 
@@ -628,6 +637,55 @@ impl Server {
             if !analysis.definitions(&format!("@user/{entry}"), &text) {
                 complaints.push(format!(
                     "[lsp] definitions: Luau refused {entry}; it is skipped"
+                ));
+            }
+        }
+
+        for complaint in complaints {
+            warn(out, &complaint)?;
+        }
+
+        Ok(())
+    }
+
+    /*
+    The documentation databases of the project, into the analyzer.
+
+    The project list replaces what the previous config loaded, so removing
+    an entry also removes its prose from hover and completion. One unreadable
+    or invalid file warns and costs itself alone.
+    */
+    fn load_user_documentation(&mut self, out: &mut impl Write) -> Result<()> {
+        let Some(root) = self.root.clone() else {
+            return Ok(());
+        };
+
+        let mut analysis = self.analysis.borrow_mut();
+
+        let Some(analysis) = analysis.as_mut() else {
+            return Ok(());
+        };
+
+        analysis.clear_documentation();
+
+        let mut complaints = Vec::new();
+
+        for entry in &self.lsp.documentation {
+            let path = root.join(entry);
+
+            let text = match std::fs::read_to_string(&path) {
+                Ok(text) => text,
+
+                Err(e) => {
+                    complaints.push(format!("[lsp] documentation: cannot read {entry}: {e}"));
+
+                    continue;
+                }
+            };
+
+            if !analysis.documentation(&text) {
+                complaints.push(format!(
+                    "[lsp] documentation: {entry} is not a documentationFiles JSON object; it is skipped"
                 ));
             }
         }

@@ -6,6 +6,13 @@ Notable changes land here. Format follows
 
 ## Unreleased
 
+### Added
+
+- `[lsp] documentation` loads luau-lsp documentationFiles JSON databases
+  for hover and completion. A database keeps its existing documentation
+  symbols, even though larvae names a configured definition file by its
+  path, and later files win when they document the same symbol
+
 ### Fixed
 
 - Roblox enum names such as `Enum.KeyCode` resolve in type annotations

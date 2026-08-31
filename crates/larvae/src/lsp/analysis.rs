@@ -233,6 +233,16 @@ pub trait Analysis: Send {
         false
     }
 
+    /// Drop the project documentation loaded by an earlier config
+    fn clear_documentation(&mut self) {}
+
+    /// Add one luau-lsp documentationFiles JSON database
+    fn documentation(&mut self, source: &str) -> bool {
+        let _ = source;
+
+        false
+    }
+
     /*
     Say what `script` is inside each file of the project.
 
