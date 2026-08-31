@@ -267,6 +267,11 @@ impl Server {
     /*
     The Luau files of the project, for a walk that answers one request.
 
+    The root is the tree, and not `[process] input`. A use of a name
+    lives wherever someone wrote it: a tool, a test, a script beside
+    the build. The build reads its inputs, and this question reads the
+    project.
+
     The excludes of the project apply, because a file the project
     excluded is not part of it. A failure to read the config leaves the
     walk empty rather than guessing at a tree.
@@ -280,8 +285,13 @@ impl Server {
             return Vec::new();
         };
 
-        crate::commands::fmt::collect(root, &[], &excludes, &self.worms.claimed())
-            .unwrap_or_default()
+        crate::commands::fmt::collect(
+            root,
+            &[root.to_path_buf()],
+            &excludes,
+            &self.worms.claimed(),
+        )
+        .unwrap_or_default()
     }
 
     /// The other uses of the binding under the cursor, for the editor to shade

@@ -108,6 +108,35 @@ mod round_trip {
         }
     }
 
+    /*
+    The Windows forms an editor sends, decoded to a usable path.
+
+    The root uri is what the server joins `larvae.toml` onto, so a
+    drive letter it decodes wrong is a project whose whole config goes
+    unread. VS Code percent encodes the colon and lowercases the
+    drive; other clients send it raw. Both are the same path.
+    */
+    #[test]
+    fn a_windows_root_decodes_to_a_drive_path() {
+        for uri in [
+            "file:///c%3A/Users/me/project",
+            "file:///C:/Users/me/project",
+        ] {
+            let found = path_of_uri(uri).expect("decodes");
+            let text = found.to_string_lossy().to_ascii_lowercase();
+
+            assert_eq!(text, "c:/users/me/project", "{uri} decoded to {found:?}");
+        }
+
+        // A space in a Windows path survives the same way.
+        let found = path_of_uri("file:///c%3A/Users/me/My%20Game").expect("decodes");
+
+        assert_eq!(
+            found.to_string_lossy().to_ascii_lowercase(),
+            "c:/users/me/my game"
+        );
+    }
+
     /// A space must not survive as a raw space; an editor rejects that uri.
     #[test]
     fn a_space_is_encoded() {

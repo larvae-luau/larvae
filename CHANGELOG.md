@@ -33,7 +33,9 @@ Notable changes land here. Format follows
   the `@user/` name it loaded with, which no editor can open. The
   reference walk resolves each candidate and keeps what lands on the
   declaration the cursor named, so a name two modules share does not
-  collect the other module's uses
+  collect the other module's uses. The walk reads the whole project and
+  not `[process] input`, because a use of a name lives wherever someone
+  wrote it: a tool, a test, a script beside the build
 - Go to definition reaches a field of another module, not only a
   function. The jump asked the type where it came from, and only a
   function type carries a definition of its own, so a constant or a
