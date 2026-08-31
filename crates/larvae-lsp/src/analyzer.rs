@@ -1555,6 +1555,53 @@ mod studio_definitions {
     }
 
     /*
+    A field of another module jumps to the line that declares it.
+
+    The jump asked the type where it came from, and only a function
+    type carries a definition of its own, so a constant or a table in
+    another module answered nothing. The property of the table carries
+    the position it was written at, which reaches the rest.
+    */
+    #[test]
+    fn a_field_of_another_module_finds_its_declaration() {
+        let _luau = super::luau_globals::shared();
+        let dir = tempfile::tempdir().expect("a temp dir");
+
+        let module = dir.path().join("mod.luau");
+        std::fs::write(
+            &module,
+            "local M = {}\n\nM.LIMIT = 42\n\nfunction M.helper(n: number): number\n\treturn n\nend\n\nreturn M\n",
+        )
+        .expect("writes");
+
+        let user = dir.path().join("use.luau");
+        let text = "local M = require(\"./mod\")\nlocal a = M.LIMIT\nlocal b = M.helper\nreturn { a, b }\n";
+        std::fs::write(&user, text).expect("writes");
+
+        let mut analysis = LuauAnalysis::new();
+        analysis.definitions("@roblox", GLOBAL_TYPES);
+        analysis.open(&user, text);
+
+        let at = |what: &str| text.find(what).expect("the probe text") as u32;
+
+        // The constant is the case the function-only jump missed.
+        let found = analysis
+            .definition(&user, at("LIMIT"))
+            .expect("the constant answers");
+
+        assert!(found.path.ends_with("mod.luau"), "{found:?}");
+        assert_eq!(found.start.0, 2, "line 3 declares it: {found:?}");
+
+        // And a function still answers, as it always did.
+        let found = analysis
+            .definition(&user, at("helper"))
+            .expect("the function answers");
+
+        assert!(found.path.ends_with("mod.luau"), "{found:?}");
+        assert_eq!(found.start.0, 4, "line 5 declares it: {found:?}");
+    }
+
+    /*
     `require(script.Parent.Widget)` types like `require("./Widget")`.
 
     The build resolves the instance form, and Studio runs it, so the editor

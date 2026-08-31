@@ -2955,6 +2955,41 @@ int larvae_definition(LarvaeSession* s, const char* path, uint32_t byte, LarvaeL
     }
 
     /*
+    A field of a table answers from the table's own type. The property
+    carries the position it was written at, and the table carries the
+    module that wrote it, so a constant or a table in another module
+    reaches its declaration the way a function does. Without this the
+    jump worked for methods alone, because only a function type holds a
+    definition of its own.
+    */
+    if (auto* index = node->as<Luau::AstExprIndexName>())
+    {
+        if (Luau::TypeId* owner = module->astTypes.find(index->expr))
+        {
+            if (auto* ttv = Luau::get<Luau::TableType>(Luau::follow(*owner)))
+            {
+                auto prop = ttv->props.find(index->index.value);
+
+                if (prop != ttv->props.end())
+                {
+                    const std::optional<Luau::Location>& at = prop->second.location
+                        ? prop->second.location
+                        : prop->second.typeLocation;
+
+                    if (at)
+                    {
+                        const std::string& where = ttv->definitionModuleName.empty()
+                            ? std::string(path)
+                            : ttv->definitionModuleName;
+
+                        return fillLocation(s, where, *at, out);
+                    }
+                }
+            }
+        }
+    }
+
+    /*
     Everything else asks the type where it came from. A function type
     carries its definition location, which reaches a method or a field
     declared in another module.

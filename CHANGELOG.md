@@ -23,6 +23,11 @@ Notable changes land here. Format follows
 ### Fixed
 
 - Roblox enum names such as `Enum.KeyCode` resolve in type annotations
+- Go to definition reaches a field of another module, not only a
+  function. The jump asked the type where it came from, and only a
+  function type carries a definition of its own, so a constant or a
+  table in another module answered nothing. The property of the table
+  carries the position it was written at, which reaches the rest
 
 ## 0.7.3 - 2026-08-30
 
