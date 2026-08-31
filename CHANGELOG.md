@@ -23,6 +23,17 @@ Notable changes land here. Format follows
 ### Fixed
 
 - Roblox enum names such as `Enum.KeyCode` resolve in type annotations
+- Project-wide references, and navigation from a type name. Four
+  things were missing together: the walk that finds the node under the
+  cursor skipped every type annotation, so an imported `types.User`, a
+  local alias, and the declaration itself answered nothing; type
+  definition read the type of an expression, and an annotation is not
+  one; references read the open document alone, so a module's export
+  listed the uses of one file; and a definition file answered under
+  the `@user/` name it loaded with, which no editor can open. The
+  reference walk resolves each candidate and keeps what lands on the
+  declaration the cursor named, so a name two modules share does not
+  collect the other module's uses
 - Go to definition reaches a field of another module, not only a
   function. The jump asked the type where it came from, and only a
   function type carries a definition of its own, so a constant or a

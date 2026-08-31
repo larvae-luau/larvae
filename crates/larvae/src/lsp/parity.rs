@@ -70,10 +70,32 @@ impl Server {
             .and_then(|a| a.definition(&path, byte));
 
         match found {
-            Some(at) => location(&at),
+            Some(at) => location(&self.real_path(at)),
 
             None => Value::Null,
         }
+    }
+
+    /*
+    A definition file's own path, in place of the name it loaded under.
+
+    `[lsp] definitions` loads each file as `@user/<entry>`, which is the
+    analyzer's name for it and not a path an editor can open. The entry
+    is the path relative to the root, so the name maps straight back.
+    */
+    fn real_path(
+        &self,
+        mut at: super::analysis::AnalysisLocation,
+    ) -> super::analysis::AnalysisLocation {
+        let Some(root) = self.root.as_deref() else {
+            return at;
+        };
+
+        if let Some(entry) = at.path.to_string_lossy().strip_prefix("@user/") {
+            at.path = root.join(entry);
+        }
+
+        at
     }
 
     /// Goto the declaration of the type, which only the analyzer knows
@@ -98,7 +120,7 @@ impl Server {
             .and_then(|a| a.type_definition(&path, byte));
 
         match found {
-            Some(at) => location(&at),
+            Some(at) => location(&self.real_path(at)),
 
             None => Value::Null,
         }
@@ -116,12 +138,150 @@ impl Server {
 
         let uri = &params["textDocument"]["uri"];
 
-        let out: Vec<Value> = navigate::references(src, byte, include)
+        let mut out: Vec<Value> = navigate::references(src, byte, include)
             .into_iter()
             .map(|span| json!({ "uri": uri, "range": lines.range(src, span) }))
             .collect();
 
+        /*
+        The project answers next, for a name the file does not own.
+
+        A local is answered above and belongs to one file by
+        definition. Everything else, a module's export or a type, is
+        used in files this one never mentions, and an editor that lists
+        one file for those is listing the wrong thing. The walk asks
+        the analyzer where each candidate resolves and keeps the ones
+        that land on the declaration the cursor named, so a name that
+        two modules both use does not collect the other module's uses.
+        */
+        let already: std::collections::HashSet<String> =
+            out.iter().map(|hit| hit["range"].to_string()).collect();
+
+        if let Some(found) = self.project_references(params, src, byte, include) {
+            out.extend(
+                found
+                    .into_iter()
+                    .filter(|hit| !already.contains(&hit["range"].to_string())),
+            );
+        }
+
         json!(out)
+    }
+
+    /*
+    The uses of one declaration across the project.
+
+    `None` means the question is not a project question: the cursor
+    named a local, or there is no analyzer, or no root to walk. The
+    declaration is the identity, so the walk resolves every candidate
+    and compares: same file, same position, same name.
+
+    The token filter is what makes this affordable. A file that never
+    spells the name cannot use it, so the analyzer sees a handful of
+    files rather than the project.
+    */
+    fn project_references(
+        &self,
+        params: &Value,
+        src: &str,
+        byte: u32,
+        include: bool,
+    ) -> Option<Vec<Value>> {
+        let root = self.root.clone()?;
+        let name = super::navigate::name_at(src, byte)?;
+        let here = params["textDocument"]["uri"]
+            .as_str()
+            .and_then(path_of_uri)?;
+
+        // The declaration this question is about, as the analyzer sees it.
+        let anchor = {
+            let mut analysis = self.analysis.borrow_mut();
+            let analysis = analysis.as_mut()?;
+
+            analysis.definition(&here, byte)?
+        };
+
+        let mut out = Vec::new();
+
+        for path in self.project_files(&root) {
+            let text = match path == here {
+                true => src.to_owned(),
+
+                false => match self.documents.get(&super::uri::uri_of_path(&path)?) {
+                    Some(open) => open.clone(),
+
+                    None => std::fs::read_to_string(&path).ok()?,
+                },
+            };
+
+            if !text.contains(name.as_str()) {
+                continue;
+            }
+
+            let lines = rpc::Lines::new(&text);
+            let uri = super::uri::uri_of_path(&path)?;
+
+            for (start, end) in super::navigate::occurrences(&text, &name) {
+                // The declaration itself is the caller's choice to include.
+                let same_file_declaration = path == here
+                    && anchor.path == here
+                    && lines.position(&text, start).0 == anchor.start.0;
+
+                if same_file_declaration && !include {
+                    continue;
+                }
+
+                /*
+                The borrow ends with the block, before the next
+                candidate asks for it again. A resolution that answers
+                nothing is a name that is spelled the same and
+                declared elsewhere.
+                */
+                let found = {
+                    let mut analysis = self.analysis.borrow_mut();
+
+                    let Some(analysis) = analysis.as_mut() else {
+                        return Some(out);
+                    };
+
+                    analysis.open(&path, &super::analysis::plain_view(&text));
+                    analysis.definition(&path, start)
+                };
+
+                let Some(found) = found else {
+                    continue;
+                };
+
+                if found.path == anchor.path && found.start == anchor.start {
+                    out.push(json!({
+                        "uri": uri,
+                        "range": lines.range(&text, (start, end)),
+                    }));
+                }
+            }
+        }
+
+        Some(out)
+    }
+
+    /*
+    The Luau files of the project, for a walk that answers one request.
+
+    The excludes of the project apply, because a file the project
+    excluded is not part of it. A failure to read the config leaves the
+    walk empty rather than guessing at a tree.
+    */
+    fn project_files(&self, root: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let Ok((root_in, root_ex)) = crate::commands::fmt::root_lists(root, None) else {
+            return Vec::new();
+        };
+
+        let Ok(excludes) = self.lint.excludes_under(root, &root_in, &root_ex) else {
+            return Vec::new();
+        };
+
+        crate::commands::fmt::collect(root, &[], &excludes, &self.worms.claimed())
+            .unwrap_or_default()
     }
 
     /// The other uses of the binding under the cursor, for the editor to shade

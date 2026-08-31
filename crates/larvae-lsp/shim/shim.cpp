@@ -2892,6 +2892,97 @@ module that wrote it.
 A name with no answer returns 0 rather than a guess. A wrong jump costs a
 reader more than no jump, because they have to work out where they landed.
 */
+/*
+Where the type alias under a position was declared, or 0.
+
+A prefixed name, ex: `types.User`, names an imported module and the
+scope holds which one; a bare name is an alias of this file or of a
+scope above the cursor. Both end at a scope that recorded where the
+alias name was written. Definition and type definition ask the same
+question of an annotation, so they share the walk.
+*/
+static int typeAliasLocation(
+    LarvaeSession* s, Luau::Module& module, const char* path, Luau::Position position, LarvaeLocation* out)
+{
+    const Luau::SourceModule* source = s->frontend.getSourceModule(path);
+
+    if (!source)
+        return 0;
+
+    std::vector<Luau::AstNode*> ancestry = Luau::findAstAncestryOfPosition(*source, position, true);
+
+    for (Luau::AstNode* up : ancestry)
+    {
+        /*
+        The declaration answers with itself. A reader who asks where a
+        name is declared while standing on the declaration has their
+        answer, and a project-wide search resolves each use through
+        this same call, so the declaration has to resolve like a use.
+        */
+        if (auto* alias = up->as<Luau::AstStatTypeAlias>())
+        {
+            if (alias->nameLocation.containsClosed(position))
+                return fillLocation(s, path, alias->nameLocation, out);
+        }
+
+        auto* reference = up->as<Luau::AstTypeReference>();
+
+        if (!reference)
+            continue;
+
+        Luau::ScopePtr scope = Luau::findScopeAtPosition(module, position);
+
+        if (!scope)
+            return 0;
+
+        const std::string name(reference->name.value);
+
+        if (reference->prefix)
+        {
+            const std::string prefix(reference->prefix->value);
+
+            for (Luau::ScopePtr at = scope; at; at = at->parent)
+            {
+                auto found = at->importedModules.find(prefix);
+
+                if (found == at->importedModules.end())
+                    continue;
+
+                Luau::ModulePtr imported = s->frontend.moduleResolver.getModule(found->second);
+
+                if (!imported)
+                    return 0;
+
+                Luau::ScopePtr top = imported->getModuleScope();
+
+                if (!top)
+                    return 0;
+
+                auto where = top->typeAliasNameLocations.find(name);
+
+                if (where != top->typeAliasNameLocations.end())
+                    return fillLocation(s, found->second, where->second, out);
+
+                return 0;
+            }
+
+            return 0;
+        }
+
+        for (Luau::ScopePtr at = scope; at; at = at->parent)
+        {
+            auto where = at->typeAliasNameLocations.find(name);
+
+            if (where != at->typeAliasNameLocations.end())
+                return fillLocation(s, path, where->second, out);
+        }
+
+        return 0;
+    }
+
+    return 0;
+}
+
 int larvae_definition(LarvaeSession* s, const char* path, uint32_t byte, LarvaeLocation* out)
 {
     auto it = s->open.find(path);
@@ -2915,7 +3006,13 @@ int larvae_definition(LarvaeSession* s, const char* path, uint32_t byte, LarvaeL
     LineIndex lines(it->second);
     Luau::Position position = lines.positionOf(byte);
 
-    std::vector<Luau::AstNode*> ancestry = Luau::findAstAncestryOfPosition(*source, position);
+    /*
+    The walk includes the type annotations, because a jump from a type
+    name is one of the questions this answers. Without the flag the
+    ancestry stops at the statement and every annotation reads as
+    nothing.
+    */
+    std::vector<Luau::AstNode*> ancestry = Luau::findAstAncestryOfPosition(*source, position, true);
     if (ancestry.empty())
         return 0;
 
@@ -2953,6 +3050,10 @@ int larvae_definition(LarvaeSession* s, const char* path, uint32_t byte, LarvaeL
             return fillLocation(s, target, Luau::Location{}, out);
         }
     }
+
+    // A type name answers from the alias that declares it.
+    if (int found = typeAliasLocation(s, *module, path, position, out))
+        return found;
 
     /*
     A field of a table answers from the table's own type. The property
@@ -3042,7 +3143,18 @@ int larvae_type_definition(LarvaeSession* s, const char* path, uint32_t byte, La
         return 0;
 
     LineIndex lines(it->second);
-    std::optional<Luau::TypeId> type = Luau::findTypeAtPosition(*module, *source, lines.positionOf(byte));
+    Luau::Position position = lines.positionOf(byte);
+
+    /*
+    A cursor already on a type name answers with that alias, because
+    the shape of a type is the type itself. The value path below reads
+    the type of an expression, and an annotation is not one, so
+    without this the question went unanswered on every annotation.
+    */
+    if (int found = typeAliasLocation(s, *module, path, position, out))
+        return found;
+
+    std::optional<Luau::TypeId> type = Luau::findTypeAtPosition(*module, *source, position);
     if (!type)
         return 0;
 

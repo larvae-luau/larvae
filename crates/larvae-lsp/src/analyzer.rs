@@ -1555,6 +1555,64 @@ mod studio_definitions {
     }
 
     /*
+    A type name jumps to the alias that declares it, in either file.
+
+    The walk that finds the node skipped every annotation, so a type
+    was a place the editor could not navigate from at all: an imported
+    `types.User`, a local alias, and the declaration itself all
+    answered nothing.
+    */
+    #[test]
+    fn a_type_name_finds_its_alias() {
+        let _luau = super::luau_globals::shared();
+        let dir = tempfile::tempdir().expect("a temp dir");
+
+        let types = dir.path().join("types.luau");
+        std::fs::write(
+            &types,
+            "export type User = {\n\tname: string,\n}\n\nreturn {}\n",
+        )
+        .expect("writes");
+
+        let main = dir.path().join("main.luau");
+        let text = "local types = require(\"./types\")\nlocal user: types.User = nil\n\ntype Id = string\nlocal id: Id = \"x\"\n\nreturn { user, id }\n";
+        std::fs::write(&main, text).expect("writes");
+
+        let mut analysis = LuauAnalysis::new();
+        analysis.definitions("@roblox", GLOBAL_TYPES);
+        analysis.open(&main, text);
+
+        let at = |what: &str| text.find(what).expect("the probe text") as u32;
+
+        // The imported type reaches the file that exports it.
+        let found = analysis
+            .definition(&main, at("User"))
+            .expect("the imported type answers");
+
+        assert!(found.path.ends_with("types.luau"), "{found:?}");
+        assert_eq!(found.start.0, 0, "line 1 declares it: {found:?}");
+
+        // The shape of a type is the type, so type definition agrees.
+        let found = analysis
+            .type_definition(&main, at("User"))
+            .expect("type definition answers");
+
+        assert!(found.path.ends_with("types.luau"), "{found:?}");
+
+        // A local alias answers from its own file, from the use and
+        // from the declaration alike.
+        let from_use = analysis
+            .definition(&main, at(": Id") + 2)
+            .expect("the use answers");
+        let from_declaration = analysis
+            .definition(&main, at("type Id") + 5)
+            .expect("the declaration answers");
+
+        assert_eq!(from_use.start, from_declaration.start);
+        assert_eq!(from_use.start.0, 3, "line 4 declares it: {from_use:?}");
+    }
+
+    /*
     A field of another module jumps to the line that declares it.
 
     The jump asked the type where it came from, and only a function

@@ -55,6 +55,59 @@ pub fn references(src: &str, byte: u32, include_declaration: bool) -> Vec<(u32, 
 }
 
 /*
+The identifier the cursor sits in, for a question about the project.
+
+A byte inside a name answers that name, and a byte anywhere else
+answers nothing, so a click on a string or an operator asks the
+project nothing.
+*/
+pub fn name_at(src: &str, byte: u32) -> Option<String> {
+    let b = src.as_bytes();
+    let at = (byte as usize).min(b.len());
+
+    let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+
+    let mut start = at;
+    while start > 0 && word(b[start - 1]) {
+        start -= 1;
+    }
+
+    let mut end = at;
+    while end < b.len() && word(b[end]) {
+        end += 1;
+    }
+
+    if start == end || b[start].is_ascii_digit() {
+        return None;
+    }
+
+    Some(src[start..end].to_owned())
+}
+
+/*
+Every place one name is written as a name of its own.
+
+The spans are candidates and not answers: the caller resolves each one
+and keeps what lands on the declaration it asked about. A match inside
+a longer word is not a use of the name, and neither is one inside a
+comment or a string, which the lexer settles.
+*/
+pub fn occurrences(src: &str, name: &str) -> Vec<(u32, u32)> {
+    use crate::syntax::lexer::TokKind;
+
+    let Ok(lexed) = crate::syntax::lexer::lex(src) else {
+        return Vec::new();
+    };
+
+    lexed
+        .toks
+        .iter()
+        .filter(|tok| tok.kind == TokKind::Ident && tok.text(src) == name)
+        .map(|tok| (tok.start, tok.end))
+        .collect()
+}
+
+/*
 The same set as [`references`], with the role of each use.
 
 The editor paints a write in a different colour from a read, so the author
@@ -628,5 +681,51 @@ mod tests {
         let src = "local T = require(\"./t\")\ntype Foo = T.Foo\nprint(T)\n";
 
         assert_eq!(rename(src, at(src, "T", 0), "Types"), None);
+    }
+}
+#[cfg(test)]
+mod project_names {
+    use super::{name_at, occurrences};
+
+    /// The cursor inside a name answers that name, and nowhere else.
+    #[test]
+    fn a_name_answers_only_from_inside_itself() {
+        let src = "local user: types.User = nil\n";
+
+        assert_eq!(
+            name_at(src, src.find("User").unwrap() as u32).as_deref(),
+            Some("User")
+        );
+        assert_eq!(
+            name_at(src, src.find("types").unwrap() as u32).as_deref(),
+            Some("types")
+        );
+        // A byte the names do not touch answers nothing. The cursor just
+        // after a name still belongs to it, the way hover reads it.
+        assert_eq!(name_at(src, src.find('=').unwrap() as u32), None);
+        assert_eq!(
+            name_at(src, (src.find(':').unwrap()) as u32).as_deref(),
+            Some("user")
+        );
+
+        // A number is not a name, whatever its characters.
+        assert_eq!(name_at("local n = 42\n", 11), None);
+    }
+
+    /*
+    An occurrence is a name of its own. A longer word that holds the
+    letters is a different name, and a comment or a string holds no
+    name at all.
+    */
+    #[test]
+    fn an_occurrence_is_a_whole_name() {
+        let src = "local User = 1\nlocal UserData = 2\n-- User in prose\nlocal s = \"User\"\nreturn User\n";
+        let found = occurrences(src, "User");
+
+        assert_eq!(found.len(), 2, "the declaration and the return: {found:?}");
+
+        for (start, end) in found {
+            assert_eq!(&src[start as usize..end as usize], "User");
+        }
     }
 }
