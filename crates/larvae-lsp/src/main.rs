@@ -11,6 +11,9 @@ subcommand, which keeps a plain workspace build away from the C++.
 #[cfg(feature = "analyzer")]
 mod analyzer;
 
+#[cfg(all(test, feature = "analyzer"))]
+mod roblox_enum_tests;
+
 // Pure path logic, so it compiles and tests without the vendored C++.
 mod resolve;
 

@@ -12,6 +12,7 @@ session is used from one thread, which the Rust side guarantees.
 */
 
 #include "shim.h"
+#include "roblox.h"
 
 /*
 The layout the Rust side declares, checked where it is defined.
@@ -862,6 +863,9 @@ int larvae_set_definitions(LarvaeSession* s, const char* name, const char* sourc
     Luau::LoadDefinitionFileResult result = s->frontend.loadDefinitionFile(
         s->frontend.globals, s->frontend.globals.globalScope, source, name, false, false);
 
+    if (result.success && strcmp(name, "@roblox") == 0)
+        Larvae::registerRobloxEnums(s->frontend.globals);
+
     attachServiceLookup(s->frontend.globals);
     attachInstanceNew(s->frontend.globals);
 
@@ -884,6 +888,9 @@ int larvae_set_definitions(LarvaeSession* s, const char* name, const char* sourc
                              .loadDefinitionFile(s->frontend.globalsForAutocomplete,
                                  s->frontend.globalsForAutocomplete.globalScope, source, name, false, true)
                              .success;
+
+        if (autocompleteOk && strcmp(name, "@roblox") == 0)
+            Larvae::registerRobloxEnums(s->frontend.globalsForAutocomplete);
 
         attachServiceLookup(s->frontend.globalsForAutocomplete);
         attachInstanceNew(s->frontend.globalsForAutocomplete);

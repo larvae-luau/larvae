@@ -84,6 +84,8 @@ fn build_analyzer() {
     let target = std::env::var("TARGET").unwrap();
     let platform = Platform::of(&target);
 
+    println!("cargo:rerun-if-changed=shim/roblox.cpp");
+    println!("cargo:rerun-if-changed=shim/roblox.h");
     println!("cargo:rerun-if-changed=shim/shim.cpp");
     println!("cargo:rerun-if-changed=shim/shim.h");
     println!("cargo:rerun-if-changed=luau.pin");
@@ -164,6 +166,7 @@ fn build_analyzer() {
         .include(luau.join("Bytecode/include"))
         .include(luau.join("Compiler/include"))
         .include(luau.join("Analysis/include"))
+        .file("shim/roblox.cpp")
         .file("shim/shim.cpp")
         .warnings(false)
         .cargo_metadata(false)
