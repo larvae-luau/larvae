@@ -38,6 +38,8 @@ pub struct Resolver<'a> {
     /// The quote character for generated string literals
     pub quote: char,
     pub strict: bool,
+    /// Whether a cross-realm require stops the run, from `[requires]`
+    pub cross_realm: crate::config::requires::CrossRealm,
     /*
     The extensions a worm front-end claims, without the dot.
 
@@ -257,6 +259,7 @@ pub(super) mod fixture {
                 style: IndexingStyle::default(),
                 quote: '"',
                 strict: false,
+                cross_realm: Default::default(),
                 claimed: &self.claimed,
                 client_relative_requires,
             }

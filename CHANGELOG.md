@@ -13,6 +13,13 @@ Notable changes land here. Format follows
   symbols, even though larvae names a configured definition file by its
   path, and later files win when they document the same symbol
 
+- `[requires] cross_realm = "allow"` emits a require that crosses the
+  halves of the game instead of stopping the run, and
+  `-- larvae: allow(cross_realm_require)` allows one line where the
+  project keeps the check. Roblox replicates some containers the realm
+  rules call server only, so a place built that way has requires larvae
+  cannot know are correct
+
 ### Fixed
 
 - Roblox enum names such as `Enum.KeyCode` resolve in type annotations

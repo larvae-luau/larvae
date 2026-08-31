@@ -7,6 +7,17 @@ use serde::Deserialize;
 
 use super::process::default_true;
 
+/// What a require that crosses the halves of the game costs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CrossRealm {
+    /// The run stops on it, which is what a live game would do.
+    #[default]
+    Deny,
+    /// It is emitted as written.
+    Allow,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RequiresConfig {
@@ -21,6 +32,22 @@ pub struct RequiresConfig {
 
     #[serde(default)]
     pub strict: bool,
+
+    /*
+    Whether a require that crosses the halves of the game stops the run.
+
+    `deny` is the default and the old behaviour: the require compiles and
+    then fails in a live game, so larvae refuses to emit it. `allow` emits
+    it as written and says nothing.
+
+    Roblox now replicates some containers that the realm rules call server
+    only, and a place built that way has requires larvae cannot know are
+    correct. So the switch is the project's, and a file that needs the one
+    exception writes `-- larvae: allow(cross_realm_require)` on the line
+    instead of turning the check off everywhere.
+    */
+    #[serde(default)]
+    pub cross_realm: CrossRealm,
 
     /*
     Read require(script.Parent.Foo) style requires and rewrite them to the
@@ -98,6 +125,7 @@ impl Default for RequiresConfig {
             sourcemap: None,
             mounts: HashMap::new(),
             strict: false,
+            cross_realm: CrossRealm::default(),
             instance_input: true,
             overrides: None,
             indexing_style: None,

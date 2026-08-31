@@ -192,6 +192,7 @@ fn links_with(
         style: IndexingStyle::default(),
         quote: '"',
         strict: false,
+        cross_realm: Default::default(),
         claimed,
         // Links only resolve; the relative rewrite changes what a build emits.
         client_relative_requires: false,

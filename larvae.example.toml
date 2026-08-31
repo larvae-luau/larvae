@@ -59,7 +59,10 @@ run_order = 1                            # where our rules sit relative to worms
 
 [requires]
 target = "roblox-string"                 # or "path" (Lune), or "roblox-instance"
-strict = false                           # missing target file becomes an error
+strict = false
+# Whether a require across the halves of the game stops the run. "allow"
+# emits it as written, for a place whose containers Roblox replicates.
+cross_realm = "deny"                           # missing target file becomes an error
 instance_input = true                    # read require(script.Parent.X) as input
 client_relative_requires = false         # write a require inside StarterPlayer as ./ or ../
 # sourcemap = "sourcemap.json"           # Rojo's file to instance map, when you have one

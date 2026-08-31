@@ -15,14 +15,14 @@ pub mod minify;
 mod overrides;
 mod process;
 mod profile;
-mod requires;
+pub mod requires;
 mod rules;
 pub mod worms;
 
 pub use excludes::Excludes;
 pub use overrides::{Override, lookup as override_for, parse as parse_overrides};
 pub use process::{Input, ProcessConfig, QuoteStyle};
-pub use requires::{IndexingStyle, RequiresConfig, RojoConfig, Target};
+pub use requires::{CrossRealm, IndexingStyle, RequiresConfig, RojoConfig, Target};
 pub use rules::{
     AppendTextComment, PreserveSideEffects, RemoveAttribute, RemoveCalls, RemoveComments,
     RemoveInterpolatedString, RuleStatus, RulesConfig, rule_status,

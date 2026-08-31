@@ -332,6 +332,7 @@ impl Server {
             style: crate::config::IndexingStyle::default(),
             quote: '"',
             strict: false,
+            cross_realm: Default::default(),
             claimed: &claimed,
             client_relative_requires: false,
         };

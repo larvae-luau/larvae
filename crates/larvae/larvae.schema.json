@@ -266,6 +266,15 @@
           "default": false,
           "description": "Upgrade warn-level classes (missing target file, case mismatch) to errors. Unknown aliases and inexpressible/realm-violating requires are ALWAYS errors."
         },
+        "cross_realm": {
+          "type": "string",
+          "enum": [
+            "deny",
+            "allow"
+          ],
+          "default": "deny",
+          "description": "Whether a require that crosses the halves of the game stops the run. deny is the old behaviour: the require compiles and then fails in a live game, so larvae refuses to emit it. allow emits it as written. Roblox now replicates some containers the realm rules call server only, and one file writes -- larvae: allow(cross_realm_require) instead of turning the check off everywhere."
+        },
         "instance_input": {
           "type": "boolean",
           "enum": [

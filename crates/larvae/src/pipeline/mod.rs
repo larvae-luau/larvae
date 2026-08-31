@@ -221,6 +221,7 @@ fn run_inner(
         style: config.requires.indexing_style.unwrap_or_default(),
         quote: config.process.quotes.char(),
         strict: config.requires.strict,
+        cross_realm: config.requires.cross_realm,
         claimed: &claimed,
         client_relative_requires: config.requires.client_relative_requires,
     };

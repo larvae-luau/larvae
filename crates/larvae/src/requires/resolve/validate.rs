@@ -20,6 +20,41 @@ level is `deny`, and a deny reaches a report as an error.
 */
 pub(crate) const CROSS_REALM_REQUIRE: &str = "cross_realm_require";
 
+/*
+Reports if the author allowed this one require to cross.
+
+The finding reads like a lint finding, so it answers to the comment a
+lint answers to: `-- larvae: allow(cross_realm_require)`, on the line
+of the require or on the line above it. A place that Roblox now
+replicates has requires larvae cannot know are correct, and one line
+is the narrow way to say so; `[requires] cross_realm = "allow"` is the
+wide one.
+*/
+fn allowed_here(src: &str, offset: usize) -> bool {
+    let starts: Vec<usize> = std::iter::once(0)
+        .chain(src.match_indices('\n').map(|(i, _)| i + 1))
+        .collect();
+
+    let line = starts.partition_point(|&s| s <= offset.min(src.len())) - 1;
+
+    let text_of = |n: usize| -> &str {
+        let from = starts[n];
+        let to = starts.get(n + 1).copied().unwrap_or(src.len());
+
+        &src[from..to]
+    };
+
+    let allows = |text: &str| {
+        text.split("--").skip(1).any(|comment| {
+            let flat: String = comment.chars().filter(|c| !c.is_whitespace()).collect();
+
+            flat.contains("larvae:allow(") && flat.contains(CROSS_REALM_REQUIRE)
+        })
+    };
+
+    allows(text_of(line)) || (line > 0 && allows(text_of(line - 1)))
+}
+
 /// A require whose two ends run on different halves of the game
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Crossing {
@@ -143,7 +178,10 @@ impl<'a> Resolver<'a> {
         compiles and then fails in a live game. Both `larvae process` and
         `larvae check` stop on it.
         */
-        if let Some(crossing) = crossing(ctx.realm(), target_realm) {
+        if let Some(crossing) = crossing(ctx.realm(), target_realm)
+            && self.cross_realm == crate::config::CrossRealm::Deny
+            && !allowed_here(src, offset)
+        {
             diags.push(
                 crossing
                     .diag(
@@ -292,7 +330,10 @@ impl<'a> Resolver<'a> {
         }
 
         // The same realm rule that [`check_dm`] applies, on a path with no file.
-        if let Some(crossing) = crossing(ctx.realm(), target) {
+        if let Some(crossing) = crossing(ctx.realm(), target)
+            && self.cross_realm == crate::config::CrossRealm::Deny
+            && !allowed_here(src, offset)
+        {
             diags.push(crossing.diag(ctx.path, "", service).at(src, offset));
         }
     }
@@ -305,6 +346,36 @@ mod tests {
     use crate::diag::Severity;
 
     const CLIENT: Option<Realm> = Some(Realm::StarterClone);
+
+    /*
+    The one-line allowance answers on its own line and on the line
+    above, and nowhere else. A place Roblox replicates has requires
+    larvae cannot know are correct, and this is the narrow way to say
+    so.
+    */
+    #[test]
+    fn the_allow_comment_covers_its_own_line_and_the_one_above() {
+        let src = "-- larvae: allow(cross_realm_require)\nlocal a = require(\"@game/x\")\nlocal b = require(\"@game/y\")\n";
+        let second = src.find("require(\"@game/x\")").expect("the probe line");
+        let third = src.find("require(\"@game/y\")").expect("the probe line");
+
+        assert!(
+            super::allowed_here(src, second),
+            "the line below the comment"
+        );
+        assert!(
+            !super::allowed_here(src, third),
+            "two lines below is not covered"
+        );
+
+        // The same words on the line itself count too.
+        let inline = "local a = require(\"@game/x\") -- larvae: allow(cross_realm_require)\n";
+        assert!(super::allowed_here(inline, 10));
+
+        // An allow for another name leaves this one alone.
+        let other = "local a = require(\"@game/x\") -- larvae: allow(unused_variable)\n";
+        assert!(!super::allowed_here(other, 10));
+    }
     const SHARED: Option<Realm> = Some(Realm::Shared);
     const SERVER: Option<Realm> = Some(Realm::ServerOnly);
 
