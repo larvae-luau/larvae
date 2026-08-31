@@ -1612,6 +1612,30 @@ mod studio_definitions {
         assert_eq!(from_use.start.0, 3, "line 4 declares it: {from_use:?}");
     }
 
+    /// A function return annotation jumps to the alias name, not the function.
+    #[test]
+    fn a_return_annotation_finds_its_alias() {
+        let _luau = super::luau_globals::shared();
+        let source = "export type Output = () -> Vector3\n\nconst function make(position: Vector3): Output\n\treturn function(): Vector3\n\t\treturn position\n\tend\nend\n";
+        let path = std::path::Path::new("/return-type.luau");
+        let mut analysis = LuauAnalysis::new();
+
+        analysis.definitions("@roblox", GLOBAL_TYPES);
+        analysis.open(path, source);
+
+        let use_at = source.rfind("Output").expect("the return annotation") as u32;
+        let declaration_at = source.find("Output").expect("the exported alias") as u32;
+
+        for at in [use_at, use_at + 1] {
+            let found = analysis
+                .definition(path, at)
+                .expect("the return annotation answers");
+
+            assert_eq!(found.start, (0, declaration_at));
+            assert_eq!(found.end, (0, declaration_at + "Output".len() as u32));
+        }
+    }
+
     /*
     A field of another module jumps to the line that declares it.
 
