@@ -1261,11 +1261,11 @@ reads as dead everywhere else.
 */
 #[cfg(test)]
 unsafe extern "C" {
-    fn larvae_reset_flags();
+    pub(crate) fn larvae_reset_flags();
 }
 
 #[cfg(test)]
-mod luau_globals {
+pub(crate) mod luau_globals {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Mutex, MutexGuard};
 
