@@ -13,6 +13,7 @@ drift, and worms that teach it languages beyond Luau.
 [![Release](https://img.shields.io/github/v/release/larvae-luau/larvae?color=10E694&label=release)](https://github.com/larvae-luau/larvae/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/larvae-luau/larvae/total?color=10E694&label=downloads)](https://github.com/larvae-luau/larvae/releases)
 [![License](https://img.shields.io/badge/license-MIT-10E694)](LICENSE.md)
+[![Support on Ko-fi](https://img.shields.io/badge/support-ko--fi-10E694?logo=ko-fi&logoColor=white)](https://ko-fi.com/savruun)
 
 </div>
 

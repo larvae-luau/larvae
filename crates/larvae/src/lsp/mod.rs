@@ -224,10 +224,6 @@ pub fn run_pending(analysis: Option<Pending>) -> Result<()> {
                 if let Some(uri) = server.last_typed.take() {
                     server.refresh_dependents(&uri, &mut output)?;
                 }
-
-                if server.lsp.inlay_hints.update_delay > 0 {
-                    rpc::request(&mut output, "workspace/inlayHint/refresh", Value::Null)?;
-                }
             }
 
             Event::Eof => break,
@@ -663,15 +659,48 @@ impl Server {
                 if hint["textEdits"].is_null()
                     && let Some(insert) = hint["data"]["insert"].as_str().map(str::to_owned)
                     && let Some(uri) = hint["data"]["uri"].as_str().map(str::to_owned)
-                    && self.type_resolves_here(&uri, &insert)
                 {
-                    hint["textEdits"] = json!([{
-                        "range": {
-                            "start": hint["position"],
-                            "end": hint["position"],
+                    let mut edits = Vec::new();
+                    let at = hint["position"].clone();
+
+                    let written = match self.type_resolves_here(&uri, &insert) {
+                        true => Some(insert.clone()),
+
+                        /*
+                        The name belongs to a module this file requires,
+                        so it has a spelling here: `jecs.Query`, or the
+                        bare name beside an alias that declares it.
+                        `[lsp.inlay_hints] accept_imports` picks which.
+                        */
+                        false => match self.imported_insert(&uri, &insert) {
+                            Some((written, alias)) => {
+                                if let Some(alias) = alias
+                                    && let Some(line) = self.import_line(&uri)
+                                {
+                                    edits.push(json!({
+                                        "range": {
+                                            "start": { "line": line, "character": 0 },
+                                            "end": { "line": line, "character": 0 },
+                                        },
+                                        "newText": format!("{alias}\n"),
+                                    }));
+                                }
+
+                                Some(written)
+                            }
+
+                            None => None,
                         },
-                        "newText": insert,
-                    }]);
+                    };
+
+                    if let Some(written) = written {
+                        edits.push(json!({
+                            "range": { "start": at.clone(), "end": at },
+                            "newText": written,
+                        }));
+
+                        hint["textEdits"] = json!(edits);
+                    }
                 }
 
                 self.reply(message, out, hint)?;

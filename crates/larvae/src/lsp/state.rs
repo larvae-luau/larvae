@@ -1044,10 +1044,6 @@ impl Server {
             self.publish(other, out)?;
         }
 
-        if !dependents.is_empty() {
-            super::rpc::request(out, "workspace/inlayHint/refresh", serde_json::Value::Null)?;
-        }
-
         Ok(())
     }
 

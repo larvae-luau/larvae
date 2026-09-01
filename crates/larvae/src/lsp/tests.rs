@@ -468,11 +468,12 @@ fn a_space_named_key_accepts_as_a_bracket_access() {
 }
 
 /*
-The hints hold still while the author types.
+The hold answers a mid-edit request with the last settled hints.
 
-A request that lands inside the update delay answers with the last
-settled hints, whatever the text now says. The refresh after the pause
-is what makes the editor ask again.
+It is off by default, the way luau-lsp computes every request, so the
+test asks for it. A project sets a delay when it wants less inference
+on a slow machine, and takes the cost that a held hint can sit a
+column from its text until the pause.
 */
 #[test]
 fn hints_hold_still_while_typing() {
@@ -481,6 +482,7 @@ fn hints_hold_still_while_typing() {
         ..Server::default()
     };
     server.lsp.inlay_hints.variable_types = true;
+    server.lsp.inlay_hints.update_delay = 700;
 
     let uri = "file:///t.luau";
     server.documents.insert(uri.into(), "local a = 1\n".into());
@@ -3466,4 +3468,43 @@ fn the_flag_defaults_are_conservative() {
 
     assert_eq!(server.lsp.bytecode.debug_level, 1);
     assert_eq!(server.lsp.bytecode.vector_lib, "Vector3");
+}
+
+/*
+The default computes every request, which is what luau-lsp does.
+
+A held hint is drawn at the offset it had when the hold started, so it
+drifts from its text while the author types. The editor holds its own
+hints against the edits it makes and asks again on its own schedule,
+and that is what keeps a hint with the text it describes.
+*/
+#[test]
+fn the_hints_compute_live_by_default() {
+    let mut server = Server {
+        analysis: std::cell::RefCell::new(Some(Box::new(BytecodeAnalysis))),
+        ..Server::default()
+    };
+    server.lsp.inlay_hints.variable_types = true;
+
+    assert_eq!(
+        server.lsp.inlay_hints.update_delay, 0,
+        "the hold is off unless a project asks for it"
+    );
+
+    let uri = "file:///t.luau";
+    server.documents.insert(uri.into(), "local a = 1\n".into());
+
+    let params = json!({ "textDocument": { "uri": uri } });
+
+    server
+        .hint_cache
+        .borrow_mut()
+        .insert(uri.into(), json!([{ "label": ": stale" }]));
+    server.note_typing(uri);
+
+    assert_eq!(
+        server.inlay_hints(&params),
+        json!([]),
+        "a keystroke does not serve the cache when the hold is off"
+    );
 }
