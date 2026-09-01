@@ -18,6 +18,16 @@ Notable changes land here. Format follows
   behaviour. A name two required modules both export writes nothing,
   because a guess between them puts the wrong type in someone's file
 
+### Fixed
+
+- `[aliases]` of `larvae.toml` resolve with no `.luaurc` in sight. The
+  config says its entries merge over that file per key, and the build
+  has read both since the beginning, but the analyzer read `.luaurc`
+  alone: a project that wrote its aliases in one file got
+  `Unknown type` from `larvae analyze` and from the editor. A value
+  that names a place in the DataModel goes through the mounts, which
+  is the form `.luaurc` cannot express
+
 ### Changed
 
 - The inlay hints compute on every request, the way luau-lsp answers

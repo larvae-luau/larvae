@@ -222,6 +222,18 @@ pub trait Analysis: Send {
     A server without a map still resolves the relative forms, which is the
     honest answer for a project that has no rojo project and no mounts.
     */
+    /*
+    The `[aliases]` of the project, for the resolver behind the seam.
+
+    `.luaurc` is not the only file that names an alias, and a project
+    that writes them in `larvae.toml` alone still means them. The
+    build has read both since the beginning; this is the editor and
+    `larvae analyze` reading the same pair.
+    */
+    fn set_aliases(&mut self, aliases: std::collections::HashMap<String, String>) {
+        let _ = aliases;
+    }
+
     fn set_mounts(&mut self, mounts: crate::requires::datamodel::MountTable) {
         let _ = mounts;
     }

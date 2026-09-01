@@ -443,6 +443,14 @@ struct ResolverState {
     files it is able to.
     */
     claims: Vec<String>,
+    /*
+    The `[aliases]` of `larvae.toml`, lowercased by key.
+
+    `.luaurc` is the other half and the resolver reads it from disk. A
+    project that names an alias in one file and not the other means it
+    all the same, and the build has read both since the beginning.
+    */
+    aliases: HashMap<String, String>,
 }
 
 /// One string the shim handed back, or None where it handed back null
@@ -548,6 +556,7 @@ extern "C" fn resolve_cb(
             &spec,
             state.mounts.as_ref(),
             &state.claims,
+            &state.aliases,
         ),
     };
 
@@ -818,6 +827,7 @@ impl LuauAnalysis {
             hooks: None,
             mounts: None,
             claims: Vec::new(),
+            aliases: HashMap::new(),
         });
 
         let session = unsafe { larvae_session_new() };
@@ -1064,6 +1074,10 @@ impl Analysis for LuauAnalysis {
 
     fn set_mounts(&mut self, mounts: larvae::requires::datamodel::MountTable) {
         self.resolver.mounts = Some(mounts);
+    }
+
+    fn set_aliases(&mut self, aliases: HashMap<String, String>) {
+        self.resolver.aliases = aliases;
     }
 
     fn services(&mut self) -> Vec<String> {

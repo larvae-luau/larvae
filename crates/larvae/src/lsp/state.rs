@@ -422,6 +422,27 @@ impl Server {
                 rojo.as_ref(),
                 &mut ignored,
             ));
+
+            /*
+            The `[aliases]` of the project, absolute, so the resolver
+            behind the seam joins them without knowing the root. A
+            DataModel value stays as written, because the mounts are
+            what turn one into a directory.
+            */
+            analysis.set_aliases(
+                cfg.alias_map()
+                    .into_iter()
+                    .map(|(name, value)| {
+                        let value = match value.starts_with("@game/") {
+                            true => value,
+
+                            false => root.join(&value).to_string_lossy().into_owned(),
+                        };
+
+                        (name, value)
+                    })
+                    .collect(),
+            );
         }
 
         /*

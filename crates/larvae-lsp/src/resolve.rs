@@ -29,6 +29,7 @@ pub fn resolve_spec(
     spec: &str,
     mounts: Option<&larvae::requires::datamodel::MountTable>,
     claimed: &[String],
+    aliases: &std::collections::HashMap<String, String>,
 ) -> Option<PathBuf> {
     let is_init = from
         .file_stem()
@@ -56,7 +57,7 @@ pub fn resolve_spec(
     A `.luaurc` that defines `game` still wins. That file is the project
     speaking about its own names, and larvae does not overrule it.
     */
-    if spec.starts_with("@game/") && lookup_alias(own_dir, "game").is_none() {
+    if spec.starts_with("@game/") && lookup_alias(own_dir, "game", aliases).is_none() {
         let segments = larvae::requires::datamodel::parse_game_path(spec)?;
         let base = mounts?.fs_of(&segments)?;
 
@@ -77,7 +78,29 @@ pub fn resolve_spec(
             None => (rest, None),
         };
 
-        let base = lookup_alias(own_dir, alias)?;
+        let base = lookup_alias(own_dir, alias, aliases)?;
+
+        /*
+        An alias of `larvae.toml` may name a place in the DataModel,
+        which `.luaurc` cannot express. The mounts turn one into a
+        directory, the same way they answer a `@game` spec.
+        */
+        if let Some(text) = base.to_str()
+            && text.starts_with("@game/")
+        {
+            let mut segments = larvae::requires::datamodel::parse_game_path(text)?;
+
+            segments.extend(
+                tail.unwrap_or_default()
+                    .split('/')
+                    .filter(|piece| !piece.is_empty())
+                    .map(str::to_owned),
+            );
+
+            let base = mounts?.fs_of(&segments)?;
+
+            return as_module_file(&base, claimed);
+        }
 
         match tail {
             Some(tail) => base.join(tail),
@@ -140,9 +163,27 @@ pub fn resolve_chain(
     as_module_file(&base, claimed)
 }
 
-/// The aliases of the nearest .luaurc walking up from the requiring file
-fn lookup_alias(from_dir: &Path, alias: &str) -> Option<PathBuf> {
+/*
+Where one alias points, from the two files that name one.
+
+`larvae.toml` answers first, because its entries merge over `.luaurc`
+per key, which is the rule the config states and the rule the build
+follows. A project that writes an alias in `larvae.toml` alone still
+means it, and `larvae analyze` used to call the type unknown.
+
+Its value arrives absolute, or as a DataModel path the caller resolves
+through the mounts.
+*/
+fn lookup_alias(
+    from_dir: &Path,
+    alias: &str,
+    project: &std::collections::HashMap<String, String>,
+) -> Option<PathBuf> {
     let want = alias.to_lowercase();
+
+    if let Some(value) = project.get(&want) {
+        return Some(PathBuf::from(value));
+    }
 
     for dir in from_dir.ancestors() {
         let path = dir.join(".luaurc");
@@ -307,6 +348,7 @@ mod game_requires {
             "@game/ReplicatedStorage/App/Widget",
             Some(&table),
             &[],
+            &Default::default(),
         );
 
         assert_eq!(found, Some(dir.path().join("src/Shared/Widget.luau")));
@@ -323,6 +365,7 @@ mod game_requires {
             "@game/ReplicatedStorage/App/Widget",
             Some(&table),
             &[],
+            &Default::default(),
         );
 
         assert_eq!(found, Some(dir.path().join("src/Shared/Widget.luau")));
@@ -339,6 +382,7 @@ mod game_requires {
             "@game/ReplicatedStorage/App/Pkg",
             Some(&table),
             &[],
+            &Default::default(),
         );
 
         assert_eq!(found, Some(dir.path().join("src/Shared/Pkg/init.luau")));
@@ -367,6 +411,7 @@ mod game_requires {
             "@game/Widget",
             Some(&table),
             &[],
+            &Default::default(),
         );
 
         assert_eq!(found, Some(dir.path().join("custom/Widget.luau")));
@@ -382,7 +427,8 @@ mod game_requires {
                 &dir.path().join("tools/build.luau"),
                 "@game/ReplicatedStorage/App/Widget",
                 None,
-                &[]
+                &[],
+                &Default::default(),
             ),
             None
         );
@@ -400,7 +446,8 @@ mod game_requires {
         let dir = tree(&["src/Shared/Widget.luau", "src/Shared/deep/user.luau"]);
         let from = dir.path().join("src/Shared/deep/user.luau");
 
-        let found = resolve_spec(&from, "./../Widget", None, &[]).expect("resolves");
+        let found =
+            resolve_spec(&from, "./../Widget", None, &[], &Default::default()).expect("resolves");
         let text = found.display().to_string();
 
         assert_eq!(found, dir.path().join("src/Shared/Widget.luau"));
@@ -418,12 +465,18 @@ mod game_requires {
         let from = dir.path().join("tools/build.luau");
 
         assert_eq!(
-            resolve_spec(&from, "./helper", Some(&table), &[]),
-            Some(dir.path().join("tools/helper.luau"))
+            resolve_spec(&from, "./helper", Some(&table), &[], &Default::default()),
+            Some(dir.path().join("tools/helper.luau")),
         );
         assert_eq!(
-            resolve_spec(&from, "@self/helper", Some(&table), &[]),
-            Some(dir.path().join("tools/helper.luau"))
+            resolve_spec(
+                &from,
+                "@self/helper",
+                Some(&table),
+                &[],
+                &Default::default()
+            ),
+            Some(dir.path().join("tools/helper.luau")),
         );
     }
 }
@@ -566,6 +619,128 @@ mod instance_chains {
 }
 
 #[cfg(test)]
+mod project_aliases {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn tree(files: &[&str]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("a temp dir");
+
+        for file in files {
+            let path = dir.path().join(file);
+            std::fs::create_dir_all(path.parent().expect("a parent")).expect("makes it");
+            std::fs::write(&path, "return {}\n").expect("writes");
+        }
+
+        dir
+    }
+
+    /*
+    An alias of `larvae.toml` resolves with no `.luaurc` in sight.
+
+    The config says its entries merge over `.luaurc` per key, and the
+    build reads both, but the analyzer read `.luaurc` alone: a project
+    that wrote its aliases in one file got `Unknown type` from
+    `larvae analyze` and from the editor.
+    */
+    #[test]
+    fn an_alias_of_the_project_resolves_without_luaurc() {
+        let dir = tree(&["src/main.luau", "src/shared/types.luau"]);
+
+        let mut aliases = HashMap::new();
+        aliases.insert(
+            "shared".to_owned(),
+            dir.path().join("src/shared").to_string_lossy().into_owned(),
+        );
+
+        assert_eq!(
+            resolve_spec(
+                &dir.path().join("src/main.luau"),
+                "@shared/types",
+                None,
+                &[],
+                &aliases,
+            ),
+            Some(dir.path().join("src/shared/types.luau"))
+        );
+    }
+
+    /// The project wins over `.luaurc`, which is the documented merge.
+    #[test]
+    fn the_project_wins_where_both_name_one_alias() {
+        let dir = tree(&["src/main.luau", "a/types.luau", "b/types.luau"]);
+
+        std::fs::write(
+            dir.path().join(".luaurc"),
+            "{ \"aliases\": { \"pkg\": \"a\" } }",
+        )
+        .expect("writes");
+
+        let mut aliases = HashMap::new();
+        aliases.insert(
+            "pkg".to_owned(),
+            dir.path().join("b").to_string_lossy().into_owned(),
+        );
+
+        assert_eq!(
+            resolve_spec(
+                &dir.path().join("src/main.luau"),
+                "@pkg/types",
+                None,
+                &[],
+                &aliases,
+            ),
+            Some(dir.path().join("b/types.luau"))
+        );
+
+        // With nothing in the project, `.luaurc` still answers.
+        assert_eq!(
+            resolve_spec(
+                &dir.path().join("src/main.luau"),
+                "@pkg/types",
+                None,
+                &[],
+                &Default::default(),
+            ),
+            Some(dir.path().join("a/types.luau"))
+        );
+    }
+
+    /*
+    A DataModel value goes through the mounts, which is the form
+    `.luaurc` cannot express and the reason `[aliases]` exists.
+    */
+    #[test]
+    fn a_datamodel_alias_resolves_through_the_mounts() {
+        use larvae::requires::datamodel::{Mount, MountTable};
+
+        let dir = tree(&["src/main.luau", "src/shared/types.luau"]);
+
+        let table = MountTable::new(vec![Mount {
+            fs: dir.path().join("src/shared"),
+            dm: vec!["ReplicatedStorage".into(), "Shared".into()],
+        }]);
+
+        let mut aliases = HashMap::new();
+        aliases.insert(
+            "shared".to_owned(),
+            "@game/ReplicatedStorage/Shared".to_owned(),
+        );
+
+        assert_eq!(
+            resolve_spec(
+                &dir.path().join("src/main.luau"),
+                "@shared/types",
+                Some(&table),
+                &[],
+                &aliases,
+            ),
+            Some(dir.path().join("src/shared/types.luau"))
+        );
+    }
+}
+
+#[cfg(test)]
 mod claimed_files {
     use super::*;
 
@@ -595,17 +770,23 @@ mod claimed_files {
         let claims = ["json".to_owned()];
 
         assert_eq!(
-            resolve_spec(&from, "./data", None, &claims),
-            Some(dir.path().join("src/data.json"))
+            resolve_spec(&from, "./data", None, &claims, &Default::default()),
+            Some(dir.path().join("src/data.json")),
         );
         assert_eq!(
-            resolve_spec(&from, "./data.json", None, &claims),
-            Some(dir.path().join("src/data.json"))
+            resolve_spec(&from, "./data.json", None, &claims, &Default::default()),
+            Some(dir.path().join("src/data.json")),
         );
 
         // No worm claims it, so nothing does, whichever way it is spelled.
-        assert_eq!(resolve_spec(&from, "./data", None, &[]), None);
-        assert_eq!(resolve_spec(&from, "./notes.txt", None, &claims), None);
+        assert_eq!(
+            resolve_spec(&from, "./data", None, &[], &Default::default()),
+            None
+        );
+        assert_eq!(
+            resolve_spec(&from, "./notes.txt", None, &claims, &Default::default()),
+            None
+        );
     }
 
     /// Luau wins over a claimed file of the same stem, as it does in a build.
@@ -615,8 +796,14 @@ mod claimed_files {
         let from = dir.path().join("src/a.luau");
 
         assert_eq!(
-            resolve_spec(&from, "./data", None, &["json".to_owned()]),
-            Some(dir.path().join("src/data.luau"))
+            resolve_spec(
+                &from,
+                "./data",
+                None,
+                &["json".to_owned()],
+                &Default::default()
+            ),
+            Some(dir.path().join("src/data.luau")),
         );
     }
 }
@@ -638,8 +825,8 @@ mod huskfall {
         }
 
         assert!(
-            resolve_spec(from, "../reactive/graph", None, &[]).is_some(),
-            "the resolver did not find ../reactive/graph"
+            resolve_spec(from, "../reactive/graph", None, &[], &Default::default()).is_some(),
+            "the resolver did not find ../reactive/graph",
         );
     }
 }

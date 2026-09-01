@@ -163,6 +163,22 @@ pub fn engine(
             rojo.as_ref(),
             &mut ignored,
         ));
+
+        // The `[aliases]` of the project, absolute, as the editor sends them.
+        analysis.set_aliases(
+            cfg.alias_map()
+                .into_iter()
+                .map(|(name, value)| {
+                    let value = match value.starts_with("@game/") {
+                        true => value,
+
+                        false => root.join(&value).to_string_lossy().into_owned(),
+                    };
+
+                    (name, value)
+                })
+                .collect(),
+        );
     }
 
     // The sourcemap tree, so `script` carries its own type.
