@@ -528,6 +528,184 @@ pub(super) fn export_type_names(text: &str) -> Vec<String> {
     names
 }
 
+/*
+The moonwave block for the declaration under a fresh doc comment.
+
+The author opens `---` above a function and wants its shape written
+out. The scan reads the line the cursor sits on: it has to be a doc
+comment with nothing after the dashes, and the line below it has to
+declare a function. Then the block names the function, lists a line
+per parameter, and returns what the declaration returns.
+
+A name that opens with an underscore takes `@private`, because the
+convention that hides it from a completion list is the same
+convention moonwave reads.
+*/
+pub(super) fn doc_scaffold_for(src: &str, at: u32) -> Option<(String, (u32, u32))> {
+    let at = (at as usize).min(src.len());
+    let line_start = src[..at].rfind('\n').map_or(0, |i| i + 1);
+    let line_end = src[at..].find('\n').map_or(src.len(), |i| at + i);
+    let line = &src[line_start..line_end];
+
+    // The cursor sits in a doc comment the author just opened.
+    let head = line.trim_start();
+    let indent = &line[..line.len() - head.len()];
+
+    if !head.starts_with("---") || head.trim_end_matches('-').trim() != "" {
+        return None;
+    }
+
+    // The declaration under it, past any blank lines.
+    let mut rest = src[line_end..].lines().skip(1);
+    let decl = loop {
+        match rest.next() {
+            Some(next) if next.trim().is_empty() => continue,
+            Some(next) => break next,
+
+            None => return None,
+        }
+    };
+
+    let (name, params, returns) = function_shape(decl)?;
+
+    let mut out = String::new();
+    out.push_str("--[=[\n");
+    out.push_str(&format!("{indent}\t{name}\n"));
+
+    // The tags read as one block under the name, with one blank between.
+    let mut tags = Vec::new();
+
+    if name.starts_with('_') {
+        tags.push("@private".to_owned());
+    }
+
+    for (param, ty) in &params {
+        tags.push(match ty {
+            Some(ty) => format!("@param {param} {ty}"),
+
+            None => format!("@param {param}"),
+        });
+    }
+
+    if let Some(ty) = returns {
+        tags.push(format!("@return {ty}"));
+    }
+
+    if !tags.is_empty() {
+        out.push_str(&format!("{indent}\n"));
+    }
+
+    for tag in tags {
+        out.push_str(&format!("{indent}\t{tag}\n"));
+    }
+
+    out.push_str(&format!("{indent}]=]"));
+
+    Some((out, (line_start as u32, line_end as u32)))
+}
+
+/*
+The name, the parameters, and the return of one declaration line.
+
+The read is textual, because the line under an unfinished comment is
+often the only part of the file that parses. `function a.b:c(x: T): R`
+gives back `c`, its parameters with the types the author wrote, and
+`R`.
+*/
+fn function_shape(line: &str) -> Option<(String, Vec<(String, Option<String>)>, Option<String>)> {
+    let text = line.trim();
+
+    let after = text
+        .strip_prefix("local function ")
+        .or_else(|| text.strip_prefix("const function "))
+        .or_else(|| text.strip_prefix("export function "))
+        .or_else(|| text.strip_prefix("function "))?;
+
+    let open = after.find('(')?;
+    let path = after[..open].trim();
+
+    // The last piece of `a.b:c` is the name the block describes.
+    let name = path
+        .rsplit([':', '.'])
+        .next()
+        .filter(|word| !word.is_empty())?
+        .to_owned();
+
+    let close = matching_paren(after, open)?;
+    let inside = &after[open + 1..close];
+
+    let mut params = Vec::new();
+
+    for piece in split_top_level(inside) {
+        let piece = piece.trim();
+
+        if piece.is_empty() {
+            continue;
+        }
+
+        match piece.split_once(':') {
+            Some((name, ty)) => params.push((name.trim().to_owned(), Some(ty.trim().to_owned()))),
+
+            None => params.push((piece.to_owned(), None)),
+        }
+    }
+
+    let returns = after[close + 1..]
+        .trim()
+        .strip_prefix(':')
+        .map(|ty| ty.trim().to_owned())
+        .filter(|ty| !ty.is_empty());
+
+    Some((name, params, returns))
+}
+
+/// The index of the `)` that closes the `(` at `open`
+fn matching_paren(text: &str, open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+
+    for (at, c) in text.char_indices().skip(open) {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+
+                if depth == 0 {
+                    return Some(at);
+                }
+            }
+
+            _ => {}
+        }
+    }
+
+    None
+}
+
+/// The comma separated pieces of one parameter list, brackets respected
+fn split_top_level(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut from = 0usize;
+
+    for (at, c) in text.char_indices() {
+        match c {
+            '(' | '{' | '<' | '[' => depth += 1,
+            ')' | '}' | '>' | ']' => depth -= 1,
+
+            ',' if depth == 0 => {
+                out.push(&text[from..at]);
+                from = at + 1;
+            }
+
+            _ => {}
+        }
+    }
+
+    out.push(&text[from..]);
+
+    out
+}
+
 fn visible_docs(docs: &str) -> String {
     let mut out = String::with_capacity(docs.len());
     let mut in_luau_fence = false;
@@ -1042,6 +1220,32 @@ impl Server {
     }
 
     /// Completions at the cursor, from the analyzer behind the seam
+    /*
+    The completion that writes a moonwave block, when the cursor sits
+    in a doc comment the author just opened above a declaration.
+
+    The edit replaces the line the comment opened, so accepting it
+    leaves the block and nothing of what was typed.
+    */
+    fn doc_scaffold(&self, src: &str, at: u32) -> Option<Value> {
+        let (text, (from, to)) = doc_scaffold_for(src, at)?;
+        let lines = rpc::Lines::new(src);
+
+        Some(json!({
+            "label": "--[=[ moonwave block",
+            "kind": 15,
+            "detail": "the name, its parameters, and what it returns",
+            "documentation": { "kind": "markdown", "value": format!("```luau\n{text}\n```") },
+            "sortText": "0doc",
+            "preselect": true,
+            "filterText": "---",
+            "textEdit": {
+                "range": lines.range(src, (from, to)),
+                "newText": text,
+            },
+        }))
+    }
+
     pub(super) fn completions(&self, params: &Value) -> Value {
         let uri = super::uri::uri_of(params);
 
@@ -1058,6 +1262,17 @@ impl Server {
         };
 
         let at = position_byte(src, params);
+
+        /*
+        A doc comment above a declaration answers with the block that
+        describes it: the name, a line per parameter, and the return.
+        The list is one item, and it is the whole answer, because a
+        reader who opened a comment there wants the scaffold and not
+        the names in scope.
+        */
+        if let Some(item) = self.doc_scaffold(src, at) {
+            return json!([item]);
+        }
 
         /*
         A require spec is answered first, and by the filesystem.

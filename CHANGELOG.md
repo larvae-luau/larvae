@@ -6,6 +6,23 @@ Notable changes land here. Format follows
 
 ## Unreleased
 
+### Added
+
+- A doc comment opened above a declaration offers its moonwave block:
+  the name, a line per parameter with the type the author wrote, and
+  the return. A name that opens with an underscore takes `@private`,
+  the convention that already hides it from a completion list
+- The moonwave tags of a comment read as tags. `@param`, `@return`,
+  `@private` and the rest take the colour of a keyword, and the word a
+  tag names takes the colour of a parameter. A tag counts only at the
+  start of its line, so a mail address in prose stays prose
+
+### Changed
+
+- The flags of a doc comment read as one row of badges above the
+  prose, ex: `🔒 Private · ⏳ Yields · 🖥️ Server`. As bold lines they
+  stacked and pushed the description down the card
+
 ### Fixed
 
 - The names inside an interpolated string take the colour code takes.

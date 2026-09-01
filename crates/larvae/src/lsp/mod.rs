@@ -926,7 +926,8 @@ fn capabilities(analysis: bool) -> Value {
         opens the aliases.
         */
         caps["completionProvider"] = json!({
-            "triggerCharacters": [".", ":", "\"", "'", "`", "/", "@"],
+            // `-` opens a doc comment, which answers with a moonwave block.
+            "triggerCharacters": [".", ":", "\"", "'", "`", "/", "@", "-"],
         });
     }
 

@@ -3542,3 +3542,43 @@ fn the_hints_compute_live_by_default() {
         "a keystroke does not serve the cache when the hold is off"
     );
 }
+
+/*
+A doc comment opened above a declaration answers with its block.
+
+The author types `---` and wants the shape of the thing below it
+written out: the name, a line per parameter with the type they wrote,
+and the return. A name that opens with an underscore takes `@private`,
+the same convention that hides it from a completion list.
+*/
+#[test]
+fn a_doc_comment_offers_the_moonwave_block() {
+    let src = "---\nlocal function add(a: number, b: string): boolean\n\treturn true\nend\n";
+    let (text, _) = super::features::doc_scaffold_for(src, 3).expect("a block");
+
+    assert_eq!(
+        text,
+        "--[=[\n\tadd\n\n\t@param a number\n\t@param b string\n\t@return boolean\n]=]"
+    );
+
+    // A method keeps the last piece of its path, and an underscore is private.
+    let hidden = "---\nfunction Class:_hidden(x)\nend\n";
+    let (text, _) = super::features::doc_scaffold_for(hidden, 3).expect("a block");
+
+    assert!(text.contains("\t_hidden\n"), "{text}");
+    assert!(text.contains("@private"), "{text}");
+    assert!(text.contains("@param x"), "{text}");
+}
+
+/// The block answers only where a comment opens above a declaration.
+#[test]
+fn the_moonwave_block_stays_out_of_prose() {
+    // A comment with words in it is prose the author is writing.
+    assert!(super::features::doc_scaffold_for("--- a note\nlocal function f() end\n", 4).is_none());
+
+    // Nothing to describe below it.
+    assert!(super::features::doc_scaffold_for("---\nlocal x = 1\n", 3).is_none());
+
+    // An ordinary comment is not a doc comment.
+    assert!(super::features::doc_scaffold_for("--\nlocal function f() end\n", 2).is_none());
+}

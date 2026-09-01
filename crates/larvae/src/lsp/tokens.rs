@@ -943,7 +943,7 @@ fn encode(src: &str, lexed: &Lexed, marks: &[Option<(u32, u32)>]) -> Vec<u32> {
 
     // A comment is not a token, so the lexer keeps its range on the side.
     for &(start, end) in &lexed.comments {
-        raw.push((start, end, COMMENT, 0));
+        raw.extend(doc_spans(src, start, end));
     }
 
     raw.sort_unstable_by_key(|&(start, end, ..)| (start, end));
@@ -1116,6 +1116,155 @@ fn hole_spans(src: &str, start: u32, end: u32) -> Vec<(u32, u32, u32, u32)> {
 
         at += 1;
     }
+
+    out
+}
+
+/// The moonwave tags larvae colours, and the ones that name something after
+const DOC_TAGS: &[&str] = &[
+    "class",
+    "client",
+    "deprecated",
+    "error",
+    "external",
+    "field",
+    "function",
+    "ignore",
+    "interface",
+    "method",
+    "param",
+    "plugin",
+    "private",
+    "prop",
+    "readonly",
+    "return",
+    "server",
+    "since",
+    "tag",
+    "type",
+    "unreleased",
+    "within",
+    "yields",
+];
+
+/// The tags whose first word names a thing, so that word reads as a parameter
+const DOC_NAMED: &[&str] = &["param", "prop", "field"];
+
+/*
+One comment, split so its moonwave tags read as tags.
+
+A doc comment carries structure that a reader scans for: `@param`,
+`@return`, `@private`. Painted as one comment they disappear into the
+prose around them. A tag takes the colour of a keyword, and the word a
+tag names takes the colour of a parameter.
+
+A tag counts only at the start of its line, after the comment marks. A
+mail address in the middle of a sentence is prose, and colouring it
+would be worse than leaving the whole line alone.
+*/
+fn doc_spans(src: &str, start: u32, end: u32) -> Vec<(u32, u32, u32, u32)> {
+    let text = &src[start as usize..end as usize];
+
+    if !text.contains('@') {
+        return vec![(start, end, COMMENT, 0)];
+    }
+
+    let mut out = Vec::new();
+    let mut at = 0usize;
+
+    for line in text.split_inclusive('\n') {
+        let base = at;
+        at += line.len();
+
+        // Past the comment marks and the whitespace, where a tag may open.
+        let after_marks = line
+            .char_indices()
+            .find(|(_, c)| !matches!(c, '-' | '[' | ']' | '=' | '*' | ' ' | '\t'))
+            .map(|(i, _)| i);
+
+        let Some(open) = after_marks else {
+            out.push((start + base as u32, start + at as u32, COMMENT, 0));
+
+            continue;
+        };
+
+        let rest = &line[open..];
+
+        let Some(word) = rest.strip_prefix('@') else {
+            out.push((start + base as u32, start + at as u32, COMMENT, 0));
+
+            continue;
+        };
+
+        let name: String = word
+            .chars()
+            .take_while(|c| c.is_ascii_alphabetic())
+            .collect();
+
+        if !DOC_TAGS.contains(&name.as_str()) {
+            out.push((start + base as u32, start + at as u32, COMMENT, 0));
+
+            continue;
+        }
+
+        let tag_end = open + 1 + name.len();
+
+        // The marks before the tag stay comment, then the tag itself.
+        if open > 0 {
+            out.push((
+                start + base as u32,
+                start + (base + open) as u32,
+                COMMENT,
+                0,
+            ));
+        }
+
+        out.push((
+            start + (base + open) as u32,
+            start + (base + tag_end) as u32,
+            KEYWORD,
+            0,
+        ));
+
+        let mut cursor = tag_end;
+
+        if DOC_NAMED.contains(&name.as_str()) {
+            let after = &line[cursor..];
+            let lead = after.len() - after.trim_start().len();
+            let word_len = after[lead..]
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
+                .count();
+
+            if word_len > 0 {
+                out.push((
+                    start + (base + cursor + lead) as u32,
+                    start + (base + cursor + lead) as u32,
+                    COMMENT,
+                    0,
+                ));
+                out.push((
+                    start + (base + cursor + lead) as u32,
+                    start + (base + cursor + lead + word_len) as u32,
+                    PARAMETER,
+                    0,
+                ));
+
+                cursor += lead + word_len;
+            }
+        }
+
+        if cursor < line.len() {
+            out.push((
+                start + (base + cursor) as u32,
+                start + at as u32,
+                COMMENT,
+                0,
+            ));
+        }
+    }
+
+    out.retain(|&(from, to, ..)| to > from);
 
     out
 }

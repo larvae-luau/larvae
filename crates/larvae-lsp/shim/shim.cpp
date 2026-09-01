@@ -1840,6 +1840,7 @@ static std::string printMoonwave(const std::vector<std::string>& comments)
         return {};
 
     std::string result;
+    std::vector<std::string> badges;
     std::vector<std::string> fields;
     std::vector<std::string> params;
     std::vector<std::string> returns;
@@ -1856,22 +1857,24 @@ static std::string printMoonwave(const std::vector<std::string>& comments)
         else if (beginsWith(comment, "@field "))
             fields.push_back(comment);
         else if (comment == "@private")
-            result += "**Private**\n";
+            badges.push_back("🔒 Private");
         else if (comment == "@yields")
-            result += "**Yields**\n";
+            badges.push_back("⏳ Yields");
         else if (comment == "@unreleased")
-            result += "**Unreleased**\n";
+            badges.push_back("🚧 Unreleased");
         else if (comment == "@server")
-            result += "**Server**\n";
+            badges.push_back("🖥️ Server");
         else if (comment == "@client")
-            result += "**Client**\n";
+            badges.push_back("💻 Client");
         else if (comment == "@plugin")
-            result += "**Plugin**\n";
+            badges.push_back("🔌 Plugin");
         else if (comment == "@readonly")
-            result += "**Read Only**\n";
+            badges.push_back("🔏 Read Only");
+        else if (comment == "@ignore")
+            badges.push_back("🙈 Ignored");
         else if (beginsWith(comment, "@deprecated "))
         {
-            result += "**Deprecated** ";
+            result += "⚠️ **Deprecated** ";
 
             std::string description = comment.substr(12);
             std::string version = description;
@@ -1889,9 +1892,9 @@ static std::string printMoonwave(const std::vector<std::string>& comments)
         }
         else if (beginsWith(comment, "@since "))
         {
-            result += "**Since** `" + comment.substr(7) + "`\n";
+            result += "🕒 **Since** `" + comment.substr(7) + "`\n";
         }
-        else if (comment == "@ignore" || beginsWith(comment, "@tag ") || beginsWith(comment, "@within ")
+        else if (beginsWith(comment, "@tag ") || beginsWith(comment, "@within ")
                  || beginsWith(comment, "@class ") || beginsWith(comment, "@function ")
                  || beginsWith(comment, "@method ") || beginsWith(comment, "@prop ")
                  || beginsWith(comment, "@interface ") || beginsWith(comment, "@type ")
@@ -1903,6 +1906,29 @@ static std::string printMoonwave(const std::vector<std::string>& comments)
         {
             result += comment + "\n";
         }
+    }
+
+    /*
+    The flags read as one row above the prose.
+
+    Each one is a word about the whole thing, ex: private, server. As
+    bold lines they stacked and pushed the description down the card;
+    on one line they read as the labels they are, and the rule under
+    them separates the labels from what the author wrote.
+    */
+    if (!badges.empty())
+    {
+        std::string row;
+
+        for (const std::string& badge : badges)
+        {
+            if (!row.empty())
+                row += "  ·  ";
+
+            row += "**" + badge + "**";
+        }
+
+        result = row + "\n\n---\n\n" + result;
     }
 
     /// One entry of a section: the name in code, then whatever followed it.
