@@ -26,7 +26,56 @@ nightly. The session loads them at start, so the DataModel exists for
 inference, and the service list for auto-imports reads from the same
 text, so the two cannot disagree.
 */
-const GLOBAL_TYPES: &str = include_str!("../types/globalTypes.d.luau");
+/*
+The Roblox definitions of each security level, gzipped by the build.
+
+Four levels of about 700KB is 2.7MB of text a session never reads more
+than one of, so the binary carries them compressed and unpacks the one
+the project asked for. The default is the level larvae always loaded.
+*/
+const DEFINITIONS: [(larvae::config::lsp::SecurityLevel, &[u8]); 4] = [
+    (
+        larvae::config::lsp::SecurityLevel::None,
+        include_bytes!(concat!(env!("OUT_DIR"), "/globalTypes.None.gz")),
+    ),
+    (
+        larvae::config::lsp::SecurityLevel::LocalUserSecurity,
+        include_bytes!(concat!(
+            env!("OUT_DIR"),
+            "/globalTypes.LocalUserSecurity.gz"
+        )),
+    ),
+    (
+        larvae::config::lsp::SecurityLevel::PluginSecurity,
+        include_bytes!(concat!(env!("OUT_DIR"), "/globalTypes.PluginSecurity.gz")),
+    ),
+    (
+        larvae::config::lsp::SecurityLevel::RobloxScriptSecurity,
+        include_bytes!(concat!(
+            env!("OUT_DIR"),
+            "/globalTypes.RobloxScriptSecurity.gz"
+        )),
+    ),
+];
+
+/// The definitions of one level, unpacked
+pub(crate) fn global_types(level: larvae::config::lsp::SecurityLevel) -> String {
+    use std::io::Read;
+
+    let packed = DEFINITIONS
+        .iter()
+        .find(|(name, _)| *name == level)
+        .map(|(_, bytes)| *bytes)
+        .unwrap_or(DEFINITIONS[3].1);
+
+    let mut text = String::new();
+
+    flate2::read::GzDecoder::new(packed)
+        .read_to_string(&mut text)
+        .expect("the build wrote these, so they unpack");
+
+    text
+}
 
 /*
 larvae's own definitions, layered over the Roblox globals.
@@ -798,6 +847,12 @@ pub struct LuauAnalysis {
     keys: HashMap<PathBuf, CString>,
     /// The service names, extracted from the definitions once
     services: Vec<String>,
+    /*
+    The first line of the definitions this session loaded, which is the
+    generator's metadata. The service names come out of it, and the
+    line belongs to the security level the session was built on.
+    */
+    metadata: String,
     /// The Roblox reference, by documentation symbol
     docs: HashMap<String, DocEntry>,
     /// The documentationFiles databases of the project, layered in order
@@ -820,7 +875,13 @@ pub struct LuauAnalysis {
 unsafe impl Send for LuauAnalysis {}
 
 impl LuauAnalysis {
+    /// A session on the API surface larvae has always loaded
     pub fn new() -> Self {
+        Self::with_security(larvae::config::lsp::SecurityLevel::default())
+    }
+
+    /// A session on one security level's Roblox definitions
+    pub fn with_security(level: larvae::config::lsp::SecurityLevel) -> Self {
         let mut resolver = Box::new(ResolverState {
             resolve_buffer: None,
             load_buffer: None,
@@ -841,11 +902,14 @@ impl LuauAnalysis {
             );
         }
 
+        let global_types = global_types(level);
+
         let mut new = Self {
             session,
             resolver,
             keys: HashMap::new(),
             services: Vec::new(),
+            metadata: global_types.lines().next().unwrap_or_default().to_owned(),
             docs: read_api_docs(),
             project_docs: HashMap::new(),
             project_doc_tails: HashMap::new(),
@@ -861,7 +925,7 @@ impl LuauAnalysis {
         as long as the file has shipped. A server that cannot type the
         platform says so.
         */
-        if !larvae::lsp::analysis::Analysis::definitions(&mut new, "@roblox", GLOBAL_TYPES) {
+        if !larvae::lsp::analysis::Analysis::definitions(&mut new, "@roblox", &global_types) {
             eprintln!(
                 "larvae-lsp: the Roblox type definitions did not load, so \
                  game and the services have no type"
@@ -1087,10 +1151,9 @@ impl Analysis for LuauAnalysis {
             `--#METADATA#{...}`, and its SERVICES array is the authority:
             luau-lsp writes it from the API dump for exactly this use.
             */
-            self.services = GLOBAL_TYPES
-                .lines()
-                .next()
-                .and_then(|line| line.strip_prefix("--#METADATA#"))
+            self.services = self
+                .metadata
+                .strip_prefix("--#METADATA#")
                 .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
                 .and_then(|meta| {
                     meta.get("SERVICES").and_then(|s| s.as_array()).map(|list| {
@@ -1495,13 +1558,53 @@ mod studio_definitions {
     the result, so `game` had no type and nobody saw why. This is the test
     that would have caught it.
     */
+    /*
+    Every security level's definitions load, and the surface differs.
+
+    The levels are generated files and a broken one is a session with
+    no platform at all, so each is loaded rather than trusted. The
+    member below is `RobloxScriptSecurity` only, which is the
+    difference the setting exists to make.
+    */
+    #[test]
+    fn every_security_level_loads_its_own_surface() {
+        use larvae::config::lsp::SecurityLevel;
+
+        let _luau = super::luau_globals::shared();
+
+        for level in [
+            SecurityLevel::None,
+            SecurityLevel::LocalUserSecurity,
+            SecurityLevel::PluginSecurity,
+            SecurityLevel::RobloxScriptSecurity,
+        ] {
+            let text = super::global_types(level);
+
+            assert!(
+                text.starts_with("--#METADATA#"),
+                "{} lost its metadata line",
+                level.file_name()
+            );
+
+            // The signal of `Players`, which only the top level carries.
+            let top = text.contains("FriendRequestEvent: RBXScriptSignal");
+
+            assert_eq!(
+                top,
+                level == SecurityLevel::RobloxScriptSecurity,
+                "{} carries the wrong surface",
+                level.file_name()
+            );
+        }
+    }
+
     #[test]
     fn the_vendored_roblox_types_load() {
         let _luau = super::luau_globals::shared();
         let mut analysis = LuauAnalysis::new();
 
         assert!(
-            analysis.definitions("@roblox", GLOBAL_TYPES),
+            analysis.definitions("@roblox", &super::global_types(Default::default())),
             "Luau refused the vendored globalTypes.d.luau"
         );
     }
@@ -1593,7 +1696,7 @@ mod studio_definitions {
         std::fs::write(&main, text).expect("writes");
 
         let mut analysis = LuauAnalysis::new();
-        analysis.definitions("@roblox", GLOBAL_TYPES);
+        analysis.definitions("@roblox", &super::global_types(Default::default()));
         analysis.open(&main, text);
 
         let at = |what: &str| text.find(what).expect("the probe text") as u32;
@@ -1651,7 +1754,7 @@ mod studio_definitions {
         std::fs::write(&user, text).expect("writes");
 
         let mut analysis = LuauAnalysis::new();
-        analysis.definitions("@roblox", GLOBAL_TYPES);
+        analysis.definitions("@roblox", &super::global_types(Default::default()));
         analysis.open(&user, text);
 
         let at = |what: &str| text.find(what).expect("the probe text") as u32;
@@ -1694,7 +1797,7 @@ mod studio_definitions {
         std::fs::write(&user, "").expect("writes");
 
         let mut analysis = LuauAnalysis::new();
-        analysis.definitions("@roblox", GLOBAL_TYPES);
+        analysis.definitions("@roblox", &super::global_types(Default::default()));
         analysis.set_mounts(larvae::requires::datamodel::MountTable::new(vec![
             larvae::requires::datamodel::Mount {
                 fs: shared.clone(),
@@ -1740,7 +1843,7 @@ mod studio_definitions {
         std::fs::write(&user, "").expect("writes");
 
         let mut analysis = LuauAnalysis::new();
-        analysis.definitions("@roblox", GLOBAL_TYPES);
+        analysis.definitions("@roblox", &super::global_types(Default::default()));
         analysis.set_mounts(larvae::requires::datamodel::MountTable::new(vec![
             larvae::requires::datamodel::Mount {
                 fs: shared.clone(),
@@ -1899,7 +2002,7 @@ mod flags {
 
         // The types still load, so the required value went back afterwards.
         assert!(
-            analysis.definitions("@roblox", GLOBAL_TYPES),
+            analysis.definitions("@roblox", &super::global_types(Default::default())),
             "an override took away what larvae needs"
         );
     }
@@ -1945,7 +2048,7 @@ mod flags {
         };
 
         assert!(analysis.set_flags(&flags).is_empty());
-        assert!(analysis.definitions("@roblox", GLOBAL_TYPES));
+        assert!(analysis.definitions("@roblox", &super::global_types(Default::default())));
     }
 }
 

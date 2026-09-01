@@ -11,7 +11,52 @@ found. The link step below cannot: it makes a shared library, and no two of
 the three platforms spell that the same way.
 */
 
+/*
+The Roblox definitions, gzipped into the build directory.
+
+Four security levels of about 700KB each is 2.7MB of text in the
+binary, and a session reads one of them once. Compressed they are
+about 100KB each, and the decompression costs a few milliseconds
+against a load that already takes seconds.
+*/
+fn compress_definitions() {
+    use std::io::Write;
+
+    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+
+    for level in [
+        "None",
+        "LocalUserSecurity",
+        "PluginSecurity",
+        "RobloxScriptSecurity",
+    ] {
+        // The default level ships under the plain name the nightly writes.
+        let source = match level {
+            "RobloxScriptSecurity" => "types/globalTypes.d.luau".to_owned(),
+
+            other => format!("types/globalTypes.{other}.d.luau"),
+        };
+
+        println!("cargo:rerun-if-changed={source}");
+
+        let text = std::fs::read(&source)
+            .unwrap_or_else(|e| panic!("the {level} definitions are missing: {e}"));
+
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+
+        encoder.write_all(&text).expect("compresses");
+
+        std::fs::write(
+            out.join(format!("globalTypes.{level}.gz")),
+            encoder.finish().expect("finishes"),
+        )
+        .expect("writes");
+    }
+}
+
 fn main() {
+    compress_definitions();
+
     #[cfg(feature = "analyzer")]
     build_analyzer();
 }

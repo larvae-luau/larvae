@@ -354,6 +354,10 @@ obfuscate = false                        # dense whatever generator says: no typ
 
 [lsp]
 enabled = true
+# Which Roblox API surface the analyzer types against: "none",
+# "local-user-security", "plugin-security", or the default
+# "roblox-script-security", which holds every member.
+roblox_security_level = "roblox-script-security"
 claim_only = false
 # definitions = ["types/global.d.luau"]
 # documentation = ["types/documentation.json"]

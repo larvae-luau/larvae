@@ -114,6 +114,21 @@ pub struct LspConfig {
     pub sourcemap_command: String,
 
     /*
+    Which Roblox API surface the analyzer types against.
+
+    The definitions are generated per security level, and the bundled
+    ones are `roblox-script-security`, which holds every member. A
+    plugin sees less than that, and a live game less again, so a
+    project that ships to one of those wants the surface it really
+    has: a member the level does not carry is a name the editor does
+    not offer and a call `larvae analyze` reports.
+
+    luau-lsp names the same four through `types.robloxSecurityLevel`.
+    */
+    #[serde(default)]
+    pub roblox_security_level: SecurityLevel,
+
+    /*
     Extra type definition files, loaded into the analyzer after the
     platform globals. Paths are relative to the root of the project.
     `larvae analyze --definitions` adds to this list, and luau-lsp
@@ -369,6 +384,39 @@ pub struct InlayHintsConfig {
     */
     #[serde(default)]
     pub accept_imports: AcceptImports,
+}
+
+/*
+The Roblox API surface, by the security level that generated it.
+
+Each level is a whole set of definitions, and the higher ones hold
+what the lower ones do plus their own. The names are luau-lsp's, so a
+project that moves between the two servers writes one value.
+*/
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SecurityLevel {
+    /// What a live game sees.
+    None,
+    /// What a local script of the user sees.
+    LocalUserSecurity,
+    /// What a Studio plugin sees.
+    PluginSecurity,
+    /// Every member, which is what larvae has always loaded.
+    #[default]
+    RobloxScriptSecurity,
+}
+
+impl SecurityLevel {
+    /// The name the generated file carries, which is luau-lsp's spelling
+    pub fn file_name(self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::LocalUserSecurity => "LocalUserSecurity",
+            Self::PluginSecurity => "PluginSecurity",
+            Self::RobloxScriptSecurity => "RobloxScriptSecurity",
+        }
+    }
 }
 
 /// What an accept writes for a type that another module declares.

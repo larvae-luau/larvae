@@ -71,24 +71,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Four security levels, and each is a whole API surface. The one
+      # without a suffix is RobloxScriptSecurity, which the analyzer
+      # loads unless a project names another.
       - name: Fetch the latest Roblox global types
         id: fetch
         run: |
           mkdir -p crates/larvae-lsp/types
-          if curl -fsS -A larvae-nightly -o /tmp/globalTypes.d.luau \
-            https://raw.githubusercontent.com/JohnnyMorganz/luau-lsp/main/scripts/globalTypes.d.luau; then
-            echo "found=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "found=false" >> "$GITHUB_OUTPUT"
-            echo "the upstream types file did not answer; skipping"
-          fi
+          base=https://raw.githubusercontent.com/JohnnyMorganz/luau-lsp/main/scripts
+          found=true
+
+          for name in globalTypes.d.luau globalTypes.None.d.luau \
+            globalTypes.LocalUserSecurity.d.luau globalTypes.PluginSecurity.d.luau; do
+            if ! curl -fsS -A larvae-nightly -o "/tmp/$name" "$base/$name"; then
+              found=false
+              echo "$name did not answer; skipping the run"
+            fi
+          done
+
+          echo "found=$found" >> "$GITHUB_OUTPUT"
 
       - name: Open the pull request when the types moved
         if: steps.fetch.outputs.found == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp /tmp/globalTypes.d.luau crates/larvae-lsp/types/globalTypes.d.luau
+          for name in globalTypes.d.luau globalTypes.None.d.luau \
+            globalTypes.LocalUserSecurity.d.luau globalTypes.PluginSecurity.d.luau; do
+            cp "/tmp/$name" "crates/larvae-lsp/types/$name"
+          done
           # The shapes upstream has not shipped yet; a no-op once it does.
           python3 scripts/patch_global_types.py
           if git diff --quiet; then

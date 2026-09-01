@@ -256,6 +256,12 @@ impl Server {
             self.lsp.sourcemap_command = text.to_owned();
         }
 
+        if let Some(text) = editor(&["robloxSecurityLevel"]).as_str()
+            && let Ok(level) = serde_json::from_value(serde_json::json!(text))
+        {
+            self.lsp.roblox_security_level = level;
+        }
+
         if let Some(list) = editor(&["definitions"]).as_array() {
             self.lsp.definitions = list
                 .iter()
@@ -537,11 +543,17 @@ impl Server {
             return;
         };
 
-        let flags = self.lsp.fflags.clone();
+        /*
+        The whole `[lsp]` table, because two of its keys decide what a
+        session is: the flags pick the solver the globals register
+        under, and the security level picks which Roblox definitions
+        those globals are.
+        */
+        let cfg = self.lsp.clone();
 
         std::thread::spawn(move || {
             // The server is gone if this fails, and there is nothing to do about it.
-            let _ = events.send(crate::lsp::Event::Analysis(build(&flags)));
+            let _ = events.send(crate::lsp::Event::Analysis(build(&cfg)));
         });
     }
 

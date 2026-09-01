@@ -18,6 +18,19 @@ Notable changes land here. Format follows
   behaviour. A name two required modules both export writes nothing,
   because a guess between them puts the wrong type in someone's file
 
+### Added
+
+- `[lsp] roblox_security_level` picks the Roblox API surface the
+  analyzer types against: `none`, `local-user-security`,
+  `plugin-security`, or the default `roblox-script-security`, which
+  holds every member and is what larvae has always loaded. A plugin
+  sees less than that and a live game less again, so a project that
+  ships to one of those now gets the surface it really has, in the
+  editor and in `larvae analyze` alike. luau-lsp names the same four
+  through `types.robloxSecurityLevel`. The four definition sets ship
+  compressed, so the binary holding all of them is smaller than the
+  one that held a single set
+
 ### Fixed
 
 - `[aliases]` of `larvae.toml` resolve with no `.luaurc` in sight. The

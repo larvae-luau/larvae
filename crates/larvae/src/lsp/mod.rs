@@ -106,7 +106,7 @@ the build cannot start before `initialize` says which project this is, and
 the server hands the flags to this rather than the binary guessing them.
 */
 pub type Builder =
-    Box<dyn FnOnce(&crate::config::lsp::FFlagsConfig) -> Box<dyn analysis::Analysis> + Send>;
+    Box<dyn FnOnce(&crate::config::lsp::LspConfig) -> Box<dyn analysis::Analysis> + Send>;
 
 /*
 What the loop waits on: a message from the editor, or the session landing.

@@ -43,16 +43,18 @@ fn main() -> std::process::ExitCode {
     editor has said where it is.
     */
     #[cfg(feature = "analyzer")]
-    let analysis = Some(larvae::lsp::Pending::Builder(Box::new(|flags| {
+    let analysis = Some(larvae::lsp::Pending::Builder(Box::new(|cfg| {
         /*
         The flags go in first, on this thread, before the session exists.
         `LuauSolverV2` decides which type solver the globals are registered
         under, so a session built before the project was read would be built
         under the wrong one and the setting would do nothing.
         */
-        analyzer::apply_flags(flags);
+        analyzer::apply_flags(&cfg.fflags);
 
-        Box::new(analyzer::LuauAnalysis::new()) as Box<dyn larvae::lsp::analysis::Analysis>
+        Box::new(analyzer::LuauAnalysis::with_security(
+            cfg.roblox_security_level,
+        )) as Box<dyn larvae::lsp::analysis::Analysis>
     })));
 
     #[cfg(not(feature = "analyzer"))]
@@ -78,8 +80,9 @@ fn analyze(args: &[String]) -> std::process::ExitCode {
         let lsp = larvae::commands::analyze::lsp_config(&opts)?;
         analyzer::apply_flags(&lsp.fflags);
 
-        let analysis =
-            Box::new(analyzer::LuauAnalysis::new()) as Box<dyn larvae::lsp::analysis::Analysis>;
+        let analysis = Box::new(analyzer::LuauAnalysis::with_security(
+            lsp.roblox_security_level,
+        )) as Box<dyn larvae::lsp::analysis::Analysis>;
 
         larvae::commands::analyze::engine(analysis, &opts)
     };
