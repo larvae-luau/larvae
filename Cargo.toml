@@ -11,7 +11,7 @@ default-members = ["crates/larvae"]
 exclude = ["crates/larvae/fuzz", "crates/larvae/tests/fixtures/echo-worm"]
 
 [workspace.package]
-version = "0.7.6-canary"
+version = "0.7.6-canary.1"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/larvae-luau/larvae"
