@@ -8,6 +8,13 @@ Notable changes land here. Format follows
 
 ### Fixed
 
+- The names inside an interpolated string take the colour code takes.
+  The lexer keeps a backtick string as one token, so the whole thing
+  painted as string and `{name}` read as text rather than as the value
+  it interpolates. Each hole is now read on its own: a name is a
+  variable, a name after a dot is a property, and a keyword, a number,
+  and a nested string keep their own colours. An escaped `\{` opens no
+  hole
 - A held inlay hint no longer vanishes. A hint on a line the author
   rewrote or moved was dropped until the pause, because its column
   belonged to text that changed and a stale one reads as
