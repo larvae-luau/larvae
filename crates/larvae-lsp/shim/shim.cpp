@@ -2899,7 +2899,7 @@ A prefixed name, ex: `types.User`, names an imported module and the
 scope holds which one; a bare name is an alias of this file or of a
 scope above the cursor. Both end at a scope that recorded where the
 alias name was written. Definition and type definition ask the same
-question of an annotation, so they share the walk.
+question of an annotation, so they share the lookup.
 */
 static int typeAliasLocation(
     LarvaeSession* s, Luau::Module& module, const char* path, Luau::Position position, LarvaeLocation* out)
@@ -2924,60 +2924,65 @@ static int typeAliasLocation(
             if (alias->nameLocation.containsClosed(position))
                 return fillLocation(s, path, alias->nameLocation, out);
         }
+    }
 
-        auto* reference = up->as<Luau::AstTypeReference>();
+    /*
+    The ancestry walk skips return type packs. Use the type visitor that
+    enters every pack, so an alias in a function return annotation wins
+    before the function type can answer with the function's full span.
+    */
+    TypeAtPosition at(position);
+    source->root->visit(&at);
+    Luau::AstTypeReference* reference = at.found;
 
-        if (!reference)
-            continue;
+    if (!reference)
+        return 0;
 
-        Luau::ScopePtr scope = Luau::findScopeAtPosition(module, position);
+    Luau::ScopePtr scope = Luau::findScopeAtPosition(module, position);
 
-        if (!scope)
-            return 0;
+    if (!scope)
+        return 0;
 
-        const std::string name(reference->name.value);
+    const std::string name(reference->name.value);
 
-        if (reference->prefix)
-        {
-            const std::string prefix(reference->prefix->value);
-
-            for (Luau::ScopePtr at = scope; at; at = at->parent)
-            {
-                auto found = at->importedModules.find(prefix);
-
-                if (found == at->importedModules.end())
-                    continue;
-
-                Luau::ModulePtr imported = s->frontend.moduleResolver.getModule(found->second);
-
-                if (!imported)
-                    return 0;
-
-                Luau::ScopePtr top = imported->getModuleScope();
-
-                if (!top)
-                    return 0;
-
-                auto where = top->typeAliasNameLocations.find(name);
-
-                if (where != top->typeAliasNameLocations.end())
-                    return fillLocation(s, found->second, where->second, out);
-
-                return 0;
-            }
-
-            return 0;
-        }
+    if (reference->prefix)
+    {
+        const std::string prefix(reference->prefix->value);
 
         for (Luau::ScopePtr at = scope; at; at = at->parent)
         {
-            auto where = at->typeAliasNameLocations.find(name);
+            auto found = at->importedModules.find(prefix);
 
-            if (where != at->typeAliasNameLocations.end())
-                return fillLocation(s, path, where->second, out);
+            if (found == at->importedModules.end())
+                continue;
+
+            Luau::ModulePtr imported = s->frontend.moduleResolver.getModule(found->second);
+
+            if (!imported)
+                return 0;
+
+            Luau::ScopePtr top = imported->getModuleScope();
+
+            if (!top)
+                return 0;
+
+            auto where = top->typeAliasNameLocations.find(name);
+
+            if (where != top->typeAliasNameLocations.end())
+                return fillLocation(s, found->second, where->second, out);
+
+            return 0;
         }
 
         return 0;
+    }
+
+    for (Luau::ScopePtr at = scope; at; at = at->parent)
+    {
+        auto where = at->typeAliasNameLocations.find(name);
+
+        if (where != at->typeAliasNameLocations.end())
+            return fillLocation(s, path, where->second, out);
     }
 
     return 0;
