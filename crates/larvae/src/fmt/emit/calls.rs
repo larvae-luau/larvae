@@ -7,6 +7,7 @@ meet when the last argument of a call is one.
 */
 
 use super::*;
+use crate::fmt::config::ChainStyle;
 
 impl<'a> Emitter<'a> {
     pub(super) fn call(
@@ -326,4 +327,168 @@ impl<'a> Emitter<'a> {
     table is a list of things and not an expression. Width alone must not
     override that signal.
     */
+}
+
+/// One step of a call chain: `.name(args)` or `:name(args)`
+struct Step<'s> {
+    method: bool,
+    name: TokSpan,
+    type_args: Option<TokSpan>,
+    args: &'s CallArgs,
+    span: TokSpan,
+}
+
+impl<'a> Emitter<'a> {
+    /*
+    A call chain as its base and the steps that follow it.
+
+    `map.new():some()` is a call whose function is a call, so the tree
+    nests to the left and the steps come out in reverse. Only a step
+    that is a call joins the chain: `a.b.c()` has one step, because
+    `a.b` is a name this reads through, not a step of its own.
+
+    A step whose name is computed, ex: `a[k]()`, ends the walk. The
+    chain layout puts a name after a break, and a bracket there reads
+    as an index of the line above it.
+    */
+    fn chain<'s>(&self, expr: &'s Expr) -> Option<(&'s Expr, Vec<Step<'s>>)> {
+        let mut steps = Vec::new();
+        let mut at = expr;
+
+        while let Expr::Call {
+            func,
+            method,
+            type_args,
+            args,
+            span,
+        } = at
+        {
+            match (method, func.as_ref()) {
+                (Some(name), _) => {
+                    steps.push(Step {
+                        method: true,
+                        name: *name,
+                        type_args: *type_args,
+                        args,
+                        span: *span,
+                    });
+
+                    at = func;
+                }
+
+                (
+                    None,
+                    Expr::Index {
+                        object,
+                        key: IndexKey::Field(name),
+                        ..
+                    },
+                ) => {
+                    steps.push(Step {
+                        method: false,
+                        name: *name,
+                        type_args: *type_args,
+                        args,
+                        span: *span,
+                    });
+
+                    at = object;
+                }
+
+                _ => break,
+            }
+        }
+
+        match steps.is_empty() {
+            true => None,
+
+            false => {
+                steps.reverse();
+
+                Some((at, steps))
+            }
+        }
+    }
+
+    /*
+    The chain laid out, or nothing where the option leaves it alone.
+
+    `preserve` answers nothing, and so does a chain with one step: the
+    option is about a sequence, and one call is not one. A chain of
+    `min_calls` steps opens although it fits, because a sequence of
+    steps reads as a list once there are enough of them. Below that
+    count the group decides, so a chain that does not fit still opens.
+    */
+    pub(super) fn call_chain(&self, expr: &Expr) -> Option<Doc<'a>> {
+        let cfg = &self.cfg.call_chains;
+
+        if cfg.style == ChainStyle::Preserve {
+            return None;
+        }
+
+        let (base, steps) = self.chain(expr)?;
+
+        if steps.len() < 2 {
+            return None;
+        }
+
+        let mut head = vec![self.expr(base)];
+        let mut rest = Vec::new();
+
+        for (index, step) in steps.iter().enumerate() {
+            let sep = match step.method {
+                true => ":",
+
+                false => ".",
+            };
+
+            let mut piece = vec![Doc::text(sep), Doc::text(self.one(step.name))];
+
+            if let Some(ty) = step.type_args {
+                piece.push(Doc::text(self.verbatim(ty)));
+            }
+
+            if self.cfg.space_before_call_parens() {
+                piece.push(Doc::text(" "));
+            }
+
+            piece.push(self.call_args(step.args, step.span));
+
+            /*
+            `method` keeps the base and its first step on the first
+            line: `map.new()` and `obj:one()` both read as the thing
+            the rest of the chain acts on. `full` breaks before every
+            step, so the base stands alone.
+            */
+            let attached = cfg.style == ChainStyle::Method && index == 0;
+
+            match attached {
+                true => head.extend(piece),
+
+                false => {
+                    rest.push(Doc::Soft);
+                    rest.extend(piece);
+                }
+            }
+        }
+
+        if rest.is_empty() {
+            return None;
+        }
+
+        let forced = cfg.min_calls > 0 && steps.len() >= cfg.min_calls;
+
+        if forced {
+            for part in &mut rest {
+                if matches!(part, Doc::Soft) {
+                    *part = Doc::Hard;
+                }
+            }
+        }
+
+        Some(Doc::group(Doc::concat([
+            Doc::concat(head),
+            Doc::indent(Doc::concat(rest)),
+        ])))
+    }
 }

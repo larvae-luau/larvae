@@ -682,6 +682,79 @@ pub enum FunctionStyle {
     Global,
 }
 
+/*
+How the formatter lays out a chain of calls.
+
+`a.b():c():d()` is one expression that reads as a sequence of steps, and
+a long one runs off the line because no operator in it breaks. These
+values decide where it opens.
+*/
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ChainStyle {
+    /// One line, whatever its width. This is the layout larvae always had.
+    #[default]
+    Preserve,
+    /*
+    A break before each method call, with the base and its first call
+    together:
+
+    ```luau
+    map.new()
+        :some()
+        :other()
+    ```
+    */
+    Method,
+    /*
+    A break before every segment after the base:
+
+    ```luau
+    map
+        .new()
+        :some()
+    ```
+    */
+    Full,
+}
+
+/*
+When a chain of calls opens over several lines.
+
+A chain wider than `column_width` opens whatever `min_calls` says,
+because a line that runs off the screen is the case the option exists
+for. `min_calls` opens a chain that fits as well, because a sequence of
+steps reads as a list once there are enough of them.
+*/
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CallChains {
+    #[serde(default)]
+    pub style: ChainStyle,
+    /*
+    The number of calls at which a chain opens although it fits.
+
+    Three is the first count that reads as a list rather than as one
+    expression, and it is the count the examples above hold. Zero opens
+    only what does not fit.
+    */
+    #[serde(default = "default_min_calls")]
+    pub min_calls: usize,
+}
+
+impl Default for CallChains {
+    fn default() -> Self {
+        Self {
+            style: ChainStyle::default(),
+            min_calls: default_min_calls(),
+        }
+    }
+}
+
+fn default_min_calls() -> usize {
+    3
+}
+
 /// Selects when the formatter opens a union or an intersection over several lines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -831,6 +904,9 @@ pub struct FmtConfig {
 
     #[serde(default)]
     pub function_style: FunctionStyle,
+
+    #[serde(default)]
+    pub call_chains: CallChains,
 
     /// Selects how a union and an intersection open over several lines.
     #[serde(default)]

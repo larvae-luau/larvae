@@ -114,7 +114,9 @@ impl<'a> Emitter<'a> {
                 type_args,
                 args,
                 span,
-            } => self.call(func, *method, *type_args, args, *span),
+            } => self
+                .call_chain(e)
+                .unwrap_or_else(|| self.call(func, *method, *type_args, args, *span)),
 
             Expr::IfElse {
                 branches,

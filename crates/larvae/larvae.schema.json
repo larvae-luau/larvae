@@ -1283,6 +1283,10 @@
           ],
           "default": "preserve",
           "description": "The keyword a top-level function declaration takes. A dotted or method name has no local form and stays as written, an anonymous function declares nothing, and const applies only where nothing reassigns the name. See https://larvae-luau.github.io/docs/reference/formatting#function-style"
+        },
+        "call_chains": {
+          "$ref": "#/$defs/fmt_call_chains",
+          "description": "How a chain of calls lays out: preserve keeps it on one line, method keeps the base and its first call together, full breaks before every step. See https://larvae-luau.github.io/docs/reference/formatting#call-chains"
         }
       }
     },
@@ -2722,6 +2726,28 @@
         "vector_type": {
           "type": "string",
           "default": "Vector3"
+        }
+      }
+    },
+    "fmt_call_chains": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "style": {
+          "type": "string",
+          "enum": [
+            "preserve",
+            "method",
+            "full"
+          ],
+          "default": "preserve",
+          "description": "How a chain of calls lays out. preserve keeps it on one line, the layout larvae always had. method keeps the base and its first call together and breaks before each call after it. full breaks before every step, so the base stands alone."
+        },
+        "min_calls": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 3,
+          "description": "The number of calls at which a chain opens although it fits. Zero opens only a chain that runs past column_width."
         }
       }
     }

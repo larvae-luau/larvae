@@ -192,6 +192,12 @@ trailing_comma = true                    # a table that broke keeps its last com
 # only a type reads counts as used.
 unused_imports = "ignore"                # or "underscore", "remove"
 
+# How a chain of calls lays out. "method" keeps the base and its first
+# call together and breaks before each call after it; "full" breaks
+# before every step. min_calls opens a chain that fits once it holds
+# that many calls, and 0 opens only what runs past column_width.
+call_chains = { style = "preserve", min_calls = 3 }
+
 exclude = ["Packages", "**/*.gen.luau"]  # relative to the project root
 # syntax = "Luau"                        # accepted from stylua, and ignored
 
