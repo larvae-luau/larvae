@@ -4,6 +4,19 @@ Notable changes land here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow
 [semver](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- `[fmt] call_chains` opens a chain of calls over several lines.
+  `method` keeps the base and its first call together and breaks
+  before each call after it; `full` breaks before every step, so the
+  base stands alone. `preserve` is the default and changes nothing.
+  `min_calls` opens a chain that fits once it holds that many calls,
+  and a chain wider than `column_width` opens whatever it says, which
+  is a case a chain never had: no operator in one breaks, so a long
+  chain ran past the limit
+
 ## 0.7.5 - 2026-08-31
 
 ### Fixed

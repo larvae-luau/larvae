@@ -3273,3 +3273,112 @@ fn a_removed_import_leaves_no_blank_line() {
         "local Used = require(\"./a\")\nlocal Other = require(\"./c\")\n\nreturn { Used, Other }\n"
     );
 }
+
+// --- call chains ---------------------------------------------------------
+
+fn chained(style: larvae::fmt::config::ChainStyle, min_calls: usize) -> FmtConfig {
+    FmtConfig {
+        call_chains: larvae::fmt::config::CallChains { style, min_calls },
+        ..Default::default()
+    }
+}
+
+/// The default leaves every chain as the author wrote it.
+#[test]
+fn a_chain_keeps_its_line_by_default() {
+    let src = "local a = map.new():some():other()\nreturn a\n";
+
+    assert_eq!(fmt(src), src);
+}
+
+/// `method` keeps the base and its first call together, and breaks at the calls.
+#[test]
+fn the_method_style_breaks_at_each_call() {
+    use larvae::fmt::config::ChainStyle;
+
+    let out = fmt_with(
+        "local a = map.new():some():some1():some2()\nreturn a\n",
+        chained(ChainStyle::Method, 3),
+    );
+
+    assert_eq!(
+        out,
+        "local a = map.new()\n\t:some()\n\t:some1()\n\t:some2()\nreturn a\n"
+    );
+}
+
+/// `full` breaks before every step, the base alone on its line.
+#[test]
+fn the_full_style_breaks_before_every_step() {
+    use larvae::fmt::config::ChainStyle;
+
+    let out = fmt_with(
+        "local a = map.new():some():some1()\nreturn a\n",
+        chained(ChainStyle::Full, 3),
+    );
+
+    assert_eq!(
+        out,
+        "local a = map\n\t.new()\n\t:some()\n\t:some1()\nreturn a\n"
+    );
+}
+
+/*
+A chain under the threshold stays on its line, and one that does not
+fit opens whatever the threshold says.
+*/
+#[test]
+fn the_threshold_and_the_width_both_open_a_chain() {
+    use larvae::fmt::config::ChainStyle;
+
+    // Two steps, and the threshold asks for three.
+    let short = "local a = obj:one():two()\nreturn a\n";
+    assert_eq!(fmt_with(short, chained(ChainStyle::Method, 3)), short);
+
+    // The same chain opens where the threshold is two.
+    assert_eq!(
+        fmt_with(short, chained(ChainStyle::Method, 2)),
+        "local a = obj:one()\n\t:two()\nreturn a\n"
+    );
+
+    // With no threshold, the width alone decides.
+    let long = "local aRatherLongBindingName = someModule.new():aLongMethodNameHere():anotherLongMethodName():aThirdLongMethodName():plusMore():evenMore()\nreturn aRatherLongBindingName\n";
+    let out = fmt_with(long, chained(ChainStyle::Method, 0));
+
+    assert!(out.contains("\n\t:aLongMethodNameHere()"), "{out}");
+    assert!(
+        out.lines().all(|line| line.len() <= 120),
+        "a line still runs past the width: {out}"
+    );
+}
+
+/// A chain the option opens reads back the same way, so the output is stable.
+#[test]
+fn an_opened_chain_formats_to_itself() {
+    use larvae::fmt::config::ChainStyle;
+
+    let cfg = chained(ChainStyle::Full, 3);
+    let once = fmt_with(
+        "local a = map.new():some():some1()\nreturn a\n",
+        cfg.clone(),
+    );
+
+    assert_eq!(once, fmt_with(&once, cfg), "the second run moved something");
+}
+
+/*
+Only a call joins a chain. `a.b.c` is a name this reads through, and a
+computed step ends the walk, because a bracket after a break reads as
+an index of the line above it.
+*/
+#[test]
+fn a_plain_index_is_not_a_chain() {
+    use larvae::fmt::config::ChainStyle;
+
+    for src in [
+        "local a = one.two.three\nreturn a\n",
+        "local a = obj:only()\nreturn a\n",
+    ] {
+        assert_eq!(fmt_with(src, chained(ChainStyle::Full, 2)), src, "{src}");
+    }
+}
