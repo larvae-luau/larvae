@@ -343,16 +343,49 @@ pub struct InlayHintsConfig {
     /*
     How long the hints hold still while the author types, in milliseconds.
 
-    A hint request that lands mid-edit answers with the last settled
-    hints, and one refresh follows the pause, so the text stops jumping
-    under the cursor. Zero turns the hold off and every request computes.
+    Zero is the default, and it is what luau-lsp does: every request
+    computes, and the editor holds each hint against the edits it makes
+    until the answer arrives. That is what keeps a hint with its text.
+
+    A number holds the last settled hints for that long and answers a
+    request that lands mid-edit with them. It costs less inference on a
+    slow machine, and the held hints are the ones the editor draws, so a
+    hint can sit a column away from its text until the pause.
     */
     #[serde(default = "update_delay")]
     pub update_delay: u64,
+
+    /*
+    What an accept writes when the hinted type belongs to another
+    module.
+
+    The printer writes a required module's type bare, ex: `Query`, and
+    that name means nothing in the file the accept writes into.
+    `qualify` writes it through the binding that requires the module,
+    `jecs.Query`. `alias` writes the bare name and adds
+    `type Query = jecs.Query` above the first statement, for a file
+    that names the type more than once. `off` leaves such a hint
+    display only, which is what larvae did before.
+    */
+    #[serde(default)]
+    pub accept_imports: AcceptImports,
+}
+
+/// What an accept writes for a type that another module declares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AcceptImports {
+    /// `jecs.Query`, through the binding that requires the module.
+    #[default]
+    Qualify,
+    /// `Query`, with `type Query = jecs.Query` added above.
+    Alias,
+    /// Nothing; the hint stays display only.
+    Off,
 }
 
 fn update_delay() -> u64 {
-    700
+    0
 }
 
 /// Which call arguments get a parameter name drawn before them.

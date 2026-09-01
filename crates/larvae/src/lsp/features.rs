@@ -34,7 +34,7 @@ extends the preamble; the first line that is none of those ends it. So a
 file that opens with a guard clause gets its import above the guard, and
 a file with an import block gets the new line at the block's end.
 */
-fn import_insertion_line(src: &str) -> u32 {
+pub(super) fn import_insertion_line(src: &str) -> u32 {
     let mut last_import_end = 0u32;
 
     for (line, text) in (0u32..).zip(src.lines()) {

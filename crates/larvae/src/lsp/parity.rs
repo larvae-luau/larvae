@@ -811,6 +811,140 @@ fn insertable_type(label: &str) -> bool {
 
 impl Server {
     /*
+    Where an alias the accept adds goes: with the imports, above the
+    first statement, which is where an auto-import lands too.
+    */
+    pub(super) fn import_line(&self, uri: &str) -> Option<u32> {
+        self.documents
+            .get(uri)
+            .map(|src| super::features::import_insertion_line(src))
+    }
+
+    /*
+    The same type, written the way this file can say it.
+
+    A hint prints a required module's type bare, ex: `Query`, because
+    the printer writes the name the module gave it and knows nothing
+    about the file reading it. That name means nothing here, so the
+    accept used to stay away. The module is required under some name
+    in this file, and through that name the type has a spelling this
+    file understands: `jecs.Query`.
+
+    The answer carries the text to write and, under `alias`, the
+    declaration to add above the first statement.
+    */
+    pub(super) fn imported_insert(
+        &self,
+        uri: &str,
+        insert: &str,
+    ) -> Option<(String, Option<String>)> {
+        let mode = self.lsp.inlay_hints.accept_imports;
+
+        if mode == crate::config::lsp::AcceptImports::Off {
+            return None;
+        }
+
+        let path = super::uri::path_of_uri(uri)?;
+        let root = self.root.as_deref()?;
+        let src = self.documents.get(uri)?;
+
+        /*
+        The names this file requires, each with the types its module
+        exports. A file that requires nothing has nothing to offer, and
+        the walk stops before it reads a single module.
+        */
+        let bindings = self.require_bindings(src, &path, root);
+
+        if bindings.is_empty() {
+            return None;
+        }
+
+        let mut written = insert.to_owned();
+        let mut aliases = Vec::new();
+
+        for name in type_names(insert) {
+            /*
+            One module has to own the name. Two that export it name
+            two types, and a guess between them writes the wrong one
+            into someone's file.
+            */
+            let mut owners = bindings
+                .iter()
+                .filter(|(_, exports)| exports.contains(&name));
+
+            let (binding, _) = owners.next()?;
+
+            if owners.next().is_some() {
+                return None;
+            }
+
+            let qualified = format!("{binding}.{name}");
+
+            match mode {
+                crate::config::lsp::AcceptImports::Alias => {
+                    aliases.push(format!("type {name} = {qualified}"));
+                }
+
+                _ => written = replace_name(&written, &name, &qualified),
+            }
+        }
+
+        if written == insert && aliases.is_empty() {
+            return None;
+        }
+
+        Some((written, (!aliases.is_empty()).then(|| aliases.join("\n"))))
+    }
+
+    /*
+    Each `local name = require(...)` of this file, with the types its
+    module exports.
+
+    The require resolves the way a document link resolves, so an alias,
+    a `@game` path, and a relative spec all answer. A module larvae
+    cannot read contributes nothing rather than stopping the walk.
+    */
+    fn require_bindings(
+        &self,
+        src: &str,
+        path: &std::path::Path,
+        root: &std::path::Path,
+    ) -> Vec<(String, Vec<String>)> {
+        let claimed = self.worms.claimed();
+        let mut out = Vec::new();
+
+        for (line, name) in require_locals(src) {
+            let Some(target) = super::decorate::require_target_on_line(
+                src,
+                path,
+                root,
+                &self.aliases,
+                &claimed,
+                &self.mounts,
+                line,
+            ) else {
+                continue;
+            };
+
+            let text = super::uri::uri_of_path(&target)
+                .and_then(|uri| self.documents.get(&uri).cloned())
+                .or_else(|| std::fs::read_to_string(&target).ok());
+
+            let Some(text) = text else {
+                continue;
+            };
+
+            let exports = super::features::export_type_names(&text);
+
+            if !exports.is_empty() {
+                out.push((name, exports));
+            }
+        }
+
+        out
+    }
+
+    /*
     Prove one type text means something in this file.
 
     The type lands in a throwaway alias appended to the buffer, and the
@@ -1005,5 +1139,187 @@ mod hint_accepts {
         assert!(!insertable_type(": *error-type*"));
         assert!(!insertable_type(": { hp: number, na..."));
         assert!(!insertable_type("name:"));
+    }
+}
+
+/*
+The names a type text mentions, each one a candidate for a module.
+
+A name that a dot follows is already qualified, and a name that
+follows a dot is a field of one, so neither is a bare alias this file
+has to know. Everything else is a name the parser would look up.
+*/
+fn type_names(insert: &str) -> Vec<String> {
+    let bytes = insert.as_bytes();
+    let mut out: Vec<String> = Vec::new();
+    let mut at = 0;
+
+    while at < bytes.len() {
+        if !(bytes[at].is_ascii_alphabetic() || bytes[at] == b'_') {
+            at += 1;
+
+            continue;
+        }
+
+        let start = at;
+
+        while at < bytes.len() && (bytes[at].is_ascii_alphanumeric() || bytes[at] == b'_') {
+            at += 1;
+        }
+
+        let name = &insert[start..at];
+        let after = insert[at..].chars().next();
+        let before = insert[..start].chars().next_back();
+
+        // A field of something, or a name that already names a module.
+        if before == Some('.') || after == Some('.') {
+            continue;
+        }
+
+        /*
+        A name a colon follows is a key or a parameter, not a type:
+        the `first` of `{ first: Query }` and the `x` of `(x: number)`.
+        Qualifying one would write a module in front of a field name.
+        */
+        if insert[at..].trim_start().starts_with(':') {
+            continue;
+        }
+
+        // The words a type text holds that are not names to look up.
+        if matches!(
+            name,
+            "string"
+                | "number"
+                | "boolean"
+                | "nil"
+                | "any"
+                | "unknown"
+                | "never"
+                | "thread"
+                | "buffer"
+                | "typeof"
+                | "keyof"
+                | "rawkeyof"
+                | "read"
+                | "write"
+                | "true"
+                | "false"
+        ) {
+            continue;
+        }
+
+        if !out.iter().any(|held| held == name) {
+            out.push(name.to_owned());
+        }
+    }
+
+    out
+}
+
+/// The same text with one whole name replaced, fields left alone
+fn replace_name(text: &str, name: &str, with: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+
+    while let Some(at) = rest.find(name) {
+        let before = rest[..at].chars().next_back();
+        let after = rest[at + name.len()..].chars().next();
+
+        let whole = !before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.')
+            && !after.is_some_and(|c| c.is_alphanumeric() || c == '_');
+
+        out.push_str(&rest[..at]);
+        out.push_str(match whole {
+            true => with,
+
+            false => name,
+        });
+
+        rest = &rest[at + name.len()..];
+    }
+
+    out.push_str(rest);
+
+    out
+}
+
+/*
+The `local name = require(...)` statements of a file, by line.
+
+The scan reads tokens and not a tree, because the buffer under an
+editor is often mid-edit and a tree of it may not exist. A line that
+binds one name to one require is the shape every import takes.
+*/
+fn require_locals(src: &str) -> Vec<(u32, String)> {
+    let mut out = Vec::new();
+
+    for (index, line) in src.lines().enumerate() {
+        let text = line.trim_start();
+
+        let rest = text
+            .strip_prefix("local ")
+            .or_else(|| text.strip_prefix("const "))
+            .unwrap_or_default();
+
+        let Some((name, value)) = rest.split_once('=') else {
+            continue;
+        };
+
+        let name = name.trim();
+
+        if !value.trim_start().starts_with("require")
+            || name.is_empty()
+            || !name.chars().all(|c| c.is_alphanumeric() || c == '_')
+        {
+            continue;
+        }
+
+        out.push((index as u32, name.to_owned()));
+    }
+
+    out
+}
+
+#[cfg(test)]
+mod imported_accepts {
+    use super::{replace_name, type_names};
+
+    /*
+    The names a type text asks this file to know. A field of something
+    and a name a dot follows are already spoken for.
+    */
+    #[test]
+    fn only_the_bare_names_are_candidates() {
+        assert_eq!(type_names(": Query"), vec!["Query"]);
+        assert_eq!(
+            type_names(": { first: Query, rest: { Entity } }"),
+            vec!["Query", "Entity"]
+        );
+
+        // Already qualified, so neither half is a name to look up.
+        assert!(type_names(": jecs.Query").is_empty());
+
+        // The words a type text holds that name no module.
+        assert!(type_names(": { hp: number, name: string }").is_empty());
+        assert!(type_names(": (number) -> boolean").is_empty());
+    }
+
+    /// A replacement takes the whole name and leaves a field alone.
+    #[test]
+    fn a_field_of_the_same_name_survives() {
+        assert_eq!(
+            replace_name(": Query", "Query", "jecs.Query"),
+            ": jecs.Query"
+        );
+        assert_eq!(
+            replace_name(": { q: Query, k: t.Query }", "Query", "jecs.Query"),
+            ": { q: jecs.Query, k: t.Query }"
+        );
+
+        // A longer name that holds this one is not this one.
+        assert_eq!(
+            replace_name(": QueryBuilder", "Query", "jecs.Query"),
+            ": QueryBuilder"
+        );
     }
 }

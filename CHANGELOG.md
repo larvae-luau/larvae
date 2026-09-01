@@ -4,6 +4,37 @@ Notable changes land here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow
 [semver](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- An accept writes a type another module declares. The printer writes
+  a required module's type bare, ex: `Query`, and that name means
+  nothing in the file the accept writes into, so such a hint stayed
+  display only. `[lsp.inlay_hints] accept_imports` decides what it
+  writes instead: `qualify` writes it through the binding that
+  requires the module, `jecs.Query`; `alias` writes the bare name and
+  adds `type Query = jecs.Query` with the imports; `off` keeps the old
+  behaviour. A name two required modules both export writes nothing,
+  because a guess between them puts the wrong type in someone's file
+
+### Changed
+
+- The inlay hints compute on every request, the way luau-lsp answers
+  them, and the editor holds each hint against its own edits until the
+  answer arrives. That is what keeps a hint with its text. larvae used
+  to hold the hints for `[lsp.inlay_hints] update_delay` and ask the
+  editor to redraw at the pause, and a redraw of held hints is what
+  moved one away from the text it describes. The delay is `0` now, and
+  a project that wants less inference on a slow machine sets one
+
+### Fixed
+
+- The editor is asked to redraw the hints when the hint settings
+  change and at no other time, which is the one case luau-lsp asks in.
+  A redraw after every pause, and after every edit to a file another
+  file requires, is what made the hints flicker
+
 ## 0.7.5 - 2026-08-31
 
 ### Fixed

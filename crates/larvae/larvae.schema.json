@@ -2547,8 +2547,18 @@
         "update_delay": {
           "type": "integer",
           "minimum": 0,
-          "default": 700,
-          "description": "How long the hints hold still while the author types, in milliseconds. A request mid-edit answers with the last settled hints, and one refresh follows the pause. 0 recomputes on every request. Default: 700."
+          "default": 0,
+          "description": "How long the hints hold still while the author types, in milliseconds. Zero is the default and what luau-lsp does: every request computes and the editor holds each hint against its own edits, which is what keeps a hint with its text. A number answers a mid-edit request with the last settled hints, which costs less inference and can leave a hint a column from its text until the pause."
+        },
+        "accept_imports": {
+          "type": "string",
+          "enum": [
+            "qualify",
+            "alias",
+            "off"
+          ],
+          "default": "qualify",
+          "description": "What an accept writes when the hinted type belongs to another module. qualify writes it through the binding that requires the module, ex: jecs.Query. alias writes the bare name and adds type Query = jecs.Query with the imports. off leaves such a hint display only."
         },
         "type_hint_max_length": {
           "type": "integer",
