@@ -517,15 +517,16 @@ fn hints_hold_still_while_typing() {
 }
 
 /*
-The held hints follow the lines, and leave the edited ones.
+The held hints follow the lines, and none of them vanishes.
 
-An enter moves every hint below the cursor down with its line. The
-rewritten lines themselves drop their hints: a stale character there
-can split a word, and `props: Pr: ()ops` is worse than a hint that
-waits out the pause. An append at the end of the file moves nothing.
+An enter moves every hint below the cursor down with its line. A hint
+on a rewritten line keeps its line and moves to the end of it: it
+cannot hold a column whose text changed, and it must not disappear,
+which is what a moved or retyped line used to cost. An append at the
+end of the file moves nothing.
 */
 #[test]
-fn held_hints_follow_the_lines_and_leave_the_edited_ones() {
+fn held_hints_follow_the_lines_and_hold_their_place() {
     let server = Server::default();
     let uri = "file:///t.luau";
 
@@ -563,7 +564,7 @@ local s = 'x'
     assert_eq!(shifted[2]["position"]["line"], 4, "{shifted:?}");
     drop(cache);
 
-    // typing inside line 1: that line's hint drops, the rest hold
+    // typing inside line 1: that hint stays, at the end of its line
     server
         .hint_cache
         .borrow_mut()
@@ -585,9 +586,42 @@ local s = 'x'
     let cache = server.hint_cache.borrow();
     let edited = cache.get(uri).unwrap().as_array().unwrap();
 
-    assert_eq!(edited.len(), 2, "{edited:?}");
+    assert_eq!(edited.len(), 3, "no hint may vanish: {edited:?}");
     assert_eq!(edited[0]["position"]["line"], 0);
-    assert_eq!(edited[1]["position"]["line"], 3);
+    assert_eq!(edited[1]["position"]["line"], 1);
+    assert_eq!(
+        edited[1]["position"]["character"], 19,
+        "the hint sits at the end of the line it could not hold: {edited:?}"
+    );
+    assert_eq!(edited[2]["position"]["line"], 3);
+    drop(cache);
+
+    /*
+    A line moved with the editor's own move-line command: both lines
+    are rewritten, and both keep their hints.
+    */
+    server
+        .hint_cache
+        .borrow_mut()
+        .insert(uri.into(), held.clone());
+    server.shift_hint_cache(
+        uri,
+        "local a = 1
+local function t()
+end
+local s = 'x'
+",
+        "local function t()
+local a = 1
+end
+local s = 'x'
+",
+    );
+
+    let cache = server.hint_cache.borrow();
+    let moved = cache.get(uri).unwrap().as_array().unwrap();
+
+    assert_eq!(moved.len(), 3, "a moved line kept no hints: {moved:?}");
     drop(cache);
 
     // an append at the end moves nothing

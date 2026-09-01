@@ -6,6 +6,16 @@ Notable changes land here. Format follows
 
 ## Unreleased
 
+### Fixed
+
+- A held inlay hint no longer vanishes. A hint on a line the author
+  rewrote or moved was dropped until the pause, because its column
+  belonged to text that changed and a stale one reads as
+  `props: Pr: ()ops`. It keeps its line and moves to the end of it
+  instead, which is always a boundary, and the pause puts it back
+  where it belongs
+
+
 ### Added
 
 - An accept writes a type another module declares. The printer writes

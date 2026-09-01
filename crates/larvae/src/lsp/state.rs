@@ -985,6 +985,7 @@ impl Server {
 
         // The lines the edit rewrote, in the old text's numbering.
         let changed_end = old_lines.len().saturating_sub(tail).max(from) as i64;
+        let last_line = new_lines.len().saturating_sub(1) as i64;
         let delta = new_lines.len() as i64 - old_lines.len() as i64;
         let from = from as i64;
 
@@ -999,16 +1000,39 @@ impl Server {
                 }
 
                 /*
-                A hint inside the rewritten lines is at a character that
-                may now split a word, and `props: Pr: ()ops` is worse
-                than a hint that waits out the pause. It drops; the ones
-                below follow their lines.
+                A hint inside the rewritten lines keeps its line and
+                moves to the end of it.
+
+                It cannot hold its column: the text under it changed,
+                and a hint left at the old character reads as
+                `props: Pr: ()ops`. It must not vanish either, which is
+                what it did before, so a line the author moved or
+                retyped lost its hints until the pause. The end of the
+                line is the one place that is always a boundary, so the
+                hint stays legible and the pause puts it back where it
+                belongs.
                 */
                 if line < changed_end {
+                    let at = (line + delta).max(from).min(last_line);
+
+                    let width = new_lines
+                        .get(at as usize)
+                        .map_or(0, |text| text.chars().count());
+
+                    hint["position"]["line"] = at.into();
+                    hint["position"]["character"] = width.into();
+
+                    return true;
+                }
+
+                // A hint below the edit follows its line, which did not change.
+                let at = line + delta;
+
+                if at > last_line {
                     return false;
                 }
 
-                hint["position"]["line"] = (line + delta).max(from).into();
+                hint["position"]["line"] = at.max(from).into();
 
                 true
             });
