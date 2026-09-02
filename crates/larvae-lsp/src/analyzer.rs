@@ -2549,8 +2549,8 @@ mod moonwave_documentation {
             docs(src, "function add").as_deref(),
             Some(
                 "Adds two numbers together.\n\n\n**Parameters**\n\n\
-                 - `a` number -- the first one\n- `b` number -- the second one\n\n\
-                 **Returns**\n\n- `number` -- their sum"
+                 - `a` `number` — the first one\n- `b` `number` — the second one\n\n\
+                 **Returns**\n\n- `number` — their sum"
             )
         );
     }
@@ -2566,7 +2566,7 @@ mod moonwave_documentation {
         assert_eq!(
             docs(src, "function unlist").as_deref(),
             Some(
-                "Removes a thing.\nThe entity itself is untouched.\n\n\n**Parameters**\n\n- `key` any"
+                "Removes a thing.\nThe entity itself is untouched.\n\n\n**Parameters**\n\n- `key` `any`"
             )
         );
     }
@@ -2600,9 +2600,9 @@ mod moonwave_documentation {
         assert_eq!(
             docs(src, "function tagged").as_deref(),
             Some(
-                "\n\nAfter a blank doc line.\n**Deprecated** `1.2.0` use something else\n\
-                 **Since** `1.0.0`\n**Yields**\n\n\n**Fields**\n\n- `name` string -- the name\n\n\
-                 **Throws**\n\n- `BadThing` -- when it breaks"
+                "> `yields`\n\nAfter a blank doc line.\n> **Deprecated** `1.2.0` use something else\n\
+                 > **Since** `1.0.0`\n\n\n**Fields**\n\n- `name` `string` — the name\n\n\
+                 **Throws**\n\n- `BadThing` — when it breaks"
             )
         );
     }
@@ -2657,7 +2657,7 @@ mod moonwave_documentation {
 
         assert_eq!(
             analysis.hover_documentation(&main, at).as_deref(),
-            Some("Doubles a number.\n\n\n**Parameters**\n\n- `n` number -- the number")
+            Some("Doubles a number.\n\n\n**Parameters**\n\n- `n` `number` — the number")
         );
     }
 }

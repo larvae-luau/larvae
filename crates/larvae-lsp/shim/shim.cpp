@@ -1937,7 +1937,10 @@ static std::string printMoonwave(const std::vector<std::string>& comments)
             row += "`" + badges[i] + "`";
         }
 
-        result = row + "\n\n" + result;
+        // The prose may open on blank lines; the row supplies its own.
+        size_t body = result.find_first_not_of('\n');
+
+        result = row + "\n\n" + (body == std::string::npos ? "" : result.substr(body));
     }
 
     /*
