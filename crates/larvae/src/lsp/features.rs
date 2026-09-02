@@ -612,7 +612,10 @@ often the only part of the file that parses. `function a.b:c(x: T): R`
 gives back `c`, its parameters with the types the author wrote, and
 `R`.
 */
-fn function_shape(line: &str) -> Option<(String, Vec<(String, Option<String>)>, Option<String>)> {
+/// The parameters of a declaration: each name, with the type the author wrote
+type Params = Vec<(String, Option<String>)>;
+
+fn function_shape(line: &str) -> Option<(String, Params, Option<String>)> {
     let text = line.trim();
 
     let after = text

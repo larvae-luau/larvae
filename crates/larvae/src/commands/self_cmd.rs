@@ -135,7 +135,27 @@ fn install_server(me: &Path, bin_dir: &Path) {
 
     let server = format!("larvae-lsp{}", std::env::consts::EXE_SUFFIX);
 
+    /*
+    A tool manager installs the one binary its manifest names, so a
+    larvae that arrived through rokit, aftman, or ember sits alone: the
+    server and the analyzer library of the same release never landed.
+    The editor then falls back to `larvae lsp`, which serves the lints
+    and none of the types, and nothing says why.
+
+    The release holds all three files, so the install fetches the two
+    that are missing rather than leaving the editor half served.
+    */
     if !from.join(&server).is_file() {
+        match fetch_server(bin_dir) {
+            Ok(true) => {}
+
+            Ok(false) => {}
+
+            Err(e) => eprintln!(
+                "note: larvae-lsp is not beside this binary and could not be fetched: {e:#}\n      the editor keeps the lints and loses hover, completion, and types"
+            ),
+        }
+
         return;
     }
 
@@ -199,6 +219,97 @@ fn install_server(me: &Path, bin_dir: &Path) {
     }
 
     check_server_runs(&bin_dir.join(&server));
+}
+
+/*
+Fetch the server and the analyzer library of this release.
+
+The zip of a release holds the CLI, the server, and the library. A
+tool manager unpacks the CLI alone, so the two that serve the editor
+have to come from the archive here. The version is the running one,
+because a server of another version speaks another protocol to the
+same larvae.
+
+The answer is whether anything was installed. A release without the
+archive, ex: an old one, is not a failure: the editor keeps the
+fallback server it always had.
+*/
+fn fetch_server(bin_dir: &Path) -> Result<bool> {
+    let stem = format!("larvae-{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+    let zip_name = format!("{stem}.zip");
+    let version = env!("CARGO_PKG_VERSION");
+
+    let url = format!("https://github.com/{REPO}/releases/download/v{version}/{zip_name}");
+
+    eprintln!("larvae-lsp is not beside this binary; fetching it from release v{version}");
+
+    let archive = http::get_bytes(&url)
+        .with_context(|| format!("cannot download {zip_name} of v{version}"))?;
+
+    let library = format!(
+        "{}eclipse_analysis{}",
+        std::env::consts::DLL_PREFIX,
+        std::env::consts::DLL_SUFFIX
+    );
+
+    let server = format!("larvae-lsp{}", std::env::consts::EXE_SUFFIX);
+
+    std::fs::create_dir_all(bin_dir)
+        .with_context(|| format!("failed to create {}", bin_dir.display()))?;
+
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&archive))
+        .context("the release archive does not read as a zip")?;
+
+    let mut wrote = false;
+
+    for index in 0..zip.len() {
+        let mut entry = zip.by_index(index)?;
+
+        // The base name only: a crafted path in an archive reaches nothing.
+        let Some(name) = entry
+            .enclosed_name()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        else {
+            continue;
+        };
+
+        if name != server && name != library {
+            continue;
+        }
+
+        use std::io::Read;
+
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes)?;
+
+        let target = bin_dir.join(&name);
+        let staged = std::env::temp_dir().join(&name);
+
+        std::fs::write(&staged, &bytes)
+            .with_context(|| format!("failed to stage {}", staged.display()))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))?;
+        }
+
+        replace_exe(&staged, &target).with_context(|| format!("failed to install {name}"))?;
+
+        let _ = std::fs::remove_file(&staged);
+
+        unquarantine(&target);
+        ui::print_success(&format!("Installed {name} to {}", target.display()));
+
+        wrote = true;
+    }
+
+    if wrote {
+        check_server_runs(&bin_dir.join(&server));
+    }
+
+    Ok(wrote)
 }
 
 /*

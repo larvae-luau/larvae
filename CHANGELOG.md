@@ -30,6 +30,13 @@ Notable changes land here. Format follows
 
 ### Fixed
 
+- `larvae self install` fetches `larvae-lsp` and its analyzer library
+  when they are not beside the binary. A tool manager installs the one
+  binary its manifest names, so a larvae from rokit, aftman, or ember
+  sat alone and the editor fell back to `larvae lsp`, which serves the
+  lints and none of the types, with nothing said about why. The three
+  files ship in one release archive, and the install takes the two it
+  is missing
 - `larvae self install` clears the quarantine macOS puts on a
   downloaded file, and says so when the installed server does not
   start. The analyzer is a library the server links at load, so a file
