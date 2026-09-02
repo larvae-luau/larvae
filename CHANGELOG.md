@@ -4,6 +4,16 @@ Notable changes land here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow
 [semver](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- `@lifecycle` in a doc comment says a framework calls the member, so
+  `oop.unused_private` leaves it alone. chief calls the lifecycle of a
+  provider and the file that declares one never does, so the lint told
+  the author to delete the method the framework needs. The tag colours
+  like the rest
+
 ## 0.8.0-canary.1
 
 ### Added

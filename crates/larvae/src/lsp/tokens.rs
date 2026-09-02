@@ -1131,6 +1131,7 @@ const DOC_TAGS: &[&str] = &[
     "function",
     "ignore",
     "interface",
+    "lifecycle",
     "method",
     "param",
     "plugin",
@@ -2048,5 +2049,35 @@ mod interpolated_strings {
 
         assert!(kinds.contains(&KEYWORD), "{found:?}");
         assert!(kinds.contains(&NUMBER), "{found:?}");
+    }
+}
+
+#[cfg(test)]
+mod doc_tag_spans {
+    use super::*;
+
+    /// A tag takes the keyword colour; the marks and the prose stay comment.
+    #[test]
+    fn only_the_tag_is_a_keyword() {
+        let src = "--[[\n\t@lifecycle\n]]\nlocal x = 1\n";
+        let end = src.find("]]").expect("the close") as u32 + 2;
+
+        let found: Vec<(&str, u32)> = doc_spans(src, 0, end)
+            .into_iter()
+            .map(|(from, to, ty, _)| (&src[from as usize..to as usize], ty))
+            .collect();
+
+        assert!(
+            found
+                .iter()
+                .any(|(text, ty)| *text == "@lifecycle" && *ty == KEYWORD),
+            "{found:?}"
+        );
+        assert!(
+            found
+                .iter()
+                .all(|(text, ty)| *ty != KEYWORD || text.starts_with('@')),
+            "only a tag may be a keyword: {found:?}"
+        );
     }
 }
