@@ -1857,24 +1857,24 @@ static std::string printMoonwave(const std::vector<std::string>& comments)
         else if (beginsWith(comment, "@field "))
             fields.push_back(comment);
         else if (comment == "@private")
-            badges.push_back("🔒 Private");
+            badges.push_back("private");
         else if (comment == "@yields")
-            badges.push_back("⏳ Yields");
+            badges.push_back("yields");
         else if (comment == "@unreleased")
-            badges.push_back("🚧 Unreleased");
+            badges.push_back("unreleased");
         else if (comment == "@server")
-            badges.push_back("🖥️ Server");
+            badges.push_back("server");
         else if (comment == "@client")
-            badges.push_back("💻 Client");
+            badges.push_back("client");
         else if (comment == "@plugin")
-            badges.push_back("🔌 Plugin");
+            badges.push_back("plugin");
         else if (comment == "@readonly")
-            badges.push_back("🔏 Read Only");
+            badges.push_back("read only");
         else if (comment == "@ignore")
-            badges.push_back("🙈 Ignored");
+            badges.push_back("ignored");
         else if (beginsWith(comment, "@deprecated "))
         {
-            result += "⚠️ **Deprecated** ";
+            result += "> **Deprecated** ";
 
             std::string description = comment.substr(12);
             std::string version = description;
@@ -1892,7 +1892,7 @@ static std::string printMoonwave(const std::vector<std::string>& comments)
         }
         else if (beginsWith(comment, "@since "))
         {
-            result += "🕒 **Since** `" + comment.substr(7) + "`\n";
+            result += "> **Since** `" + comment.substr(7) + "`\n";
         }
         else if (beginsWith(comment, "@tag ") || beginsWith(comment, "@within ")
                  || beginsWith(comment, "@class ") || beginsWith(comment, "@function ")
@@ -1918,35 +1918,81 @@ static std::string printMoonwave(const std::vector<std::string>& comments)
     */
     if (!badges.empty())
     {
-        std::string row;
+        /*
+        The flags are a section of their own, not a line of bold text.
 
-        for (const std::string& badge : badges)
+        A blockquote draws the accent bar an editor gives one, and each
+        flag inside it is a code span, which draws the chip an editor
+        gives that. So the flags read as labels attached to the thing
+        rather than as the first sentence about it, and they take a
+        colour without a single emoji.
+        */
+        std::string row = "> ";
+
+        for (size_t i = 0; i < badges.size(); ++i)
         {
-            if (!row.empty())
-                row += "  ·  ";
+            if (i > 0)
+                row += " ";
 
-            row += "**" + badge + "**";
+            row += "`" + badges[i] + "`";
         }
 
-        result = row + "\n\n---\n\n" + result;
+        result = row + "\n\n" + result;
     }
 
-    /// One entry of a section: the name in code, then whatever followed it.
+    /*
+    One entry of a section, as a row a reader can scan.
+
+    A moonwave entry is `name type -- what it is`, and printing it as
+    one run of words leaves the reader to find the parts. The name and
+    the type each take a code span, so they read as the values they
+    are, and an em dash opens the description.
+    */
     auto named = [](const std::string& entry, size_t skip, const char* split) -> std::string
     {
         std::string tail = entry.substr(skip);
-        std::string head = tail;
+        std::string head;
 
-        if (const size_t at = split ? tail.find(split) : tail.find(' '); at != std::string::npos)
+        // The name, for a section whose entries carry one.
+        if (!split)
         {
+            const size_t at = tail.find(' ');
+
+            if (at == std::string::npos)
+                return "\n- `" + tail + "`";
+
             head = tail.substr(0, at);
-            tail = tail.substr(at);
+            tail = tail.substr(at + 1);
         }
 
-        if (split)
-            return (!head.empty() && head != tail) ? "\n- `" + head + "`" + tail : "\n- " + tail;
+        // What is left splits into the type and the prose about it.
+        std::string type = tail;
+        std::string prose;
 
-        return head == tail ? "\n- `" + head + "`" : "\n- `" + head + "`" + tail;
+        if (const size_t at = tail.find("--"); at != std::string::npos)
+        {
+            type = tail.substr(0, at);
+            prose = tail.substr(at + 2);
+        }
+
+        while (!type.empty() && type.back() == ' ')
+            type.pop_back();
+
+        while (!prose.empty() && prose.front() == ' ')
+            prose.erase(prose.begin());
+
+        std::string row = "\n- ";
+
+        if (!head.empty())
+            row += "`" + head + "`";
+
+        if (!type.empty())
+            row += (head.empty() ? "`" : " `") + type + "`";
+
+        if (!prose.empty())
+            row += " — " + prose;
+
+        return row;
     };
 
     if (!fields.empty())

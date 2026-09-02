@@ -19,9 +19,14 @@ Notable changes land here. Format follows
 
 ### Changed
 
-- The flags of a doc comment read as one row of badges above the
-  prose, ex: `🔒 Private · ⏳ Yields · 🖥️ Server`. As bold lines they
-  stacked and pushed the description down the card
+- The flags of a doc comment read as a section of their own above the
+  prose: a quote holds them, and each flag is a code span, so an
+  editor draws its accent bar and its chips around them. As bold lines
+  they stacked and pushed the description down the card
+- An entry of a doc section reads as a row: the name and the type each
+  take a code span and an em dash opens the description, ex:
+  `` `player` `Player` — who joined ``. One run of words left the
+  reader to find the parts
 
 ### Fixed
 
