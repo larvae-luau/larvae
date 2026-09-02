@@ -30,6 +30,15 @@ Notable changes land here. Format follows
 
 ### Fixed
 
+- `larvae self install` clears the quarantine macOS puts on a
+  downloaded file, and says so when the installed server does not
+  start. The analyzer is a library the server links at load, so a file
+  Gatekeeper refuses kills the process before it writes a line: the
+  editor saw a server that answered nothing and reported nothing. The
+  install runs the server once and prints the loader's own words when
+  it fails
+- `larvae-lsp --version` answers and stops, so a check that the server
+  starts is a check and not a session reading an empty stdin
 - The names inside an interpolated string take the colour code takes.
   The lexer keeps a backtick string as one token, so the whole thing
   painted as string and `{name}` read as text rather than as the value

@@ -186,13 +186,89 @@ fn install_server(me: &Path, bin_dir: &Path) {
         }
 
         match replace_exe(&source, &target) {
-            Ok(()) => ui::print_success(&format!("Installed {name} to {}", target.display())),
+            Ok(()) => {
+                unquarantine(&target);
+                ui::print_success(&format!("Installed {name} to {}", target.display()));
+            }
 
             // The CLI is on disk and works; the message says what was lost.
             Err(e) => eprintln!(
                 "note: could not install {name}, the editor falls back to `larvae lsp`: {e:#}"
             ),
         }
+    }
+
+    check_server_runs(&bin_dir.join(&server));
+}
+
+/*
+Clear the quarantine macOS puts on a downloaded file.
+
+A release arrives as a zip from a browser, and every file unpacked from
+one carries `com.apple.quarantine`. Gatekeeper then refuses the server,
+and it refuses the analyzer library the server links against, so the
+process dies before it writes a line. An editor sees a server that
+answered nothing and says nothing, which is the worst shape a failure
+takes.
+
+The user asked for this install, so the attribute goes. The command is
+absent on every other platform and the call costs nothing there.
+*/
+fn unquarantine(path: &Path) {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+
+    let _ = std::process::Command::new("xattr")
+        .arg("-d")
+        .arg("com.apple.quarantine")
+        .arg(path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+/*
+Prove the installed server starts, and say what stopped it.
+
+The analyzer is a library the server links at load, not one it opens
+when it needs it, so a library the loader refuses kills the process
+before `main`. The editor then starts a server that dies at once and
+reports nothing, and the user is left with an editor that lost its
+types for no stated reason. One run here turns that into a sentence
+with the loader's own words in it.
+*/
+fn check_server_runs(server: &Path) {
+    if !server.is_file() {
+        return;
+    }
+
+    let Ok(out) = std::process::Command::new(server).arg("--version").output() else {
+        eprintln!(
+            "note: the installed larvae-lsp did not start, so the editor keeps the lints and loses the types"
+        );
+
+        return;
+    };
+
+    if out.status.success() {
+        return;
+    }
+
+    let said = String::from_utf8_lossy(&out.stderr);
+    let said = said.trim();
+
+    eprintln!(
+        "note: the installed larvae-lsp does not start, so the editor loses hover, completion, and types"
+    );
+
+    if !said.is_empty() {
+        eprintln!("      {said}");
+    }
+
+    if cfg!(target_os = "macos") {
+        eprintln!("      on macOS this is usually the quarantine of a downloaded file:");
+        eprintln!("          xattr -dr com.apple.quarantine ~/.larvae/bin");
     }
 }
 

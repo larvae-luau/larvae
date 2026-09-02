@@ -30,6 +30,21 @@ fn main() -> std::process::ExitCode {
     }
 
     /*
+    `--version` answers and stops, so a check that the server starts is
+    a check and not a session that reads an empty stdin.
+
+    The analyzer is a library this binary links at load, so a loader
+    that refuses it kills the process before this line. That is what
+    the caller is testing: an exit code, and the loader's own words on
+    stderr when there are any.
+    */
+    if matches!(args.first().map(String::as_str), Some("--version" | "-V")) {
+        println!("larvae-lsp {}", env!("CARGO_PKG_VERSION"));
+
+        return std::process::ExitCode::SUCCESS;
+    }
+
+    /*
     The session is built on a thread, because Luau's type definitions take a
     few seconds to load and the editor should not wait for them.
 
