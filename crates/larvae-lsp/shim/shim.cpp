@@ -486,6 +486,48 @@ struct LarvaeSession
     }
 };
 
+/*
+The strings a tagged call takes, for the list inside its quotes.
+
+Luau asks the host for the strings of a call whose function carries a
+tag, and hands over the class the call is on. luau-lsp answers six
+tags, and this answers the same six with the same lists: the classes
+under Instance, the properties of the receiver, the sourcemap children
+of the receiver, the enums, the creatable classes, and the services.
+*/
+static std::optional<Luau::AutocompleteEntryMap> stringCompletions(
+    LarvaeSession* s, const std::string& tag, std::optional<const Luau::ExternType*> context)
+{
+    const Luau::GlobalTypes& globals =
+        s->newSolver ? s->frontend.globals : s->frontend.globalsForAutocomplete;
+
+    std::vector<std::string> names;
+
+    if (tag == "ClassNames")
+        names = Larvae::instanceClassNames(globals);
+    else if (tag == "Enums")
+        names = Larvae::enumNames(globals);
+    else if (tag == "CreatableInstances")
+        names = s->roblox.creatable;
+    else if (tag == "Services")
+        names = s->roblox.services;
+    else if (tag == "Properties" && context && *context)
+        names = Larvae::propertyNames(*context);
+    else if (tag == "Children" && context && *context)
+        names = Larvae::childNames(*context);
+    else
+        return std::nullopt;
+
+    Luau::AutocompleteEntryMap out;
+
+    for (const std::string& name : names)
+        out.insert_or_assign(name,
+            Luau::AutocompleteEntry{Luau::AutocompleteEntryKind::String, globals.builtinTypes->stringType,
+                false, false, Luau::TypeCorrectKind::Correct});
+
+    return out;
+}
+
 extern "C" {
 
 void larvae_enable_all_flags(void)
@@ -3924,48 +3966,6 @@ const char* larvae_documentation_symbol(LarvaeSession* s, const char* path, uint
     s->documentationStorage = *symbol;
 
     return s->documentationStorage.c_str();
-}
-
-/*
-The strings a tagged call takes, for the list inside its quotes.
-
-Luau asks the host for the strings of a call whose function carries a
-tag, and hands over the class the call is on. luau-lsp answers six
-tags, and this answers the same six with the same lists: the classes
-under Instance, the properties of the receiver, the sourcemap children
-of the receiver, the enums, the creatable classes, and the services.
-*/
-static std::optional<Luau::AutocompleteEntryMap> stringCompletions(
-    LarvaeSession* s, const std::string& tag, std::optional<const Luau::ExternType*> context)
-{
-    const Luau::GlobalTypes& globals =
-        s->newSolver ? s->frontend.globals : s->frontend.globalsForAutocomplete;
-
-    std::vector<std::string> names;
-
-    if (tag == "ClassNames")
-        names = Larvae::instanceClassNames(globals);
-    else if (tag == "Enums")
-        names = Larvae::enumNames(globals);
-    else if (tag == "CreatableInstances")
-        names = s->roblox.creatable;
-    else if (tag == "Services")
-        names = s->roblox.services;
-    else if (tag == "Properties" && context && *context)
-        names = Larvae::propertyNames(*context);
-    else if (tag == "Children" && context && *context)
-        names = Larvae::childNames(*context);
-    else
-        return std::nullopt;
-
-    Luau::AutocompleteEntryMap out;
-
-    for (const std::string& name : names)
-        out.insert_or_assign(name,
-            Luau::AutocompleteEntry{Luau::AutocompleteEntryKind::String, globals.builtinTypes->stringType,
-                false, false, Luau::TypeCorrectKind::Correct});
-
-    return out;
 }
 
 size_t larvae_completions(LarvaeSession* s, const char* path, uint32_t byte, LarvaeCompletion* out, size_t cap)
