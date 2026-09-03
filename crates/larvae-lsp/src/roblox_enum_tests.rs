@@ -48,8 +48,10 @@ fn roblox_enums_are_qualified_types_under_both_solvers() {
     let old_solver = enum_complaints();
     assert!(old_solver.is_empty(), "old solver: {old_solver:?}");
 
-    let mut flags = FFlagsConfig::default();
-    flags.enable_new_solver = true;
+    let flags = FFlagsConfig {
+        enable_new_solver: true,
+        ..Default::default()
+    };
     apply_flags(&flags);
 
     let new_solver = enum_complaints();

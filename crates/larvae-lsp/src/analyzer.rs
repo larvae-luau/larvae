@@ -2365,8 +2365,10 @@ mod flags {
     fn a_hover_answers_under_the_new_solver() {
         let _flags = Flags::hold();
 
-        let mut flags = FFlagsConfig::default();
-        flags.enable_new_solver = true;
+        let flags = FFlagsConfig {
+            enable_new_solver: true,
+            ..Default::default()
+        };
 
         apply_flags(&flags);
 
