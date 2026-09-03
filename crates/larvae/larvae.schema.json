@@ -2563,7 +2563,7 @@
           "type": "integer",
           "minimum": 0,
           "default": 0,
-          "description": "How long the hints hold still while the author types, in milliseconds. Zero is the default and what luau-lsp does: every request computes and the editor holds each hint against its own edits, which is what keeps a hint with its text. A number answers a mid-edit request with the last settled hints, which costs less inference and can leave a hint a column from its text until the pause."
+          "description": "No effect since 0.8: every hint request computes against the current text, the way luau-lsp does. The key stays so a config that wrote it still loads."
         },
         "accept_imports": {
           "type": "string",

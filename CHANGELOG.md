@@ -6,6 +6,22 @@ Notable changes land here. Format follows
 
 ## Unreleased
 
+### Changed
+
+- Inlay hints compute on every request, against the text the editor
+  holds at that request, the way luau-lsp computes them. The hold that
+  served the last hints while the author typed is gone with its cache,
+  its settle thread, and the refresh it sent after each pause: a held
+  hint was a hint from an older text, and that is where a hint in the
+  middle of a word came from, and where the hints that stopped after a
+  refresh came from. The editor asks after an edit and the answer is
+  current. `[lsp.inlay_hints] update_delay` stays readable and does
+  nothing
+- The server asks the editor to redraw hints only when a hint setting
+  changed, which is when luau-lsp asks. Every settings message used to
+- The flags of a doc comment read as bold lines again, `**Private**`
+  above the prose, the way every other tag reads
+
 ### Added
 
 - `@lifecycle` in a doc comment says a framework calls the member, so

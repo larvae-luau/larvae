@@ -1840,7 +1840,6 @@ static std::string printMoonwave(const std::vector<std::string>& comments)
         return {};
 
     std::string result;
-    std::vector<std::string> badges;
     std::vector<std::string> fields;
     std::vector<std::string> params;
     std::vector<std::string> returns;
@@ -1857,24 +1856,24 @@ static std::string printMoonwave(const std::vector<std::string>& comments)
         else if (beginsWith(comment, "@field "))
             fields.push_back(comment);
         else if (comment == "@private")
-            badges.push_back("private");
+            result += "**Private**\n";
         else if (comment == "@yields")
-            badges.push_back("yields");
+            result += "**Yields**\n";
         else if (comment == "@unreleased")
-            badges.push_back("unreleased");
+            result += "**Unreleased**\n";
         else if (comment == "@server")
-            badges.push_back("server");
+            result += "**Server**\n";
         else if (comment == "@client")
-            badges.push_back("client");
+            result += "**Client**\n";
         else if (comment == "@plugin")
-            badges.push_back("plugin");
+            result += "**Plugin**\n";
         else if (comment == "@readonly")
-            badges.push_back("read only");
+            result += "**Read Only**\n";
         else if (comment == "@ignore")
-            badges.push_back("ignored");
+            result += "**Ignored**\n";
         else if (beginsWith(comment, "@deprecated "))
         {
-            result += "> **Deprecated** ";
+            result += "**Deprecated** ";
 
             std::string description = comment.substr(12);
             std::string version = description;
@@ -1892,7 +1891,7 @@ static std::string printMoonwave(const std::vector<std::string>& comments)
         }
         else if (beginsWith(comment, "@since "))
         {
-            result += "> **Since** `" + comment.substr(7) + "`\n";
+            result += "**Since** `" + comment.substr(7) + "`\n";
         }
         else if (beginsWith(comment, "@tag ") || beginsWith(comment, "@within ")
                  || beginsWith(comment, "@class ") || beginsWith(comment, "@function ")
@@ -1906,41 +1905,6 @@ static std::string printMoonwave(const std::vector<std::string>& comments)
         {
             result += comment + "\n";
         }
-    }
-
-    /*
-    The flags read as one row above the prose.
-
-    Each one is a word about the whole thing, ex: private, server. As
-    bold lines they stacked and pushed the description down the card;
-    on one line they read as the labels they are, and the rule under
-    them separates the labels from what the author wrote.
-    */
-    if (!badges.empty())
-    {
-        /*
-        The flags are a section of their own, not a line of bold text.
-
-        A blockquote draws the accent bar an editor gives one, and each
-        flag inside it is a code span, which draws the chip an editor
-        gives that. So the flags read as labels attached to the thing
-        rather than as the first sentence about it, and they take a
-        colour without a single emoji.
-        */
-        std::string row = "> ";
-
-        for (size_t i = 0; i < badges.size(); ++i)
-        {
-            if (i > 0)
-                row += " ";
-
-            row += "`" + badges[i] + "`";
-        }
-
-        // The prose may open on blank lines; the row supplies its own.
-        size_t body = result.find_first_not_of('\n');
-
-        result = row + "\n\n" + (body == std::string::npos ? "" : result.substr(body));
     }
 
     /*

@@ -326,7 +326,7 @@ line the author did not write, and a reader who did not ask for that reads
 it as the file changing under them. luau-lsp defaults them off for the same
 reason.
 */
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct InlayHintsConfig {
     /// The inferred type of a local the author left unannotated
@@ -356,18 +356,15 @@ pub struct InlayHintsConfig {
     pub parameter_names: ParameterNames,
 
     /*
-    How long the hints hold still while the author types, in milliseconds.
+    Kept so a config that wrote it still loads; it does nothing.
 
-    Zero is the default, and it is what luau-lsp does: every request
-    computes, and the editor holds each hint against the edits it makes
-    until the answer arrives. That is what keeps a hint with its text.
-
-    A number holds the last settled hints for that long and answers a
-    request that lands mid-edit with them. It costs less inference on a
-    slow machine, and the held hints are the ones the editor draws, so a
-    hint can sit a column away from its text until the pause.
+    It held the last hints while the author typed. Every request
+    computes against the current text now, the way luau-lsp computes,
+    which is what keeps a hint with its text. A held hint was a hint
+    from an older text, and that is where a hint in the middle of a
+    word came from.
     */
-    #[serde(default = "update_delay")]
+    #[serde(default)]
     pub update_delay: u64,
 
     /*
@@ -430,10 +427,6 @@ pub enum AcceptImports {
     Alias,
     /// Nothing; the hint stays display only.
     Off,
-}
-
-fn update_delay() -> u64 {
-    0
 }
 
 /// Which call arguments get a parameter name drawn before them.
