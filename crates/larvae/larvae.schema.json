@@ -1060,6 +1060,16 @@
           "default": "auto-prefer-double",
           "description": "Where a string literal's quotes come from. The auto pair switches when the other quote needs fewer escapes; \"preserve\" leaves every literal exactly as written.\n\n[quote_style \u2192](https://larvae-luau.github.io/docs/reference/formatting#quote-style)"
         },
+        "leading_zero": {
+          "type": "string",
+          "enum": [
+            "add",
+            "strip",
+            "preserve"
+          ],
+          "default": "add",
+          "description": "Whether a decimal literal carries its leading zero. add writes .5 as 0.5, strip writes 0.5 as .5, preserve keeps every literal as written. Only a fraction moves: 0. alone and 0x10 stay.\n\n[leading_zero \u2192](https://larvae-luau.github.io/docs/reference/formatting#leading-zero)"
+        },
         "recommended": {
           "type": "boolean",
           "enum": [

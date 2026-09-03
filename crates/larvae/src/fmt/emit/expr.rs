@@ -21,7 +21,7 @@ impl<'a> Emitter<'a> {
 
             Expr::Vararg(_) => Doc::text("..."),
 
-            Expr::Number(s) => Doc::text(self.one(*s)),
+            Expr::Number(s) => Doc::text(self.number(self.one(*s))),
 
             Expr::String(s) => self.string(*s),
 
@@ -538,4 +538,32 @@ fn requote(inner: &str, quote: u8) -> String {
     out.push(quote);
 
     out
+}
+
+impl<'a> Emitter<'a> {
+    /*
+    A number literal in the style `leading_zero` asks for.
+
+    Only a decimal fraction moves: one that opens with `.` takes a zero,
+    one that opens with `0.` and a digit loses it. Everything else is
+    the literal as written, because `0.` alone would become `.`, which
+    is not a number, and a hex literal has no fraction.
+    */
+    fn number(&self, text: &'a str) -> std::borrow::Cow<'a, str> {
+        use crate::fmt::config::LeadingZero;
+
+        let digit_at = |i: usize| text.as_bytes().get(i).is_some_and(u8::is_ascii_digit);
+
+        match self.cfg.leading_zero {
+            LeadingZero::Add if text.starts_with('.') && digit_at(1) => {
+                std::borrow::Cow::Owned(format!("0{text}"))
+            }
+
+            LeadingZero::Strip if text.starts_with("0.") && digit_at(2) => {
+                std::borrow::Cow::Borrowed(&text[1..])
+            }
+
+            _ => std::borrow::Cow::Borrowed(text),
+        }
+    }
 }

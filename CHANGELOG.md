@@ -8,6 +8,11 @@ Notable changes land here. Format follows
 
 ### Added
 
+- `[fmt] leading_zero` decides whether a decimal literal carries its
+  zero. `add`, the default, writes `.5` as `0.5`; `strip` writes `0.5`
+  as `.5`; `preserve` leaves every literal alone. Only a fraction
+  moves: `0.` alone and `0x10` stay
+
 - `larvae-lsp` is a crate of its own on crates.io, so `cargo install
   larvae-lsp` builds the server. The binary carries its analyzer
   library inside and writes it out on first run, under

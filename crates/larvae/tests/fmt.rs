@@ -3382,3 +3382,52 @@ fn a_plain_index_is_not_a_chain() {
         assert_eq!(fmt_with(src, chained(ChainStyle::Full, 2)), src, "{src}");
     }
 }
+
+// --- the leading zero of a decimal ----------------------------------------
+
+fn zero(mode: larvae::fmt::config::LeadingZero) -> FmtConfig {
+    FmtConfig {
+        leading_zero: mode,
+        ..Default::default()
+    }
+}
+
+/// The default writes the zero, and only where a fraction opens with the dot.
+#[test]
+fn a_fraction_takes_its_leading_zero_by_default() {
+    let src = "local a = .5\nlocal b = -.25\nlocal c = .5e3\nlocal d = 0.\nlocal e = 0x10\nlocal f = 10.5\nlocal t = { [.5] = 1 }\nreturn { a, b, c, d, e, f, t }\n";
+    let want = "local a = 0.5\nlocal b = -0.25\nlocal c = 0.5e3\nlocal d = 0.\nlocal e = 0x10\nlocal f = 10.5\nlocal t = { [0.5] = 1 }\nreturn { a, b, c, d, e, f, t }\n";
+
+    assert_eq!(fmt(src), want);
+}
+
+/// `strip` takes the zero off, and leaves `0.` alone: `.` is not a number.
+#[test]
+fn strip_removes_the_leading_zero_where_a_fraction_follows() {
+    use larvae::fmt::config::LeadingZero;
+
+    let src = "local a = 0.5\nlocal b = -0.25\nlocal c = 0.5e3\nlocal d = 0.\nlocal e = 0x10\nlocal f = 10.5\nlocal g = 0\nreturn { a, b, c, d, e, f, g }\n";
+    let want = "local a = .5\nlocal b = -.25\nlocal c = .5e3\nlocal d = 0.\nlocal e = 0x10\nlocal f = 10.5\nlocal g = 0\nreturn { a, b, c, d, e, f, g }\n";
+
+    assert_eq!(fmt_with(src, zero(LeadingZero::Strip)), want);
+}
+
+/// `preserve` changes nothing, and each mode formats to itself.
+#[test]
+fn the_leading_zero_modes_are_stable() {
+    use larvae::fmt::config::LeadingZero;
+
+    let mixed = "local a = .5\nlocal b = 0.5\nreturn { a, b }\n";
+
+    assert_eq!(fmt_with(mixed, zero(LeadingZero::Preserve)), mixed);
+
+    for mode in [LeadingZero::Add, LeadingZero::Strip] {
+        let once = fmt_with(mixed, zero(mode));
+
+        assert_eq!(
+            once,
+            fmt_with(&once, zero(mode)),
+            "{mode:?} moved on a second run"
+        );
+    }
+}
