@@ -6,6 +6,17 @@ Notable changes land here. Format follows
 
 ## Unreleased
 
+### Added
+
+- `larvae-lsp` is a crate of its own on crates.io, so `cargo install
+  larvae-lsp` builds the server. The binary carries its analyzer
+  library inside and writes it out on first run, under
+  `~/.larvae/lib/<version>`, so it works from wherever the install put
+  it; a copy beside the binary still wins when there is one. A library
+  the loader refuses used to kill the process before `main`, and now
+  ends in a sentence. The crate depends on larvae with no default
+  features, and larvae declares none today
+
 ### Changed
 
 - Inlay hints compute on every request, against the text the editor
@@ -21,6 +32,10 @@ Notable changes land here. Format follows
   changed, which is when luau-lsp asks. Every settings message used to
 - The flags of a doc comment read as bold lines again, `**Private**`
   above the prose, the way every other tag reads
+- An entry of a doc section reads as a row: the name and the type each
+  take a code span and an em dash opens the description, ex:
+  `` `player` `Player` — who joined ``. One run of words left the
+  reader to find the parts
 
 ### Added
 
@@ -49,10 +64,6 @@ Notable changes land here. Format follows
   prose: a quote holds them, and each flag is a code span, so an
   editor draws its accent bar and its chips around them. As bold lines
   they stacked and pushed the description down the card
-- An entry of a doc section reads as a row: the name and the type each
-  take a code span and an em dash opens the description, ex:
-  `` `player` `Player` — who joined ``. One run of words left the
-  reader to find the parts
 
 ### Fixed
 

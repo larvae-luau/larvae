@@ -5,7 +5,28 @@ edition = "2024"
 license = "MIT"
 repository = "https://github.com/larvae-luau/larvae"
 homepage = "https://github.com/larvae-luau/larvae"
-description = "The larvae language server, with Luau's analysis frontend behind a feature"
+description = "The larvae language server: Luau's analysis frontend beside larvae's lints and formatter"
+readme = "README.md"
+keywords = ["luau", "roblox", "lsp", "language-server"]
+categories = ["development-tools"]
+# The vendored Luau is 20MB on disk and mostly tests and benches. Only the
+# directories the build script compiles ship, which keeps the crate small.
+include = [
+    "src/**",
+    "shim/**",
+    "types/**",
+    "build.rs",
+    "luau.pin",
+    "README.md",
+    "luau/LICENSE*",
+    "luau/Common/**",
+    "luau/Ast/**",
+    "luau/Config/**",
+    "luau/Bytecode/**",
+    "luau/Compiler/**",
+    "luau/VM/**",
+    "luau/Analysis/**",
+]
 
 [dev-dependencies]
 tempfile = "3"
@@ -14,16 +35,22 @@ tempfile = "3"
 anyhow = "1"
 # The vendored Roblox reference ships deflated; 438KB rather than 3.7MB.
 flate2 = "1"
-larvae = { path = "../larvae" }
+# No default features, and none named: larvae declares none today, and the
+# line keeps a default it may grow later from riding in uninvited.
+larvae = { path = "../larvae", version = "0.8.0-canary.1", default-features = false }
 json5 = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+libloading = { version = "0.8", optional = true }
 
 [build-dependencies]
 flate2 = "1"
 cc = { version = "1", optional = true }
 
 [features]
-# The analyzer compiles the vendored Luau C++, which takes real time. The
-# feature keeps a plain workspace build fast; the shipped binary turns it on.
-analyzer = ["dep:cc"]
+# The analyzer is on by default, so `cargo install larvae-lsp` builds the
+# real server. It compiles the vendored Luau C++, which takes real time;
+# `--no-default-features` keeps a plain workspace build fast.
+default = ["analyzer"]
+analyzer = ["dep:cc", "dep:libloading"]

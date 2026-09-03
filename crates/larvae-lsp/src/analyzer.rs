@@ -380,89 +380,435 @@ type larvae_resolve_fn = extern "C" fn(*mut c_void, *const c_char, *const c_char
 #[allow(non_camel_case_types)]
 type larvae_load_fn = extern "C" fn(*mut c_void, *const c_char) -> *const c_char;
 
-unsafe extern "C" {
-    fn larvae_enable_all_flags();
-    fn larvae_set_flag(name: *const c_char, value: *const c_char) -> i32;
-    fn larvae_apply_required_flags();
-    fn larvae_signature_help(
-        s: *mut c_void,
-        path: *const c_char,
-        byte: u32,
-        sig: *mut RawSignature,
-        out: *mut RawParameter,
-        cap: usize,
-    ) -> i32;
-    fn larvae_inlay_hints(
-        s: *mut c_void,
-        path: *const c_char,
-        out: *mut RawHint,
-        cap: usize,
-        want_variables: i32,
-        want_parameters: i32,
-        want_returns: i32,
-        name_mode: i32,
-    ) -> usize;
-    fn larvae_definition(
-        s: *mut c_void,
-        path: *const c_char,
-        byte: u32,
-        out: *mut RawLocation,
-    ) -> i32;
-    fn larvae_type_definition(
-        s: *mut c_void,
-        path: *const c_char,
-        byte: u32,
-        out: *mut RawLocation,
-    ) -> i32;
-    fn larvae_session_new() -> *mut c_void;
-    fn larvae_set_definitions(s: *mut c_void, name: *const c_char, source: *const c_char) -> i32;
-    fn larvae_session_free(s: *mut c_void);
-    fn larvae_set_resolver(
-        s: *mut c_void,
-        userdata: *mut c_void,
-        resolve: larvae_resolve_fn,
-        load: larvae_load_fn,
-    );
-    fn larvae_open(s: *mut c_void, path: *const c_char, text: *const c_char);
-    fn larvae_invalidate(s: *mut c_void, path: *const c_char);
-    fn larvae_clear_script_types(s: *mut c_void);
-    fn larvae_set_script_type(s: *mut c_void, path: *const c_char, type_name: *const c_char);
-    fn larvae_set_character_type(s: *mut c_void, kind: i32);
-    fn larvae_check(s: *mut c_void, path: *const c_char, out: *mut RawDiag, cap: usize) -> usize;
-    fn larvae_deprecated(
-        s: *mut c_void,
-        path: *const c_char,
-        out: *mut RawDiag,
-        cap: usize,
-    ) -> usize;
-    fn larvae_hover(
-        s: *mut c_void,
-        path: *const c_char,
-        byte: u32,
-        show_table_kinds: i32,
-        include_string_length: i32,
-    ) -> *const c_char;
-    fn larvae_documentation_symbol(s: *mut c_void, path: *const c_char, byte: u32)
-    -> *const c_char;
-    fn larvae_source_documentation(s: *mut c_void) -> *const c_char;
-    fn larvae_bytecode(
-        s: *mut c_void,
-        source: *const c_char,
-        optimization: i32,
-        remarks: i32,
-        debug_level: i32,
-        type_info_level: i32,
-        vector_lib: *const c_char,
-        vector_ctor: *const c_char,
-        vector_type: *const c_char,
-    ) -> *const c_char;
-    fn larvae_completions(
-        s: *mut c_void,
-        path: *const c_char,
-        byte: u32,
-        out: *mut RawCompletion,
-        cap: usize,
-    ) -> usize;
+/*
+The analyzer library, opened once and kept for the life of the process.
+
+The library used to be a load-time link, which put the two Luau copies
+in this binary, mlua's VM and the vendored analyzer, in separate
+objects with their symbols apart. That stays; what changes is who
+opens it. A `cargo install` puts one binary in a directory and nothing
+beside it, so the binary carries the library's bytes and writes them
+out where it can find them again, and a library the loader refuses
+now ends in a sentence rather than a process that dies before `main`.
+
+A copy beside the binary wins when there is one: that is a workspace
+build and a release archive, and the sibling is the build that made
+this binary.
+*/
+fn library() -> &'static libloading::Library {
+    static LIBRARY: std::sync::OnceLock<libloading::Library> = std::sync::OnceLock::new();
+
+    LIBRARY.get_or_init(|| match open_library() {
+        Ok(lib) => lib,
+
+        Err(e) => {
+            eprintln!("larvae-lsp: the analyzer library will not load: {e:#}");
+            eprintln!("larvae-lsp: the editor loses hover, completion, and types until it does");
+
+            std::process::exit(1)
+        }
+    })
+}
+
+static EMBEDDED: &[u8] = include_bytes!(env!("LARVAE_ANALYZER_PATH"));
+
+fn open_library() -> anyhow::Result<libloading::Library> {
+    use anyhow::Context;
+
+    let name = env!("LARVAE_ANALYZER_LIBRARY");
+
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let sibling = dir.join(name);
+
+        if sibling.is_file() {
+            return unsafe { libloading::Library::new(&sibling) }
+                .with_context(|| format!("cannot open {}", sibling.display()));
+        }
+    }
+
+    /*
+    The embedded copy, written under the version that carries it. Two
+    versions installed side by side then keep two libraries, and an
+    upgrade never opens the file the old server wrote.
+    */
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .context("no home directory to keep the analyzer library in")?;
+
+    let dir = std::path::PathBuf::from(home)
+        .join(".larvae")
+        .join("lib")
+        .join(env!("CARGO_PKG_VERSION"));
+    let path = dir.join(name);
+
+    let current = std::fs::metadata(&path)
+        .map(|m| m.len() == EMBEDDED.len() as u64)
+        .unwrap_or(false);
+
+    if !current {
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("cannot create {}", dir.display()))?;
+
+        // A whole file or nothing: a server reading a half-written one is worse than a retry.
+        let staged = dir.join(format!("{name}.tmp"));
+        std::fs::write(&staged, EMBEDDED)
+            .with_context(|| format!("cannot write {}", staged.display()))?;
+        std::fs::rename(&staged, &path)
+            .with_context(|| format!("cannot place {}", path.display()))?;
+    }
+
+    unsafe { libloading::Library::new(&path) }
+        .with_context(|| format!("cannot open {}", path.display()))
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_enable_all_flags() {
+    let f: libloading::Symbol<unsafe extern "C" fn()> =
+        unsafe { library().get(b"larvae_enable_all_flags\0") }
+            .expect("larvae_enable_all_flags is exported by the analyzer library");
+
+    unsafe { f() }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_set_flag(name: *const c_char, value: *const c_char) -> i32 {
+    let f: libloading::Symbol<unsafe extern "C" fn(*const c_char, *const c_char) -> i32> =
+        unsafe { library().get(b"larvae_set_flag\0") }
+            .expect("larvae_set_flag is exported by the analyzer library");
+
+    unsafe { f(name, value) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_apply_required_flags() {
+    let f: libloading::Symbol<unsafe extern "C" fn()> =
+        unsafe { library().get(b"larvae_apply_required_flags\0") }
+            .expect("larvae_apply_required_flags is exported by the analyzer library");
+
+    unsafe { f() }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_signature_help(
+    s: *mut c_void,
+    path: *const c_char,
+    byte: u32,
+    sig: *mut RawSignature,
+    out: *mut RawParameter,
+    cap: usize,
+) -> i32 {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(
+            *mut c_void,
+            *const c_char,
+            u32,
+            *mut RawSignature,
+            *mut RawParameter,
+            usize,
+        ) -> i32,
+    > = unsafe { library().get(b"larvae_signature_help\0") }
+        .expect("larvae_signature_help is exported by the analyzer library");
+
+    unsafe { f(s, path, byte, sig, out, cap) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_inlay_hints(
+    s: *mut c_void,
+    path: *const c_char,
+    out: *mut RawHint,
+    cap: usize,
+    want_variables: i32,
+    want_parameters: i32,
+    want_returns: i32,
+    name_mode: i32,
+) -> usize {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(
+            *mut c_void,
+            *const c_char,
+            *mut RawHint,
+            usize,
+            i32,
+            i32,
+            i32,
+            i32,
+        ) -> usize,
+    > = unsafe { library().get(b"larvae_inlay_hints\0") }
+        .expect("larvae_inlay_hints is exported by the analyzer library");
+
+    unsafe {
+        f(
+            s,
+            path,
+            out,
+            cap,
+            want_variables,
+            want_parameters,
+            want_returns,
+            name_mode,
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_definition(
+    s: *mut c_void,
+    path: *const c_char,
+    byte: u32,
+    out: *mut RawLocation,
+) -> i32 {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(*mut c_void, *const c_char, u32, *mut RawLocation) -> i32,
+    > = unsafe { library().get(b"larvae_definition\0") }
+        .expect("larvae_definition is exported by the analyzer library");
+
+    unsafe { f(s, path, byte, out) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_type_definition(
+    s: *mut c_void,
+    path: *const c_char,
+    byte: u32,
+    out: *mut RawLocation,
+) -> i32 {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(*mut c_void, *const c_char, u32, *mut RawLocation) -> i32,
+    > = unsafe { library().get(b"larvae_type_definition\0") }
+        .expect("larvae_type_definition is exported by the analyzer library");
+
+    unsafe { f(s, path, byte, out) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_session_new() -> *mut c_void {
+    let f: libloading::Symbol<unsafe extern "C" fn() -> *mut c_void> =
+        unsafe { library().get(b"larvae_session_new\0") }
+            .expect("larvae_session_new is exported by the analyzer library");
+
+    unsafe { f() }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_set_definitions(
+    s: *mut c_void,
+    name: *const c_char,
+    source: *const c_char,
+) -> i32 {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> i32,
+    > = unsafe { library().get(b"larvae_set_definitions\0") }
+        .expect("larvae_set_definitions is exported by the analyzer library");
+
+    unsafe { f(s, name, source) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_session_free(s: *mut c_void) {
+    let f: libloading::Symbol<unsafe extern "C" fn(*mut c_void)> =
+        unsafe { library().get(b"larvae_session_free\0") }
+            .expect("larvae_session_free is exported by the analyzer library");
+
+    unsafe { f(s) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_set_resolver(
+    s: *mut c_void,
+    userdata: *mut c_void,
+    resolve: larvae_resolve_fn,
+    load: larvae_load_fn,
+) {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(*mut c_void, *mut c_void, larvae_resolve_fn, larvae_load_fn),
+    > = unsafe { library().get(b"larvae_set_resolver\0") }
+        .expect("larvae_set_resolver is exported by the analyzer library");
+
+    unsafe { f(s, userdata, resolve, load) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_open(s: *mut c_void, path: *const c_char, text: *const c_char) {
+    let f: libloading::Symbol<unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char)> =
+        unsafe { library().get(b"larvae_open\0") }
+            .expect("larvae_open is exported by the analyzer library");
+
+    unsafe { f(s, path, text) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_invalidate(s: *mut c_void, path: *const c_char) {
+    let f: libloading::Symbol<unsafe extern "C" fn(*mut c_void, *const c_char)> =
+        unsafe { library().get(b"larvae_invalidate\0") }
+            .expect("larvae_invalidate is exported by the analyzer library");
+
+    unsafe { f(s, path) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_clear_script_types(s: *mut c_void) {
+    let f: libloading::Symbol<unsafe extern "C" fn(*mut c_void)> =
+        unsafe { library().get(b"larvae_clear_script_types\0") }
+            .expect("larvae_clear_script_types is exported by the analyzer library");
+
+    unsafe { f(s) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_set_script_type(s: *mut c_void, path: *const c_char, type_name: *const c_char) {
+    let f: libloading::Symbol<unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char)> =
+        unsafe { library().get(b"larvae_set_script_type\0") }
+            .expect("larvae_set_script_type is exported by the analyzer library");
+
+    unsafe { f(s, path, type_name) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_set_character_type(s: *mut c_void, kind: i32) {
+    let f: libloading::Symbol<unsafe extern "C" fn(*mut c_void, i32)> =
+        unsafe { library().get(b"larvae_set_character_type\0") }
+            .expect("larvae_set_character_type is exported by the analyzer library");
+
+    unsafe { f(s, kind) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_check(
+    s: *mut c_void,
+    path: *const c_char,
+    out: *mut RawDiag,
+    cap: usize,
+) -> usize {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(*mut c_void, *const c_char, *mut RawDiag, usize) -> usize,
+    > = unsafe { library().get(b"larvae_check\0") }
+        .expect("larvae_check is exported by the analyzer library");
+
+    unsafe { f(s, path, out, cap) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_deprecated(
+    s: *mut c_void,
+    path: *const c_char,
+    out: *mut RawDiag,
+    cap: usize,
+) -> usize {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(*mut c_void, *const c_char, *mut RawDiag, usize) -> usize,
+    > = unsafe { library().get(b"larvae_deprecated\0") }
+        .expect("larvae_deprecated is exported by the analyzer library");
+
+    unsafe { f(s, path, out, cap) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_hover(
+    s: *mut c_void,
+    path: *const c_char,
+    byte: u32,
+    show_table_kinds: i32,
+    include_string_length: i32,
+) -> *const c_char {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(*mut c_void, *const c_char, u32, i32, i32) -> *const c_char,
+    > = unsafe { library().get(b"larvae_hover\0") }
+        .expect("larvae_hover is exported by the analyzer library");
+
+    unsafe { f(s, path, byte, show_table_kinds, include_string_length) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_documentation_symbol(
+    s: *mut c_void,
+    path: *const c_char,
+    byte: u32,
+) -> *const c_char {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(*mut c_void, *const c_char, u32) -> *const c_char,
+    > = unsafe { library().get(b"larvae_documentation_symbol\0") }
+        .expect("larvae_documentation_symbol is exported by the analyzer library");
+
+    unsafe { f(s, path, byte) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_source_documentation(s: *mut c_void) -> *const c_char {
+    let f: libloading::Symbol<unsafe extern "C" fn(*mut c_void) -> *const c_char> =
+        unsafe { library().get(b"larvae_source_documentation\0") }
+            .expect("larvae_source_documentation is exported by the analyzer library");
+
+    unsafe { f(s) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_bytecode(
+    s: *mut c_void,
+    source: *const c_char,
+    optimization: i32,
+    remarks: i32,
+    debug_level: i32,
+    type_info_level: i32,
+    vector_lib: *const c_char,
+    vector_ctor: *const c_char,
+    vector_type: *const c_char,
+) -> *const c_char {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(
+            *mut c_void,
+            *const c_char,
+            i32,
+            i32,
+            i32,
+            i32,
+            *const c_char,
+            *const c_char,
+            *const c_char,
+        ) -> *const c_char,
+    > = unsafe { library().get(b"larvae_bytecode\0") }
+        .expect("larvae_bytecode is exported by the analyzer library");
+
+    unsafe {
+        f(
+            s,
+            source,
+            optimization,
+            remarks,
+            debug_level,
+            type_info_level,
+            vector_lib,
+            vector_ctor,
+            vector_type,
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_completions(
+    s: *mut c_void,
+    path: *const c_char,
+    byte: u32,
+    out: *mut RawCompletion,
+    cap: usize,
+) -> usize {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(*mut c_void, *const c_char, u32, *mut RawCompletion, usize) -> usize,
+    > = unsafe { library().get(b"larvae_completions\0") }
+        .expect("larvae_completions is exported by the analyzer library");
+
+    unsafe { f(s, path, byte, out, cap) }
+}
+
+#[cfg(test)]
+pub(crate) unsafe fn larvae_reset_flags() {
+    let f: libloading::Symbol<unsafe extern "C" fn()> =
+        unsafe { library().get(b"larvae_reset_flags\0") }
+            .expect("larvae_reset_flags is exported by the analyzer library");
+
+    unsafe { f() }
 }
 
 /*
@@ -875,7 +1221,9 @@ pub struct LuauAnalysis {
 unsafe impl Send for LuauAnalysis {}
 
 impl LuauAnalysis {
-    /// A session on the API surface larvae has always loaded
+    /// A session on the API surface larvae has always loaded; the server
+    /// builds through `with_security`, so only a test reaches for this
+    #[cfg(test)]
     pub fn new() -> Self {
         Self::with_security(larvae::config::lsp::SecurityLevel::default())
     }
@@ -970,7 +1318,8 @@ impl LuauAnalysis {
     */
     fn locate(
         &mut self,
-        ask: unsafe extern "C" fn(*mut c_void, *const c_char, u32, *mut RawLocation) -> i32,
+        // A Rust fn: the wrapper that resolves the symbol, not the symbol itself.
+        ask: unsafe fn(*mut c_void, *const c_char, u32, *mut RawLocation) -> i32,
         path: &Path,
         at: u32,
     ) -> Option<larvae::lsp::analysis::AnalysisLocation> {
@@ -1501,10 +1850,6 @@ The reset serves the tests alone. The flags are process global, so only a
 test has a reason to put them back, and a declaration in the main block
 reads as dead everywhere else.
 */
-#[cfg(test)]
-unsafe extern "C" {
-    pub(crate) fn larvae_reset_flags();
-}
 
 #[cfg(test)]
 pub(crate) mod luau_globals {
@@ -2600,8 +2945,8 @@ mod moonwave_documentation {
         assert_eq!(
             docs(src, "function tagged").as_deref(),
             Some(
-                "> `yields`\n\nAfter a blank doc line.\n> **Deprecated** `1.2.0` use something else\n\
-                 > **Since** `1.0.0`\n\n\n**Fields**\n\n- `name` `string` — the name\n\n\
+                "\n\nAfter a blank doc line.\n**Deprecated** `1.2.0` use something else\n\
+                 **Since** `1.0.0`\n**Yields**\n\n\n**Fields**\n\n- `name` `string` — the name\n\n\
                  **Throws**\n\n- `BadThing` — when it breaks"
             )
         );

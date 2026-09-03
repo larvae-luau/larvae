@@ -271,7 +271,7 @@ jobs:
           set -euo pipefail
           VERSION="${TAG#v}"
 
-          for CRATE in larvae-worm larvae; do
+          for CRATE in larvae-worm larvae larvae-lsp; do
             if curl -fsS -A "larvae-release" "https://crates.io/api/v1/crates/${CRATE}/${VERSION}" >/dev/null 2>&1; then
               echo "${CRATE} ${VERSION} is already on crates.io, skipping"
               continue

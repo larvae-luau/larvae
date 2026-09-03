@@ -223,11 +223,16 @@ fn build_analyzer() {
 
     seal(&out, &shim, &platform, &target);
 
+    /*
+    Nothing links the library at load. The crate carries its bytes and
+    opens it at runtime, so a binary that `cargo install` put alone in a
+    directory still finds its analyzer, and a file the loader would have
+    refused before `main` fails with a sentence instead.
+    */
     println!(
-        "cargo:rustc-link-search=native={}",
-        out.join("sealed").display()
+        "cargo:rustc-env=LARVAE_ANALYZER_PATH={}",
+        out.join("sealed").join(&platform.library).display()
     );
-    println!("cargo:rustc-link-lib=dylib=eclipse_analysis");
 
     /*
     The name this build produced, so the crate can check it.
@@ -242,19 +247,6 @@ fn build_analyzer() {
         "cargo:rustc-env=LARVAE_ANALYZER_LIBRARY={}",
         platform.library
     );
-
-    /*
-    How the binary finds the library beside it.
-
-    Windows searches the directory the executable came from, so it needs
-    nothing. The other two need a run path, and they spell the same idea
-    with different words.
-    */
-    if platform.apple {
-        println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path");
-    } else if !platform.msvc {
-        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
-    }
 }
 
 /*
