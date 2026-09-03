@@ -13,6 +13,8 @@ mod analyzer;
 
 #[cfg(all(test, feature = "analyzer"))]
 mod roblox_enum_tests;
+#[cfg(all(test, feature = "analyzer"))]
+mod roblox_magic_tests;
 
 // Pure path logic, so it compiles and tests without the vendored C++.
 mod resolve;

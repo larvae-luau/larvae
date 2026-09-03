@@ -68,6 +68,8 @@ static_assert(alignof(LarvaeHint) == 8, "LarvaeHint must align like RawHint");
 #include <string>
 #include <vector>
 
+LUAU_FASTFLAG(LuauCyclicRequireTypeInference)
+
 namespace
 {
 
@@ -395,6 +397,9 @@ struct LarvaeSession
     LarvaeConfigResolver configs;
     Luau::Frontend frontend;
 
+    /// The service and class lists the Roblox definitions carry
+    Larvae::RobloxMetadata roblox;
+
     std::map<std::string, std::string> open;
     std::vector<std::string> diagStorage;
     std::vector<std::string> completionStorage;
@@ -613,10 +618,39 @@ that fetches a service this build has no type for still deserves to run.
 */
 struct MagicNamedType : Luau::MagicFunction
 {
+    /*
+    The names the call may write, and what to say about one it may not.
+
+    The metadata line of the Roblox definitions lists every service and
+    every creatable class. luau-lsp reports a name outside the list as an
+    error, and so does this, under the same words. An empty list allows
+    every name, which is what a definitions file without the line gets.
+    */
+    std::vector<std::string> allowed;
+    std::string complaint;
+
     /// Whether the type the name stands for is the kind this call answers with
     virtual bool accepts(Luau::TypeId) const
     {
         return true;
+    }
+
+    /// The name the call wrote, when the list does not hold it
+    std::optional<std::string> rejected(const Luau::AstExprCall& call) const
+    {
+        if (allowed.empty() || call.args.size < 1)
+            return std::nullopt;
+
+        auto text = call.args.data[0]->as<Luau::AstExprConstantString>();
+        if (!text)
+            return std::nullopt;
+
+        std::string name(text->value.data, text->value.size);
+
+        if (std::find(allowed.begin(), allowed.end(), name) != allowed.end())
+            return std::nullopt;
+
+        return name;
     }
 
     virtual std::optional<Luau::TypeId> named(Luau::Scope* scope, const Luau::AstExprCall& call) const
@@ -649,6 +683,13 @@ struct MagicNamedType : Luau::MagicFunction
         const Luau::AstExprCall& call,
         Luau::WithPredicate<Luau::TypePackId>) override
     {
+        if (std::optional<std::string> bad = rejected(call))
+        {
+            typeChecker.reportError(Luau::TypeError{
+                call.args.data[0]->location, Luau::GenericError{complaint + " '" + *bad + "'"}});
+            return std::nullopt;
+        }
+
         std::optional<Luau::TypeId> answer = named(typeChecker.globalScope.get(), call);
         if (!answer)
             return std::nullopt;
@@ -660,6 +701,19 @@ struct MagicNamedType : Luau::MagicFunction
 
     bool infer(const Luau::MagicFunctionCallContext& context) override
     {
+        if (std::optional<std::string> bad = rejected(*context.callSite))
+        {
+            Luau::GenericError error{complaint + " '" + *bad + "'"};
+            const Luau::Location& where = context.callSite->args.data[0]->location;
+
+            if (FFlag::LuauCyclicRequireTypeInference)
+                context.solver->reportError(std::move(error), where, *context.constraint->moduleName);
+            else
+                context.solver->DEPRECATED_reportError(std::move(error), where);
+
+            return false;
+        }
+
         std::optional<Luau::TypeId> answer = named(context.solver->rootScope.get(), *context.callSite);
         if (!answer)
             return false;
@@ -748,7 +802,7 @@ static void attachTo(std::optional<Luau::TypeId> holder, const char* name, std::
 }
 
 /// Put the handler on `ServiceProvider.GetService` of one global table.
-static void attachServiceLookup(Luau::GlobalTypes& globals)
+static void attachServiceLookup(Luau::GlobalTypes& globals, const std::vector<std::string>& services)
 {
     std::optional<Luau::TypeFun> provider = globals.globalScope->lookupType("ServiceProvider");
     if (!provider)
@@ -765,7 +819,11 @@ static void attachServiceLookup(Luau::GlobalTypes& globals)
     if (!Luau::get<Luau::FunctionType>(*method->second.readTy))
         return;
 
-    Luau::attachMagicFunction(*method->second.readTy, std::make_shared<MagicServiceLookup>());
+    auto magic = std::make_shared<MagicServiceLookup>();
+    magic->allowed = services;
+    magic->complaint = "Invalid service name";
+
+    Luau::attachMagicFunction(*method->second.readTy, std::move(magic));
 }
 
 /*
@@ -775,14 +833,18 @@ Put the handler on `Instance.new` of one global table.
 table that holds `new`. The search is by text, because the name table of
 the declaration file is not the one this call can reach.
 */
-static void attachInstanceNew(Luau::GlobalTypes& globals)
+static void attachInstanceNew(Luau::GlobalTypes& globals, const std::vector<std::string>& creatable)
 {
     std::optional<Luau::Binding> binding = globals.globalScope->linearSearchForBinding("Instance", true);
 
     if (!binding)
         return;
 
-    attachTo(binding->typeId, "new", std::make_shared<MagicInstanceNew>());
+    auto magic = std::make_shared<MagicInstanceNew>();
+    magic->allowed = creatable;
+    magic->complaint = "Invalid class name";
+
+    attachTo(binding->typeId, "new", std::move(magic));
 }
 
 /*
@@ -864,10 +926,15 @@ int larvae_set_definitions(LarvaeSession* s, const char* name, const char* sourc
         s->frontend.globals, s->frontend.globals.globalScope, source, name, false, false);
 
     if (result.success && strcmp(name, "@roblox") == 0)
+    {
+        s->roblox = Larvae::parseRobloxMetadata(source);
         Larvae::registerRobloxEnums(s->frontend.globals);
+        Larvae::attachRobloxMagic(s->frontend.globals);
+        Larvae::unifyVector3(s->frontend.globals);
+    }
 
-    attachServiceLookup(s->frontend.globals);
-    attachInstanceNew(s->frontend.globals);
+    attachServiceLookup(s->frontend.globals, s->roblox.services);
+    attachInstanceNew(s->frontend.globals, s->roblox.creatable);
 
     Luau::freeze(s->frontend.globals.globalTypes);
 
@@ -890,10 +957,14 @@ int larvae_set_definitions(LarvaeSession* s, const char* name, const char* sourc
                              .success;
 
         if (autocompleteOk && strcmp(name, "@roblox") == 0)
+        {
             Larvae::registerRobloxEnums(s->frontend.globalsForAutocomplete);
+            Larvae::attachRobloxMagic(s->frontend.globalsForAutocomplete);
+            Larvae::unifyVector3(s->frontend.globalsForAutocomplete);
+        }
 
-        attachServiceLookup(s->frontend.globalsForAutocomplete);
-        attachInstanceNew(s->frontend.globalsForAutocomplete);
+        attachServiceLookup(s->frontend.globalsForAutocomplete, s->roblox.services);
+        attachInstanceNew(s->frontend.globalsForAutocomplete, s->roblox.creatable);
 
         Luau::freeze(s->frontend.globalsForAutocomplete.globalTypes);
     }
@@ -3855,6 +3926,48 @@ const char* larvae_documentation_symbol(LarvaeSession* s, const char* path, uint
     return s->documentationStorage.c_str();
 }
 
+/*
+The strings a tagged call takes, for the list inside its quotes.
+
+Luau asks the host for the strings of a call whose function carries a
+tag, and hands over the class the call is on. luau-lsp answers six
+tags, and this answers the same six with the same lists: the classes
+under Instance, the properties of the receiver, the sourcemap children
+of the receiver, the enums, the creatable classes, and the services.
+*/
+static std::optional<Luau::AutocompleteEntryMap> stringCompletions(
+    LarvaeSession* s, const std::string& tag, std::optional<const Luau::ExternType*> context)
+{
+    const Luau::GlobalTypes& globals =
+        s->newSolver ? s->frontend.globals : s->frontend.globalsForAutocomplete;
+
+    std::vector<std::string> names;
+
+    if (tag == "ClassNames")
+        names = Larvae::instanceClassNames(globals);
+    else if (tag == "Enums")
+        names = Larvae::enumNames(globals);
+    else if (tag == "CreatableInstances")
+        names = s->roblox.creatable;
+    else if (tag == "Services")
+        names = s->roblox.services;
+    else if (tag == "Properties" && context && *context)
+        names = Larvae::propertyNames(*context);
+    else if (tag == "Children" && context && *context)
+        names = Larvae::childNames(*context);
+    else
+        return std::nullopt;
+
+    Luau::AutocompleteEntryMap out;
+
+    for (const std::string& name : names)
+        out.insert_or_assign(name,
+            Luau::AutocompleteEntry{Luau::AutocompleteEntryKind::String, globals.builtinTypes->stringType,
+                false, false, Luau::TypeCorrectKind::Correct});
+
+    return out;
+}
+
 size_t larvae_completions(LarvaeSession* s, const char* path, uint32_t byte, LarvaeCompletion* out, size_t cap)
 {
     auto it = s->open.find(path);
@@ -3880,9 +3993,9 @@ size_t larvae_completions(LarvaeSession* s, const char* path, uint32_t byte, Lar
         s->frontend.check(path, forAutocomplete);
 
         result = Luau::autocomplete(s->frontend, path, position,
-            [](std::string, std::optional<const Luau::ExternType*>,
+            [s](std::string tag, std::optional<const Luau::ExternType*> context,
                 std::optional<std::string>) -> std::optional<Luau::AutocompleteEntryMap> {
-                return std::nullopt;
+                return stringCompletions(s, tag, context);
             });
     }
     catch (const std::exception&)
