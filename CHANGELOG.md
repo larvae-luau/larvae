@@ -8,6 +8,26 @@ Notable changes land here. Format follows
 
 ### Added
 
+- The Roblox handlers luau-lsp puts on its classes: `IsA` narrows the
+  instance or enum item it is called on, `Clone` and `Instance.fromExisting`
+  keep the class, the `FindFirst...WhichIsA` and `...OfClass` lookups answer
+  with the class or nil, `GetPropertyChangedSignal` and its two siblings
+  check the property name, `QueryDescendants` narrows to its selector,
+  and `GetService` and `Instance.new` report a name outside the lists
+  the definitions carry
+- With a sourcemap, `FindFirstChild`, `WaitForChild`, and
+  `FindFirstAncestor` answer with the tree's own child or ancestor
+- Inside the quotes of those calls, completion offers the class names,
+  property names, children, enums, creatable classes, or services
+- `Vector3` and `vector` are one type, the way the runtime has them.
+  luau-lsp keeps them apart
+
+- `@lifecycle` in a doc comment says a framework calls the member, so
+  `oop.unused_private` leaves it alone. chief calls the lifecycle of a
+  provider and the file that declares one never does, so the lint told
+  the author to delete the method the framework needs. The tag colours
+  like the rest
+
 - `[fmt] leading_zero` decides whether a decimal literal carries its
   zero. `add`, the default, writes `.5` as `0.5`; `strip` writes `0.5`
   as `.5`; `preserve` leaves every literal alone. Only a fraction
@@ -23,6 +43,10 @@ Notable changes land here. Format follows
   features, and larvae declares none today
 
 ### Changed
+
+- A completion asked while the analyzer is still loading is held and
+  answered when the session lands, instead of answering an empty list
+  the editor then keeps. `$/cancelRequest` takes a held ask back
 
 - Inlay hints compute on every request, against the text the editor
   holds at that request, the way luau-lsp computes them. The hold that
@@ -42,13 +66,13 @@ Notable changes land here. Format follows
   `` `player` `Player` — who joined ``. One run of words left the
   reader to find the parts
 
-### Added
+### Fixed
 
-- `@lifecycle` in a doc comment says a framework calls the member, so
-  `oop.unused_private` leaves it alone. chief calls the lifecycle of a
-  provider and the file that declares one never does, so the lint told
-  the author to delete the method the framework needs. The tag colours
-  like the rest
+- `Key 'CFrame' not found in external type 'Instance'` after
+  `if not instance:IsA("BasePart") then continue end`, because `IsA`
+  did not narrow
+- `Expected this to be 'vector', but got 'Vector3'` on a `Position`
+  passed to the vector library, and the reverse on `vector.create`
 
 ## 0.8.0-canary.1
 

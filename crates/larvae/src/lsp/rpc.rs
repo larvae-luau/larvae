@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// One JSON-RPC message, request or notification
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Message {
     /// Absent on a notification; a notification expects no reply
     pub id: Option<Value>,

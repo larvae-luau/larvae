@@ -1331,6 +1331,13 @@ impl Server {
         */
         rpc::request(out, "workspace/inlayHint/refresh", Value::Null)?;
 
+        // The lists that waited on the session. See `held`.
+        for message in std::mem::take(&mut self.held) {
+            let result = self.completions(&message.params);
+
+            self.reply(&message, out, result)?;
+        }
+
         Ok(())
     }
 

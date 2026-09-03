@@ -3362,3 +3362,108 @@ fn the_moonwave_block_stays_out_of_prose() {
     // An ordinary comment is not a doc comment.
     assert!(super::features::doc_scaffold_for("--\nlocal function f() end\n", 2).is_none());
 }
+
+/*
+A completion asked while the session is still being built waits for it.
+
+The editor asks on the first keystroke, and the session takes seconds.
+An empty answer closed the popup for good; the held answer opens it the
+moment the types land. The editor cancels the ask it no longer wants,
+and the cancel takes that one back and answers it as cancelled.
+*/
+#[test]
+fn a_completion_asked_while_loading_answers_when_the_session_lands() {
+    struct Ready;
+
+    impl crate::lsp::analysis::Analysis for Ready {
+        fn open(&mut self, _: &std::path::Path, _: &str) {}
+
+        fn check(&mut self, _: &std::path::Path) -> Vec<crate::lsp::analysis::AnalysisDiag> {
+            Vec::new()
+        }
+
+        fn hover(&mut self, _: &std::path::Path, _: u32, _: bool, _: bool) -> Option<String> {
+            None
+        }
+
+        fn invalidate(&mut self, _: &std::path::Path) {}
+
+        fn completions(
+            &mut self,
+            _: &std::path::Path,
+            _: u32,
+        ) -> Vec<crate::lsp::analysis::AnalysisCompletion> {
+            vec![crate::lsp::analysis::AnalysisCompletion {
+                label: "local".into(),
+                kind: 14,
+                detail: None,
+                label_detail: None,
+                insert_text: None,
+                documentation: None,
+                deprecated: false,
+                type_correct: 0,
+                wrong_index_type: false,
+            }]
+        }
+    }
+
+    fn message(value: Value) -> rpc::Message {
+        serde_json::from_value(value).expect("a message")
+    }
+
+    fn ask(id: u64) -> rpc::Message {
+        message(json!({
+            "id": id,
+            "method": "textDocument/completion",
+            "params": {
+                "textDocument": { "uri": "file:///t.luau" },
+                "position": { "line": 0, "character": 2 },
+            },
+        }))
+    }
+
+    let mut server = Server {
+        analysis_pending: true,
+        ..server_with("lo\n")
+    };
+    server.lsp.analyzer = true;
+
+    let mut out = Vec::new();
+
+    assert!(!server.handle(&ask(1), &mut out).unwrap());
+    assert!(!server.handle(&ask(2), &mut out).unwrap());
+    assert!(
+        out.is_empty(),
+        "an answer before the session: {}",
+        String::from_utf8_lossy(&out)
+    );
+    assert_eq!(server.held.len(), 2);
+
+    let cancel = message(json!({ "method": "$/cancelRequest", "params": { "id": 1 } }));
+    server.handle(&cancel, &mut out).unwrap();
+
+    let text = String::from_utf8_lossy(&out).into_owned();
+    assert!(
+        text.contains("\"id\":1"),
+        "the cancel answers the ask it took back: {text}"
+    );
+    assert_eq!(server.held.len(), 1);
+    out.clear();
+
+    server.take_analysis(Box::new(Ready), &mut out).unwrap();
+
+    let text = String::from_utf8_lossy(&out).into_owned();
+    assert!(
+        text.contains("\"id\":2"),
+        "the held ask answers at the landing: {text}"
+    );
+    assert!(
+        text.contains("\"label\":\"local\""),
+        "with the list: {text}"
+    );
+    assert!(
+        !text.contains("\"id\":1"),
+        "the cancelled ask stays answered once: {text}"
+    );
+    assert!(server.held.is_empty());
+}

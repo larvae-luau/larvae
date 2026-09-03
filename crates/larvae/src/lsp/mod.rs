@@ -164,6 +164,7 @@ pub fn run_pending(analysis: Option<Pending>) -> Result<()> {
     let mut server = Server {
         analysis: std::cell::RefCell::new(ready),
         analysis_pending: builder.is_some(),
+        held: Vec::new(),
         builder,
         events: Some(events),
         ..Default::default()
@@ -253,6 +254,19 @@ struct Server {
     */
     analysis_pending: bool,
     /*
+    The completion requests that arrived while the session was still
+    being built, answered the moment it lands.
+
+    An empty list was the answer before, and the editor takes an empty
+    list as the answer: the popup a reader was typing toward never
+    opened, and only another keystroke or a manual ask would open one.
+    luau-lsp blocks until its definitions load, so the first list it
+    gives is a real one. Holding the request gives the same list without
+    holding the whole server: notifications keep flowing meanwhile, and
+    the editor's cancel takes a held request back.
+    */
+    held: Vec<rpc::Message>,
+    /*
     What builds the session, until the config that decides its flags is read.
 
     `load_config` takes it and spawns it, because that is the first moment
@@ -327,6 +341,7 @@ impl Default for Server {
             editor: Value::Null,
             analysis: std::cell::RefCell::new(None),
             analysis_pending: false,
+            held: Vec::new(),
             builder: None,
             events: None,
             pending_rename: None,
@@ -393,6 +408,11 @@ impl Server {
 
             "shutdown" => {
                 self.shutting_down = true;
+
+                // A held request answers before the server goes, or the editor waits on nothing.
+                for held in std::mem::take(&mut self.held) {
+                    self.reply(&held, out, json!([]))?;
+                }
 
                 self.reply(message, out, Value::Null)?;
             }
@@ -514,9 +534,32 @@ impl Server {
             }
 
             "textDocument/completion" => {
+                // See `held`: the list comes when the session does.
+                if self.analysis_loading() && message.id.is_some() {
+                    self.held.push(message.clone());
+
+                    return Ok(false);
+                }
+
                 let result = self.completions(&message.params);
 
                 self.reply(message, out, result)?;
+            }
+
+            /*
+            A cancel takes a held request back. The editor cancels the
+            completion it asked for on every further keystroke and asks
+            again, so what the session lands on is the newest ask only.
+            */
+            "$/cancelRequest" => {
+                let id = &message.params["id"];
+
+                if let Some(at) = self.held.iter().position(|m| m.id.as_ref() == Some(id)) {
+                    let held = self.held.remove(at);
+
+                    rpc::respond_error(out, id, "the request was cancelled".to_owned())?;
+                    drop(held);
+                }
             }
 
             /*
