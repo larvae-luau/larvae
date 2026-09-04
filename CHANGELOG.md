@@ -12,6 +12,15 @@ Notable changes land here. Format follows
   the errors alone, whoever raised the warning. Hints stay: a
   strikethrough is not a warning
 
+### Fixed
+
+- `larvae-lsp` publishes to crates.io again. The build script compiled
+  the vendored ToString.cpp after rewriting it in place, and cargo
+  refuses a package whose build changes a packaged source; the patched
+  copy now lives in the build directory, and the vendored file stays
+  as the submodule has it. 0.8.0 of the crate never reached the
+  registry for this reason; 0.8.1 does
+
 ## 0.8.0
 
 ### Added

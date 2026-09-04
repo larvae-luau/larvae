@@ -145,7 +145,7 @@ fn build_analyzer() {
         .trim()
         .to_string();
 
-    patch_vendored(luau);
+    let patched_to_string = patch_vendored(luau, &out);
 
     let marker = out.join(format!("luau-{pin}.built"));
     let vendor_lib = out.join(platform.archive("luauvendor"));
@@ -188,10 +188,19 @@ fn build_analyzer() {
             for entry in std::fs::read_dir(luau.join(dir)).unwrap() {
                 let path = entry.unwrap().path();
 
+                // The patched copy in OUT_DIR stands in for this one.
+                if patched_to_string.is_some() && path.ends_with("Analysis/src/ToString.cpp") {
+                    continue;
+                }
+
                 if path.extension().is_some_and(|e| e == "cpp") {
                     vendor.file(path);
                 }
             }
+        }
+
+        if let Some(path) = &patched_to_string {
+            vendor.file(path);
         }
 
         vendor
@@ -522,19 +531,29 @@ makes the function printer treat a bare hidden tail as the empty
 argument list, the same answer the wrapped form already gets.
 */
 #[cfg(feature = "analyzer")]
-fn patch_vendored(luau: &std::path::Path) {
+/*
+The patched copy is written to OUT_DIR and compiled from there. The
+vendored file itself stays as the submodule has it: `cargo publish`
+verifies a package by building it and refuses one whose build changed a
+packaged source, which is what an in-place patch was.
+*/
+fn patch_vendored(luau: &std::path::Path, out: &std::path::Path) -> Option<std::path::PathBuf> {
     let file = luau.join("Analysis/src/ToString.cpp");
+    let copy = out.join("ToString.patched.cpp");
+
+    println!("cargo:rerun-if-changed={}", file.display());
 
     let Ok(text) = std::fs::read_to_string(&file) else {
         println!("cargo:warning=larvae: cannot read the vendored ToString.cpp to patch it");
 
-        return;
+        return None;
     };
 
     let marker = "larvae: a bare hidden tail is an empty argument list";
 
+    // A checkout an older build patched in place carries the line already.
     if text.contains(marker) {
-        return;
+        return std::fs::write(&copy, text).ok().map(|_| copy);
     }
 
     let anchor = "        if (isEmpty(ftv.argTypes))
@@ -561,7 +580,7 @@ fn patch_vendored(luau: &std::path::Path) {
              functions render as (...any) across modules until it is re-anchored"
         );
 
-        return;
+        return None;
     };
 
     let replacement = "        if (isEmpty(ftv.argTypes))
@@ -578,7 +597,11 @@ fn patch_vendored(luau: &std::path::Path) {
 
     let patched = text.replacen(anchor, replacement, 1);
 
-    if std::fs::write(&file, patched).is_err() {
+    if std::fs::write(&copy, patched).is_err() {
         println!("cargo:warning=larvae: cannot write the ToString.cpp patch");
+
+        return None;
     }
+
+    Some(copy)
 }
