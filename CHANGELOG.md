@@ -21,6 +21,10 @@ Notable changes land here. Format follows
   property names, children, enums, creatable classes, or services
 - `Vector3` and `vector` are one type, the way the runtime has them.
   luau-lsp keeps them apart
+- `larvae-lsp --new-solver` fixes Luau's new type solver on for the
+  session, over the project file and the editor, for a host that embeds
+  the server with neither. jecs types wrong under the old solver, and
+  luau-lsp reads it the same way there
 
 - `@lifecycle` in a doc comment says a framework calls the member, so
   `oop.unused_private` leaves it alone. chief calls the lifecycle of a

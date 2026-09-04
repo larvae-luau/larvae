@@ -77,7 +77,18 @@ fn main() -> std::process::ExitCode {
     #[cfg(not(feature = "analyzer"))]
     let analysis = None;
 
-    match larvae::lsp::run_pending(analysis) {
+    /*
+    `--new-solver` turns Luau's new type solver on for the whole session,
+    over the project file and the editor. An embedded host has neither,
+    and a library written for the new solver, jecs for one, types wrong
+    under the old. Any other argument is the editor's own, `--stdio`
+    for one, and passes.
+    */
+    let forced = larvae::lsp::Forced {
+        new_solver: args.iter().any(|a| a == "--new-solver"),
+    };
+
+    match larvae::lsp::run_forced(analysis, forced) {
         Ok(()) => std::process::ExitCode::SUCCESS,
 
         Err(e) => {

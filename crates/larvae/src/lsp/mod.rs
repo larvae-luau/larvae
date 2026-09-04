@@ -123,7 +123,25 @@ pub(super) enum Event {
     Eof,
 }
 
+/*
+The settings the process fixes, over every file and every editor.
+
+An embedded server has no larvae.toml to read and no editor settings to
+take, so a host that wants the new solver has one place to say so: the
+command line. What is set here wins over both, and stays set across
+every config reload of the session.
+*/
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Forced {
+    /// `--new-solver`: Luau's new type solver, whatever the project says
+    pub new_solver: bool,
+}
+
 pub fn run_pending(analysis: Option<Pending>) -> Result<()> {
+    run_forced(analysis, Forced::default())
+}
+
+pub fn run_forced(analysis: Option<Pending>, forced: Forced) -> Result<()> {
     let stdout = std::io::stdout();
     let mut output = stdout.lock();
 
@@ -165,6 +183,7 @@ pub fn run_pending(analysis: Option<Pending>) -> Result<()> {
         analysis: std::cell::RefCell::new(ready),
         analysis_pending: builder.is_some(),
         held: Vec::new(),
+        forced,
         builder,
         events: Some(events),
         ..Default::default()
@@ -266,6 +285,8 @@ struct Server {
     the editor's cancel takes a held request back.
     */
     held: Vec<rpc::Message>,
+    /// What the command line fixed, applied over every settings source
+    forced: Forced,
     /*
     What builds the session, until the config that decides its flags is read.
 
@@ -342,6 +363,7 @@ impl Default for Server {
             analysis: std::cell::RefCell::new(None),
             analysis_pending: false,
             held: Vec::new(),
+            forced: Forced::default(),
             builder: None,
             events: None,
             pending_rename: None,

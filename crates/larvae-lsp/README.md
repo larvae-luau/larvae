@@ -13,7 +13,9 @@ takes a few minutes. The binary carries its analyzer library inside and writes
 it out on first run, so it works from wherever `cargo install` put it.
 
 The [Larvae extension](https://marketplace.visualstudio.com/items?itemName=AndrewBordis.larvae)
-starts it in VS Code; any other editor starts `larvae-lsp` over stdio. The
+starts it in VS Code; any other editor starts `larvae-lsp` over stdio, and
+`larvae-lsp --new-solver` fixes Luau's new type solver on for a host with no
+`larvae.toml`. The
 release archives of larvae ship the same binary, and `larvae self install`
 puts it on PATH beside the CLI.
 

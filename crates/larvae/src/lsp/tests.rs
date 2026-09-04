@@ -3467,3 +3467,29 @@ fn a_completion_asked_while_loading_answers_when_the_session_lands() {
     );
     assert!(server.held.is_empty());
 }
+
+/*
+`--new-solver` wins over the project file and the editor.
+
+Both sources say the old solver here, the way a project that never set
+the key reads, and the forced value stands after they have spoken.
+*/
+#[test]
+fn the_forced_new_solver_stands_over_every_settings_source() {
+    let mut server = Server {
+        forced: Forced { new_solver: true },
+        ..Server::default()
+    };
+    server.editor = json!({ "larvae-lsp": { "fflags": { "enableNewSolver": false } } });
+
+    let project: toml::Value = toml::from_str("[lsp.fflags]\nenable_new_solver = false\n").unwrap();
+    server.apply_editor_settings(Some(&project));
+
+    assert!(server.lsp.fflags.enable_new_solver);
+
+    let plain = Server::default();
+    assert!(
+        !plain.lsp.fflags.enable_new_solver,
+        "the default is still the old solver"
+    );
+}

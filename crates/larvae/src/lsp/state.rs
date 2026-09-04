@@ -294,6 +294,11 @@ impl Server {
                 _ => {}
             }
         }
+
+        // The command line spoke last. See `Forced`.
+        if self.forced.new_solver {
+            self.lsp.fflags.enable_new_solver = true;
+        }
     }
 
     /*
