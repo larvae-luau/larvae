@@ -3477,7 +3477,10 @@ the key reads, and the forced value stands after they have spoken.
 #[test]
 fn the_forced_new_solver_stands_over_every_settings_source() {
     let mut server = Server {
-        forced: Forced { new_solver: true },
+        forced: Forced {
+            new_solver: true,
+            ..Forced::default()
+        },
         ..Server::default()
     };
     server.editor = json!({ "larvae-lsp": { "fflags": { "enableNewSolver": false } } });
