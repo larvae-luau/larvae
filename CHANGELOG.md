@@ -8,6 +8,131 @@ Notable changes land here. Format follows
 
 ### Added
 
+- The Roblox handlers luau-lsp puts on its classes: `IsA` narrows the
+  instance or enum item it is called on, `Clone` and `Instance.fromExisting`
+  keep the class, the `FindFirst...WhichIsA` and `...OfClass` lookups answer
+  with the class or nil, `GetPropertyChangedSignal` and its two siblings
+  check the property name, `QueryDescendants` narrows to its selector,
+  and `GetService` and `Instance.new` report a name outside the lists
+  the definitions carry
+- With a sourcemap, `FindFirstChild`, `WaitForChild`, and
+  `FindFirstAncestor` answer with the tree's own child or ancestor
+- Inside the quotes of those calls, completion offers the class names,
+  property names, children, enums, creatable classes, or services
+- `Vector3` and `vector` are one type, the way the runtime has them.
+  luau-lsp keeps them apart
+- `larvae-lsp --new-solver` fixes Luau's new type solver on for the
+  session, over the project file and the editor, for a host that embeds
+  the server with neither. jecs types wrong under the old solver, and
+  luau-lsp reads it the same way there
+
+- `@lifecycle` in a doc comment says a framework calls the member, so
+  `oop.unused_private` leaves it alone. chief calls the lifecycle of a
+  provider and the file that declares one never does, so the lint told
+  the author to delete the method the framework needs. The tag colours
+  like the rest
+
+- `[fmt] leading_zero` decides whether a decimal literal carries its
+  zero. `add`, the default, writes `.5` as `0.5`; `strip` writes `0.5`
+  as `.5`; `preserve` leaves every literal alone. Only a fraction
+  moves: `0.` alone and `0x10` stay
+
+- `larvae-lsp` is a crate of its own on crates.io, so `cargo install
+  larvae-lsp` builds the server. The binary carries its analyzer
+  library inside and writes it out on first run, under
+  `~/.larvae/lib/<version>`, so it works from wherever the install put
+  it; a copy beside the binary still wins when there is one. A library
+  the loader refuses used to kill the process before `main`, and now
+  ends in a sentence. The crate depends on larvae with no default
+  features, and larvae declares none today
+
+### Changed
+
+- A completion asked while the analyzer is still loading is held and
+  answered when the session lands, instead of answering an empty list
+  the editor then keeps. `$/cancelRequest` takes a held ask back
+
+- Inlay hints compute on every request, against the text the editor
+  holds at that request, the way luau-lsp computes them. The hold that
+  served the last hints while the author typed is gone with its cache,
+  its settle thread, and the refresh it sent after each pause: a held
+  hint was a hint from an older text, and that is where a hint in the
+  middle of a word came from, and where the hints that stopped after a
+  refresh came from. The editor asks after an edit and the answer is
+  current. `[lsp.inlay_hints] update_delay` stays readable and does
+  nothing
+- The server asks the editor to redraw hints only when a hint setting
+  changed, which is when luau-lsp asks. Every settings message used to
+- The flags of a doc comment read as bold lines again, `**Private**`
+  above the prose, the way every other tag reads
+- An entry of a doc section reads as a row: the name and the type each
+  take a code span and an em dash opens the description, ex:
+  `` `player` `Player` — who joined ``. One run of words left the
+  reader to find the parts
+
+### Fixed
+
+- `Key 'CFrame' not found in external type 'Instance'` after
+  `if not instance:IsA("BasePart") then continue end`, because `IsA`
+  did not narrow
+- `Expected this to be 'vector', but got 'Vector3'` on a `Position`
+  passed to the vector library, and the reverse on `vector.create`
+
+## 0.8.0-canary.1
+
+### Added
+
+- A doc comment opened above a declaration offers its moonwave block:
+  the name, a line per parameter with the type the author wrote, and
+  the return. A name that opens with an underscore takes `@private`,
+  the convention that already hides it from a completion list
+- The moonwave tags of a comment read as tags. `@param`, `@return`,
+  `@private` and the rest take the colour of a keyword, and the word a
+  tag names takes the colour of a parameter. A tag counts only at the
+  start of its line, so a mail address in prose stays prose
+
+### Changed
+
+- The flags of a doc comment read as a section of their own above the
+  prose: a quote holds them, and each flag is a code span, so an
+  editor draws its accent bar and its chips around them. As bold lines
+  they stacked and pushed the description down the card
+
+### Fixed
+
+- `larvae self install` fetches `larvae-lsp` and its analyzer library
+  when they are not beside the binary. A tool manager installs the one
+  binary its manifest names, so a larvae from rokit, aftman, or ember
+  sat alone and the editor fell back to `larvae lsp`, which serves the
+  lints and none of the types, with nothing said about why. The three
+  files ship in one release archive, and the install takes the two it
+  is missing
+- `larvae self install` clears the quarantine macOS puts on a
+  downloaded file, and says so when the installed server does not
+  start. The analyzer is a library the server links at load, so a file
+  Gatekeeper refuses kills the process before it writes a line: the
+  editor saw a server that answered nothing and reported nothing. The
+  install runs the server once and prints the loader's own words when
+  it fails
+- `larvae-lsp --version` answers and stops, so a check that the server
+  starts is a check and not a session reading an empty stdin
+- The names inside an interpolated string take the colour code takes.
+  The lexer keeps a backtick string as one token, so the whole thing
+  painted as string and `{name}` read as text rather than as the value
+  it interpolates. Each hole is now read on its own: a name is a
+  variable, a name after a dot is a property, and a keyword, a number,
+  and a nested string keep their own colours. An escaped `\{` opens no
+  hole
+- A held inlay hint no longer vanishes. A hint on a line the author
+  rewrote or moved was dropped until the pause, because its column
+  belonged to text that changed and a stale one reads as
+  `props: Pr: ()ops`. It keeps its line and moves to the end of it
+  instead, which is always a boundary, and the pause puts it back
+  where it belongs
+
+
+### Added
+
 - An accept writes a type another module declares. The printer writes
   a required module's type bare, ex: `Query`, and that name means
   nothing in the file the accept writes into, so such a hint stayed
@@ -17,6 +142,29 @@ Notable changes land here. Format follows
   adds `type Query = jecs.Query` with the imports; `off` keeps the old
   behaviour. A name two required modules both export writes nothing,
   because a guess between them puts the wrong type in someone's file
+
+### Added
+
+- `[lsp] roblox_security_level` picks the Roblox API surface the
+  analyzer types against: `none`, `local-user-security`,
+  `plugin-security`, or the default `roblox-script-security`, which
+  holds every member and is what larvae has always loaded. A plugin
+  sees less than that and a live game less again, so a project that
+  ships to one of those now gets the surface it really has, in the
+  editor and in `larvae analyze` alike. luau-lsp names the same four
+  through `types.robloxSecurityLevel`. The four definition sets ship
+  compressed, so the binary holding all of them is smaller than the
+  one that held a single set
+
+### Fixed
+
+- `[aliases]` of `larvae.toml` resolve with no `.luaurc` in sight. The
+  config says its entries merge over that file per key, and the build
+  has read both since the beginning, but the analyzer read `.luaurc`
+  alone: a project that wrote its aliases in one file got
+  `Unknown type` from `larvae analyze` and from the editor. A value
+  that names a place in the DataModel goes through the mounts, which
+  is the form `.luaurc` cannot express
 
 ### Changed
 

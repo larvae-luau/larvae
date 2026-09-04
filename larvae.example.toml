@@ -172,7 +172,10 @@ column_width = 120
 line_endings = "unix"                    # or "windows"
 indent_type = "tabs"                     # or "spaces"
 indent_width = 4
-quote_style = "auto-prefer-double"       # auto-prefer-single, force-double, force-single, preserve
+quote_style = "auto-prefer-double"
+# Whether a decimal literal carries its leading zero: "add" writes .5 as
+# 0.5, "strip" writes 0.5 as .5, "preserve" leaves every literal alone.
+leading_zero = "add"       # auto-prefer-single, force-double, force-single, preserve
 call_parentheses = "always"              # no-single-string, no-single-table, none, input
 space_after_function_names = "never"     # definitions, calls, always
 collapse_simple_statement = "never"      # function-only, conditional-only, always
@@ -360,6 +363,10 @@ obfuscate = false                        # dense whatever generator says: no typ
 
 [lsp]
 enabled = true
+# Which Roblox API surface the analyzer types against: "none",
+# "local-user-security", "plugin-security", or the default
+# "roblox-script-security", which holds every member.
+roblox_security_level = "roblox-script-security"
 claim_only = false
 # definitions = ["types/global.d.luau"]
 # documentation = ["types/documentation.json"]

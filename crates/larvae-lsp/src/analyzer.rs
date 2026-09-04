@@ -26,7 +26,56 @@ nightly. The session loads them at start, so the DataModel exists for
 inference, and the service list for auto-imports reads from the same
 text, so the two cannot disagree.
 */
-const GLOBAL_TYPES: &str = include_str!("../types/globalTypes.d.luau");
+/*
+The Roblox definitions of each security level, gzipped by the build.
+
+Four levels of about 700KB is 2.7MB of text a session never reads more
+than one of, so the binary carries them compressed and unpacks the one
+the project asked for. The default is the level larvae always loaded.
+*/
+const DEFINITIONS: [(larvae::config::lsp::SecurityLevel, &[u8]); 4] = [
+    (
+        larvae::config::lsp::SecurityLevel::None,
+        include_bytes!(concat!(env!("OUT_DIR"), "/globalTypes.None.gz")),
+    ),
+    (
+        larvae::config::lsp::SecurityLevel::LocalUserSecurity,
+        include_bytes!(concat!(
+            env!("OUT_DIR"),
+            "/globalTypes.LocalUserSecurity.gz"
+        )),
+    ),
+    (
+        larvae::config::lsp::SecurityLevel::PluginSecurity,
+        include_bytes!(concat!(env!("OUT_DIR"), "/globalTypes.PluginSecurity.gz")),
+    ),
+    (
+        larvae::config::lsp::SecurityLevel::RobloxScriptSecurity,
+        include_bytes!(concat!(
+            env!("OUT_DIR"),
+            "/globalTypes.RobloxScriptSecurity.gz"
+        )),
+    ),
+];
+
+/// The definitions of one level, unpacked
+pub(crate) fn global_types(level: larvae::config::lsp::SecurityLevel) -> String {
+    use std::io::Read;
+
+    let packed = DEFINITIONS
+        .iter()
+        .find(|(name, _)| *name == level)
+        .map(|(_, bytes)| *bytes)
+        .unwrap_or(DEFINITIONS[3].1);
+
+    let mut text = String::new();
+
+    flate2::read::GzDecoder::new(packed)
+        .read_to_string(&mut text)
+        .expect("the build wrote these, so they unpack");
+
+    text
+}
 
 /*
 larvae's own definitions, layered over the Roblox globals.
@@ -331,89 +380,435 @@ type larvae_resolve_fn = extern "C" fn(*mut c_void, *const c_char, *const c_char
 #[allow(non_camel_case_types)]
 type larvae_load_fn = extern "C" fn(*mut c_void, *const c_char) -> *const c_char;
 
-unsafe extern "C" {
-    fn larvae_enable_all_flags();
-    fn larvae_set_flag(name: *const c_char, value: *const c_char) -> i32;
-    fn larvae_apply_required_flags();
-    fn larvae_signature_help(
-        s: *mut c_void,
-        path: *const c_char,
-        byte: u32,
-        sig: *mut RawSignature,
-        out: *mut RawParameter,
-        cap: usize,
-    ) -> i32;
-    fn larvae_inlay_hints(
-        s: *mut c_void,
-        path: *const c_char,
-        out: *mut RawHint,
-        cap: usize,
-        want_variables: i32,
-        want_parameters: i32,
-        want_returns: i32,
-        name_mode: i32,
-    ) -> usize;
-    fn larvae_definition(
-        s: *mut c_void,
-        path: *const c_char,
-        byte: u32,
-        out: *mut RawLocation,
-    ) -> i32;
-    fn larvae_type_definition(
-        s: *mut c_void,
-        path: *const c_char,
-        byte: u32,
-        out: *mut RawLocation,
-    ) -> i32;
-    fn larvae_session_new() -> *mut c_void;
-    fn larvae_set_definitions(s: *mut c_void, name: *const c_char, source: *const c_char) -> i32;
-    fn larvae_session_free(s: *mut c_void);
-    fn larvae_set_resolver(
-        s: *mut c_void,
-        userdata: *mut c_void,
-        resolve: larvae_resolve_fn,
-        load: larvae_load_fn,
-    );
-    fn larvae_open(s: *mut c_void, path: *const c_char, text: *const c_char);
-    fn larvae_invalidate(s: *mut c_void, path: *const c_char);
-    fn larvae_clear_script_types(s: *mut c_void);
-    fn larvae_set_script_type(s: *mut c_void, path: *const c_char, type_name: *const c_char);
-    fn larvae_set_character_type(s: *mut c_void, kind: i32);
-    fn larvae_check(s: *mut c_void, path: *const c_char, out: *mut RawDiag, cap: usize) -> usize;
-    fn larvae_deprecated(
-        s: *mut c_void,
-        path: *const c_char,
-        out: *mut RawDiag,
-        cap: usize,
-    ) -> usize;
-    fn larvae_hover(
-        s: *mut c_void,
-        path: *const c_char,
-        byte: u32,
-        show_table_kinds: i32,
-        include_string_length: i32,
-    ) -> *const c_char;
-    fn larvae_documentation_symbol(s: *mut c_void, path: *const c_char, byte: u32)
-    -> *const c_char;
-    fn larvae_source_documentation(s: *mut c_void) -> *const c_char;
-    fn larvae_bytecode(
-        s: *mut c_void,
-        source: *const c_char,
-        optimization: i32,
-        remarks: i32,
-        debug_level: i32,
-        type_info_level: i32,
-        vector_lib: *const c_char,
-        vector_ctor: *const c_char,
-        vector_type: *const c_char,
-    ) -> *const c_char;
-    fn larvae_completions(
-        s: *mut c_void,
-        path: *const c_char,
-        byte: u32,
-        out: *mut RawCompletion,
-        cap: usize,
-    ) -> usize;
+/*
+The analyzer library, opened once and kept for the life of the process.
+
+The library used to be a load-time link, which put the two Luau copies
+in this binary, mlua's VM and the vendored analyzer, in separate
+objects with their symbols apart. That stays; what changes is who
+opens it. A `cargo install` puts one binary in a directory and nothing
+beside it, so the binary carries the library's bytes and writes them
+out where it can find them again, and a library the loader refuses
+now ends in a sentence rather than a process that dies before `main`.
+
+A copy beside the binary wins when there is one: that is a workspace
+build and a release archive, and the sibling is the build that made
+this binary.
+*/
+fn library() -> &'static libloading::Library {
+    static LIBRARY: std::sync::OnceLock<libloading::Library> = std::sync::OnceLock::new();
+
+    LIBRARY.get_or_init(|| match open_library() {
+        Ok(lib) => lib,
+
+        Err(e) => {
+            eprintln!("larvae-lsp: the analyzer library will not load: {e:#}");
+            eprintln!("larvae-lsp: the editor loses hover, completion, and types until it does");
+
+            std::process::exit(1)
+        }
+    })
+}
+
+static EMBEDDED: &[u8] = include_bytes!(env!("LARVAE_ANALYZER_PATH"));
+
+fn open_library() -> anyhow::Result<libloading::Library> {
+    use anyhow::Context;
+
+    let name = env!("LARVAE_ANALYZER_LIBRARY");
+
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let sibling = dir.join(name);
+
+        if sibling.is_file() {
+            return unsafe { libloading::Library::new(&sibling) }
+                .with_context(|| format!("cannot open {}", sibling.display()));
+        }
+    }
+
+    /*
+    The embedded copy, written under the version that carries it. Two
+    versions installed side by side then keep two libraries, and an
+    upgrade never opens the file the old server wrote.
+    */
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .context("no home directory to keep the analyzer library in")?;
+
+    let dir = std::path::PathBuf::from(home)
+        .join(".larvae")
+        .join("lib")
+        .join(env!("CARGO_PKG_VERSION"));
+    let path = dir.join(name);
+
+    let current = std::fs::metadata(&path)
+        .map(|m| m.len() == EMBEDDED.len() as u64)
+        .unwrap_or(false);
+
+    if !current {
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("cannot create {}", dir.display()))?;
+
+        // A whole file or nothing: a server reading a half-written one is worse than a retry.
+        let staged = dir.join(format!("{name}.tmp"));
+        std::fs::write(&staged, EMBEDDED)
+            .with_context(|| format!("cannot write {}", staged.display()))?;
+        std::fs::rename(&staged, &path)
+            .with_context(|| format!("cannot place {}", path.display()))?;
+    }
+
+    unsafe { libloading::Library::new(&path) }
+        .with_context(|| format!("cannot open {}", path.display()))
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_enable_all_flags() {
+    let f: libloading::Symbol<unsafe extern "C" fn()> =
+        unsafe { library().get(b"larvae_enable_all_flags\0") }
+            .expect("larvae_enable_all_flags is exported by the analyzer library");
+
+    unsafe { f() }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_set_flag(name: *const c_char, value: *const c_char) -> i32 {
+    let f: libloading::Symbol<unsafe extern "C" fn(*const c_char, *const c_char) -> i32> =
+        unsafe { library().get(b"larvae_set_flag\0") }
+            .expect("larvae_set_flag is exported by the analyzer library");
+
+    unsafe { f(name, value) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_apply_required_flags() {
+    let f: libloading::Symbol<unsafe extern "C" fn()> =
+        unsafe { library().get(b"larvae_apply_required_flags\0") }
+            .expect("larvae_apply_required_flags is exported by the analyzer library");
+
+    unsafe { f() }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_signature_help(
+    s: *mut c_void,
+    path: *const c_char,
+    byte: u32,
+    sig: *mut RawSignature,
+    out: *mut RawParameter,
+    cap: usize,
+) -> i32 {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(
+            *mut c_void,
+            *const c_char,
+            u32,
+            *mut RawSignature,
+            *mut RawParameter,
+            usize,
+        ) -> i32,
+    > = unsafe { library().get(b"larvae_signature_help\0") }
+        .expect("larvae_signature_help is exported by the analyzer library");
+
+    unsafe { f(s, path, byte, sig, out, cap) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_inlay_hints(
+    s: *mut c_void,
+    path: *const c_char,
+    out: *mut RawHint,
+    cap: usize,
+    want_variables: i32,
+    want_parameters: i32,
+    want_returns: i32,
+    name_mode: i32,
+) -> usize {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(
+            *mut c_void,
+            *const c_char,
+            *mut RawHint,
+            usize,
+            i32,
+            i32,
+            i32,
+            i32,
+        ) -> usize,
+    > = unsafe { library().get(b"larvae_inlay_hints\0") }
+        .expect("larvae_inlay_hints is exported by the analyzer library");
+
+    unsafe {
+        f(
+            s,
+            path,
+            out,
+            cap,
+            want_variables,
+            want_parameters,
+            want_returns,
+            name_mode,
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_definition(
+    s: *mut c_void,
+    path: *const c_char,
+    byte: u32,
+    out: *mut RawLocation,
+) -> i32 {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(*mut c_void, *const c_char, u32, *mut RawLocation) -> i32,
+    > = unsafe { library().get(b"larvae_definition\0") }
+        .expect("larvae_definition is exported by the analyzer library");
+
+    unsafe { f(s, path, byte, out) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_type_definition(
+    s: *mut c_void,
+    path: *const c_char,
+    byte: u32,
+    out: *mut RawLocation,
+) -> i32 {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(*mut c_void, *const c_char, u32, *mut RawLocation) -> i32,
+    > = unsafe { library().get(b"larvae_type_definition\0") }
+        .expect("larvae_type_definition is exported by the analyzer library");
+
+    unsafe { f(s, path, byte, out) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_session_new() -> *mut c_void {
+    let f: libloading::Symbol<unsafe extern "C" fn() -> *mut c_void> =
+        unsafe { library().get(b"larvae_session_new\0") }
+            .expect("larvae_session_new is exported by the analyzer library");
+
+    unsafe { f() }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_set_definitions(
+    s: *mut c_void,
+    name: *const c_char,
+    source: *const c_char,
+) -> i32 {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> i32,
+    > = unsafe { library().get(b"larvae_set_definitions\0") }
+        .expect("larvae_set_definitions is exported by the analyzer library");
+
+    unsafe { f(s, name, source) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_session_free(s: *mut c_void) {
+    let f: libloading::Symbol<unsafe extern "C" fn(*mut c_void)> =
+        unsafe { library().get(b"larvae_session_free\0") }
+            .expect("larvae_session_free is exported by the analyzer library");
+
+    unsafe { f(s) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_set_resolver(
+    s: *mut c_void,
+    userdata: *mut c_void,
+    resolve: larvae_resolve_fn,
+    load: larvae_load_fn,
+) {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(*mut c_void, *mut c_void, larvae_resolve_fn, larvae_load_fn),
+    > = unsafe { library().get(b"larvae_set_resolver\0") }
+        .expect("larvae_set_resolver is exported by the analyzer library");
+
+    unsafe { f(s, userdata, resolve, load) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_open(s: *mut c_void, path: *const c_char, text: *const c_char) {
+    let f: libloading::Symbol<unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char)> =
+        unsafe { library().get(b"larvae_open\0") }
+            .expect("larvae_open is exported by the analyzer library");
+
+    unsafe { f(s, path, text) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_invalidate(s: *mut c_void, path: *const c_char) {
+    let f: libloading::Symbol<unsafe extern "C" fn(*mut c_void, *const c_char)> =
+        unsafe { library().get(b"larvae_invalidate\0") }
+            .expect("larvae_invalidate is exported by the analyzer library");
+
+    unsafe { f(s, path) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_clear_script_types(s: *mut c_void) {
+    let f: libloading::Symbol<unsafe extern "C" fn(*mut c_void)> =
+        unsafe { library().get(b"larvae_clear_script_types\0") }
+            .expect("larvae_clear_script_types is exported by the analyzer library");
+
+    unsafe { f(s) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_set_script_type(s: *mut c_void, path: *const c_char, type_name: *const c_char) {
+    let f: libloading::Symbol<unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char)> =
+        unsafe { library().get(b"larvae_set_script_type\0") }
+            .expect("larvae_set_script_type is exported by the analyzer library");
+
+    unsafe { f(s, path, type_name) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_set_character_type(s: *mut c_void, kind: i32) {
+    let f: libloading::Symbol<unsafe extern "C" fn(*mut c_void, i32)> =
+        unsafe { library().get(b"larvae_set_character_type\0") }
+            .expect("larvae_set_character_type is exported by the analyzer library");
+
+    unsafe { f(s, kind) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_check(
+    s: *mut c_void,
+    path: *const c_char,
+    out: *mut RawDiag,
+    cap: usize,
+) -> usize {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(*mut c_void, *const c_char, *mut RawDiag, usize) -> usize,
+    > = unsafe { library().get(b"larvae_check\0") }
+        .expect("larvae_check is exported by the analyzer library");
+
+    unsafe { f(s, path, out, cap) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_deprecated(
+    s: *mut c_void,
+    path: *const c_char,
+    out: *mut RawDiag,
+    cap: usize,
+) -> usize {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(*mut c_void, *const c_char, *mut RawDiag, usize) -> usize,
+    > = unsafe { library().get(b"larvae_deprecated\0") }
+        .expect("larvae_deprecated is exported by the analyzer library");
+
+    unsafe { f(s, path, out, cap) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_hover(
+    s: *mut c_void,
+    path: *const c_char,
+    byte: u32,
+    show_table_kinds: i32,
+    include_string_length: i32,
+) -> *const c_char {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(*mut c_void, *const c_char, u32, i32, i32) -> *const c_char,
+    > = unsafe { library().get(b"larvae_hover\0") }
+        .expect("larvae_hover is exported by the analyzer library");
+
+    unsafe { f(s, path, byte, show_table_kinds, include_string_length) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_documentation_symbol(
+    s: *mut c_void,
+    path: *const c_char,
+    byte: u32,
+) -> *const c_char {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(*mut c_void, *const c_char, u32) -> *const c_char,
+    > = unsafe { library().get(b"larvae_documentation_symbol\0") }
+        .expect("larvae_documentation_symbol is exported by the analyzer library");
+
+    unsafe { f(s, path, byte) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_source_documentation(s: *mut c_void) -> *const c_char {
+    let f: libloading::Symbol<unsafe extern "C" fn(*mut c_void) -> *const c_char> =
+        unsafe { library().get(b"larvae_source_documentation\0") }
+            .expect("larvae_source_documentation is exported by the analyzer library");
+
+    unsafe { f(s) }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_bytecode(
+    s: *mut c_void,
+    source: *const c_char,
+    optimization: i32,
+    remarks: i32,
+    debug_level: i32,
+    type_info_level: i32,
+    vector_lib: *const c_char,
+    vector_ctor: *const c_char,
+    vector_type: *const c_char,
+) -> *const c_char {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(
+            *mut c_void,
+            *const c_char,
+            i32,
+            i32,
+            i32,
+            i32,
+            *const c_char,
+            *const c_char,
+            *const c_char,
+        ) -> *const c_char,
+    > = unsafe { library().get(b"larvae_bytecode\0") }
+        .expect("larvae_bytecode is exported by the analyzer library");
+
+    unsafe {
+        f(
+            s,
+            source,
+            optimization,
+            remarks,
+            debug_level,
+            type_info_level,
+            vector_lib,
+            vector_ctor,
+            vector_type,
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn larvae_completions(
+    s: *mut c_void,
+    path: *const c_char,
+    byte: u32,
+    out: *mut RawCompletion,
+    cap: usize,
+) -> usize {
+    let f: libloading::Symbol<
+        unsafe extern "C" fn(*mut c_void, *const c_char, u32, *mut RawCompletion, usize) -> usize,
+    > = unsafe { library().get(b"larvae_completions\0") }
+        .expect("larvae_completions is exported by the analyzer library");
+
+    unsafe { f(s, path, byte, out, cap) }
+}
+
+#[cfg(test)]
+pub(crate) unsafe fn larvae_reset_flags() {
+    let f: libloading::Symbol<unsafe extern "C" fn()> =
+        unsafe { library().get(b"larvae_reset_flags\0") }
+            .expect("larvae_reset_flags is exported by the analyzer library");
+
+    unsafe { f() }
 }
 
 /*
@@ -443,6 +838,14 @@ struct ResolverState {
     files it is able to.
     */
     claims: Vec<String>,
+    /*
+    The `[aliases]` of `larvae.toml`, lowercased by key.
+
+    `.luaurc` is the other half and the resolver reads it from disk. A
+    project that names an alias in one file and not the other means it
+    all the same, and the build has read both since the beginning.
+    */
+    aliases: HashMap<String, String>,
 }
 
 /// One string the shim handed back, or None where it handed back null
@@ -548,6 +951,7 @@ extern "C" fn resolve_cb(
             &spec,
             state.mounts.as_ref(),
             &state.claims,
+            &state.aliases,
         ),
     };
 
@@ -789,6 +1193,12 @@ pub struct LuauAnalysis {
     keys: HashMap<PathBuf, CString>,
     /// The service names, extracted from the definitions once
     services: Vec<String>,
+    /*
+    The first line of the definitions this session loaded, which is the
+    generator's metadata. The service names come out of it, and the
+    line belongs to the security level the session was built on.
+    */
+    metadata: String,
     /// The Roblox reference, by documentation symbol
     docs: HashMap<String, DocEntry>,
     /// The documentationFiles databases of the project, layered in order
@@ -811,13 +1221,22 @@ pub struct LuauAnalysis {
 unsafe impl Send for LuauAnalysis {}
 
 impl LuauAnalysis {
+    /// A session on the API surface larvae has always loaded; the server
+    /// builds through `with_security`, so only a test reaches for this
+    #[cfg(test)]
     pub fn new() -> Self {
+        Self::with_security(larvae::config::lsp::SecurityLevel::default())
+    }
+
+    /// A session on one security level's Roblox definitions
+    pub fn with_security(level: larvae::config::lsp::SecurityLevel) -> Self {
         let mut resolver = Box::new(ResolverState {
             resolve_buffer: None,
             load_buffer: None,
             hooks: None,
             mounts: None,
             claims: Vec::new(),
+            aliases: HashMap::new(),
         });
 
         let session = unsafe { larvae_session_new() };
@@ -831,11 +1250,14 @@ impl LuauAnalysis {
             );
         }
 
+        let global_types = global_types(level);
+
         let mut new = Self {
             session,
             resolver,
             keys: HashMap::new(),
             services: Vec::new(),
+            metadata: global_types.lines().next().unwrap_or_default().to_owned(),
             docs: read_api_docs(),
             project_docs: HashMap::new(),
             project_doc_tails: HashMap::new(),
@@ -851,7 +1273,7 @@ impl LuauAnalysis {
         as long as the file has shipped. A server that cannot type the
         platform says so.
         */
-        if !larvae::lsp::analysis::Analysis::definitions(&mut new, "@roblox", GLOBAL_TYPES) {
+        if !larvae::lsp::analysis::Analysis::definitions(&mut new, "@roblox", &global_types) {
             eprintln!(
                 "larvae-lsp: the Roblox type definitions did not load, so \
                  game and the services have no type"
@@ -896,7 +1318,8 @@ impl LuauAnalysis {
     */
     fn locate(
         &mut self,
-        ask: unsafe extern "C" fn(*mut c_void, *const c_char, u32, *mut RawLocation) -> i32,
+        // A Rust fn: the wrapper that resolves the symbol, not the symbol itself.
+        ask: unsafe fn(*mut c_void, *const c_char, u32, *mut RawLocation) -> i32,
         path: &Path,
         at: u32,
     ) -> Option<larvae::lsp::analysis::AnalysisLocation> {
@@ -1066,6 +1489,10 @@ impl Analysis for LuauAnalysis {
         self.resolver.mounts = Some(mounts);
     }
 
+    fn set_aliases(&mut self, aliases: HashMap<String, String>) {
+        self.resolver.aliases = aliases;
+    }
+
     fn services(&mut self) -> Vec<String> {
         if self.services.is_empty() {
             /*
@@ -1073,10 +1500,9 @@ impl Analysis for LuauAnalysis {
             `--#METADATA#{...}`, and its SERVICES array is the authority:
             luau-lsp writes it from the API dump for exactly this use.
             */
-            self.services = GLOBAL_TYPES
-                .lines()
-                .next()
-                .and_then(|line| line.strip_prefix("--#METADATA#"))
+            self.services = self
+                .metadata
+                .strip_prefix("--#METADATA#")
                 .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
                 .and_then(|meta| {
                     meta.get("SERVICES").and_then(|s| s.as_array()).map(|list| {
@@ -1424,10 +1850,6 @@ The reset serves the tests alone. The flags are process global, so only a
 test has a reason to put them back, and a declaration in the main block
 reads as dead everywhere else.
 */
-#[cfg(test)]
-unsafe extern "C" {
-    pub(crate) fn larvae_reset_flags();
-}
 
 #[cfg(test)]
 pub(crate) mod luau_globals {
@@ -1481,13 +1903,53 @@ mod studio_definitions {
     the result, so `game` had no type and nobody saw why. This is the test
     that would have caught it.
     */
+    /*
+    Every security level's definitions load, and the surface differs.
+
+    The levels are generated files and a broken one is a session with
+    no platform at all, so each is loaded rather than trusted. The
+    member below is `RobloxScriptSecurity` only, which is the
+    difference the setting exists to make.
+    */
+    #[test]
+    fn every_security_level_loads_its_own_surface() {
+        use larvae::config::lsp::SecurityLevel;
+
+        let _luau = super::luau_globals::shared();
+
+        for level in [
+            SecurityLevel::None,
+            SecurityLevel::LocalUserSecurity,
+            SecurityLevel::PluginSecurity,
+            SecurityLevel::RobloxScriptSecurity,
+        ] {
+            let text = super::global_types(level);
+
+            assert!(
+                text.starts_with("--#METADATA#"),
+                "{} lost its metadata line",
+                level.file_name()
+            );
+
+            // The signal of `Players`, which only the top level carries.
+            let top = text.contains("FriendRequestEvent: RBXScriptSignal");
+
+            assert_eq!(
+                top,
+                level == SecurityLevel::RobloxScriptSecurity,
+                "{} carries the wrong surface",
+                level.file_name()
+            );
+        }
+    }
+
     #[test]
     fn the_vendored_roblox_types_load() {
         let _luau = super::luau_globals::shared();
         let mut analysis = LuauAnalysis::new();
 
         assert!(
-            analysis.definitions("@roblox", GLOBAL_TYPES),
+            analysis.definitions("@roblox", &super::global_types(Default::default())),
             "Luau refused the vendored globalTypes.d.luau"
         );
     }
@@ -1579,7 +2041,7 @@ mod studio_definitions {
         std::fs::write(&main, text).expect("writes");
 
         let mut analysis = LuauAnalysis::new();
-        analysis.definitions("@roblox", GLOBAL_TYPES);
+        analysis.definitions("@roblox", &super::global_types(Default::default()));
         analysis.open(&main, text);
 
         let at = |what: &str| text.find(what).expect("the probe text") as u32;
@@ -1637,7 +2099,7 @@ mod studio_definitions {
         std::fs::write(&user, text).expect("writes");
 
         let mut analysis = LuauAnalysis::new();
-        analysis.definitions("@roblox", GLOBAL_TYPES);
+        analysis.definitions("@roblox", &super::global_types(Default::default()));
         analysis.open(&user, text);
 
         let at = |what: &str| text.find(what).expect("the probe text") as u32;
@@ -1680,7 +2142,7 @@ mod studio_definitions {
         std::fs::write(&user, "").expect("writes");
 
         let mut analysis = LuauAnalysis::new();
-        analysis.definitions("@roblox", GLOBAL_TYPES);
+        analysis.definitions("@roblox", &super::global_types(Default::default()));
         analysis.set_mounts(larvae::requires::datamodel::MountTable::new(vec![
             larvae::requires::datamodel::Mount {
                 fs: shared.clone(),
@@ -1726,7 +2188,7 @@ mod studio_definitions {
         std::fs::write(&user, "").expect("writes");
 
         let mut analysis = LuauAnalysis::new();
-        analysis.definitions("@roblox", GLOBAL_TYPES);
+        analysis.definitions("@roblox", &super::global_types(Default::default()));
         analysis.set_mounts(larvae::requires::datamodel::MountTable::new(vec![
             larvae::requires::datamodel::Mount {
                 fs: shared.clone(),
@@ -1885,7 +2347,7 @@ mod flags {
 
         // The types still load, so the required value went back afterwards.
         assert!(
-            analysis.definitions("@roblox", GLOBAL_TYPES),
+            analysis.definitions("@roblox", &super::global_types(Default::default())),
             "an override took away what larvae needs"
         );
     }
@@ -1903,8 +2365,10 @@ mod flags {
     fn a_hover_answers_under_the_new_solver() {
         let _flags = Flags::hold();
 
-        let mut flags = FFlagsConfig::default();
-        flags.enable_new_solver = true;
+        let flags = FFlagsConfig {
+            enable_new_solver: true,
+            ..Default::default()
+        };
 
         apply_flags(&flags);
 
@@ -1931,7 +2395,7 @@ mod flags {
         };
 
         assert!(analysis.set_flags(&flags).is_empty());
-        assert!(analysis.definitions("@roblox", GLOBAL_TYPES));
+        assert!(analysis.definitions("@roblox", &super::global_types(Default::default())));
     }
 }
 
@@ -2432,8 +2896,8 @@ mod moonwave_documentation {
             docs(src, "function add").as_deref(),
             Some(
                 "Adds two numbers together.\n\n\n**Parameters**\n\n\
-                 - `a` number -- the first one\n- `b` number -- the second one\n\n\
-                 **Returns**\n\n- `number` -- their sum"
+                 - `a` `number` — the first one\n- `b` `number` — the second one\n\n\
+                 **Returns**\n\n- `number` — their sum"
             )
         );
     }
@@ -2449,7 +2913,7 @@ mod moonwave_documentation {
         assert_eq!(
             docs(src, "function unlist").as_deref(),
             Some(
-                "Removes a thing.\nThe entity itself is untouched.\n\n\n**Parameters**\n\n- `key` any"
+                "Removes a thing.\nThe entity itself is untouched.\n\n\n**Parameters**\n\n- `key` `any`"
             )
         );
     }
@@ -2484,8 +2948,8 @@ mod moonwave_documentation {
             docs(src, "function tagged").as_deref(),
             Some(
                 "\n\nAfter a blank doc line.\n**Deprecated** `1.2.0` use something else\n\
-                 **Since** `1.0.0`\n**Yields**\n\n\n**Fields**\n\n- `name` string -- the name\n\n\
-                 **Throws**\n\n- `BadThing` -- when it breaks"
+                 **Since** `1.0.0`\n**Yields**\n\n\n**Fields**\n\n- `name` `string` — the name\n\n\
+                 **Throws**\n\n- `BadThing` — when it breaks"
             )
         );
     }
@@ -2540,7 +3004,7 @@ mod moonwave_documentation {
 
         assert_eq!(
             analysis.hover_documentation(&main, at).as_deref(),
-            Some("Doubles a number.\n\n\n**Parameters**\n\n- `n` number -- the number")
+            Some("Doubles a number.\n\n\n**Parameters**\n\n- `n` `number` — the number")
         );
     }
 }

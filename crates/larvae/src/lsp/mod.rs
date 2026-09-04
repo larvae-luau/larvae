@@ -106,7 +106,7 @@ the build cannot start before `initialize` says which project this is, and
 the server hands the flags to this rather than the binary guessing them.
 */
 pub type Builder =
-    Box<dyn FnOnce(&crate::config::lsp::FFlagsConfig) -> Box<dyn analysis::Analysis> + Send>;
+    Box<dyn FnOnce(&crate::config::lsp::LspConfig) -> Box<dyn analysis::Analysis> + Send>;
 
 /*
 What the loop waits on: a message from the editor, or the session landing.
@@ -118,14 +118,30 @@ session it had built and never picked up.
 */
 pub(super) enum Event {
     Message(Box<rpc::Message>),
-    /// Typing paused; the editor is told to ask for its hints again
-    Settled,
     Analysis(Box<dyn analysis::Analysis>),
     /// The editor closed the stream, or the read failed
     Eof,
 }
 
+/*
+The settings the process fixes, over every file and every editor.
+
+An embedded server has no larvae.toml to read and no editor settings to
+take, so a host that wants the new solver has one place to say so: the
+command line. What is set here wins over both, and stays set across
+every config reload of the session.
+*/
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Forced {
+    /// `--new-solver`: Luau's new type solver, whatever the project says
+    pub new_solver: bool,
+}
+
 pub fn run_pending(analysis: Option<Pending>) -> Result<()> {
+    run_forced(analysis, Forced::default())
+}
+
+pub fn run_forced(analysis: Option<Pending>, forced: Forced) -> Result<()> {
     let stdout = std::io::stdout();
     let mut output = stdout.lock();
 
@@ -163,45 +179,13 @@ pub fn run_pending(analysis: Option<Pending>) -> Result<()> {
         }
     });
 
-    /*
-    The settle thread turns a stream of keystrokes into one pause. Every
-    change posts a deadline; the thread waits out the newest one and then
-    reports Settled, which becomes one hint refresh. It costs a thread
-    that spends its life asleep.
-    */
-    let (settle, strokes) = std::sync::mpsc::channel::<std::time::Instant>();
-    let settle_events = events.clone();
-
-    std::thread::spawn(move || {
-        while let Ok(mut deadline) = strokes.recv() {
-            loop {
-                let now = std::time::Instant::now();
-
-                if deadline <= now {
-                    break;
-                }
-
-                match strokes.recv_timeout(deadline - now) {
-                    Ok(next) => deadline = next,
-
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
-
-                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
-                }
-            }
-
-            if settle_events.send(Event::Settled).is_err() {
-                return;
-            }
-        }
-    });
-
     let mut server = Server {
         analysis: std::cell::RefCell::new(ready),
         analysis_pending: builder.is_some(),
+        held: Vec::new(),
+        forced,
         builder,
         events: Some(events),
-        settle: Some(settle),
         ..Default::default()
     };
 
@@ -214,17 +198,6 @@ pub fn run_pending(analysis: Option<Pending>) -> Result<()> {
             }
 
             Event::Analysis(built) => server.take_analysis(built, &mut output)?,
-
-            /*
-            The pause after typing. The held hints are stale by design,
-            and this one refresh makes the editor ask again now that the
-            text stopped moving.
-            */
-            Event::Settled => {
-                if let Some(uri) = server.last_typed.take() {
-                    server.refresh_dependents(&uri, &mut output)?;
-                }
-            }
 
             Event::Eof => break,
         }
@@ -300,6 +273,21 @@ struct Server {
     */
     analysis_pending: bool,
     /*
+    The completion requests that arrived while the session was still
+    being built, answered the moment it lands.
+
+    An empty list was the answer before, and the editor takes an empty
+    list as the answer: the popup a reader was typing toward never
+    opened, and only another keystroke or a manual ask would open one.
+    luau-lsp blocks until its definitions load, so the first list it
+    gives is a real one. Holding the request gives the same list without
+    holding the whole server: notifications keep flowing meanwhile, and
+    the editor's cancel takes a held request back.
+    */
+    held: Vec<rpc::Message>,
+    /// What the command line fixed, applied over every settings source
+    forced: Forced,
+    /*
     What builds the session, until the config that decides its flags is read.
 
     `load_config` takes it and spawns it, because that is the first moment
@@ -318,14 +306,6 @@ struct Server {
     successful load clears its entry.
     */
     load_errors: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, String>>>,
-    /// When each open document last changed, for the hint hold
-    hint_hold: HashMap<String, std::time::Instant>,
-    /// The last settled hints per document, served while the author types
-    hint_cache: std::cell::RefCell<HashMap<String, Value>>,
-    /// Wakes the settle thread on every change; it reports the pause back
-    settle: Option<std::sync::mpsc::Sender<std::time::Instant>>,
-    /// The document the last keystroke landed in, refreshed at the pause
-    last_typed: Option<String>,
     /// The sourcemap generator this server owns, when the setting spawns one
     sourcemap_watch: Option<std::process::Child>,
     /// What the running generator was spawned with, to respawn only on change
@@ -382,14 +362,12 @@ impl Default for Server {
             editor: Value::Null,
             analysis: std::cell::RefCell::new(None),
             analysis_pending: false,
+            held: Vec::new(),
+            forced: Forced::default(),
             builder: None,
             events: None,
             pending_rename: None,
             load_errors: Default::default(),
-            hint_hold: HashMap::new(),
-            hint_cache: Default::default(),
-            settle: None,
-            last_typed: None,
             sourcemap_watch: None,
             sourcemap_watch_params: None,
             sourcemap_watch_said: false,
@@ -453,6 +431,11 @@ impl Server {
             "shutdown" => {
                 self.shutting_down = true;
 
+                // A held request answers before the server goes, or the editor waits on nothing.
+                for held in std::mem::take(&mut self.held) {
+                    self.reply(&held, out, json!([]))?;
+                }
+
                 self.reply(message, out, Value::Null)?;
             }
 
@@ -472,14 +455,23 @@ impl Server {
                     self.editor = message.params["settings"].clone();
                 }
 
+                let hints_before = self.lsp.inlay_hints.clone();
+
                 self.load_config(out)?;
 
                 for uri in self.documents.keys().cloned().collect::<Vec<_>>() {
                     self.publish(&uri, out)?;
                 }
 
-                // A setting can turn the hints on, and only the editor redraws them.
-                rpc::request(out, "workspace/inlayHint/refresh", Value::Null)?;
+                /*
+                Only a changed hint setting asks the editor to redraw
+                its hints, which is when luau-lsp asks. Every settings
+                message used to, and the editor re-requested every
+                open document's hints for a change that touched none.
+                */
+                if self.lsp.inlay_hints != hints_before {
+                    rpc::request(out, "workspace/inlayHint/refresh", Value::Null)?;
+                }
             }
 
             "textDocument/didOpen" => {
@@ -513,21 +505,9 @@ impl Server {
                     .and_then(|c| c.last())
                     .and_then(|c| c["text"].as_str())
                 {
-                    if let Some(old) = self.documents.get(&uri) {
-                        self.shift_hint_cache(&uri, &old.clone(), change);
-                    }
-
                     self.documents.insert(uri.clone(), change.to_string());
                     self.publish(&uri, out)?;
-
-                    /*
-                    With a hold configured, the dependents wait for the
-                    pause too: a keystroke should not re-check every open
-                    file. Without one, they refresh here and now.
-                    */
-                    if !self.note_typing(&uri) {
-                        self.refresh_dependents(&uri, out)?;
-                    }
+                    self.refresh_dependents(&uri, out)?;
                 }
             }
 
@@ -576,9 +556,32 @@ impl Server {
             }
 
             "textDocument/completion" => {
+                // See `held`: the list comes when the session does.
+                if self.analysis_loading() && message.id.is_some() {
+                    self.held.push(message.clone());
+
+                    return Ok(false);
+                }
+
                 let result = self.completions(&message.params);
 
                 self.reply(message, out, result)?;
+            }
+
+            /*
+            A cancel takes a held request back. The editor cancels the
+            completion it asked for on every further keystroke and asks
+            again, so what the session lands on is the newest ask only.
+            */
+            "$/cancelRequest" => {
+                let id = &message.params["id"];
+
+                if let Some(at) = self.held.iter().position(|m| m.id.as_ref() == Some(id)) {
+                    let held = self.held.remove(at);
+
+                    rpc::respond_error(out, id, "the request was cancelled".to_owned())?;
+                    drop(held);
+                }
             }
 
             /*
@@ -926,7 +929,8 @@ fn capabilities(analysis: bool) -> Value {
         opens the aliases.
         */
         caps["completionProvider"] = json!({
-            "triggerCharacters": [".", ":", "\"", "'", "`", "/", "@"],
+            // `-` opens a doc comment, which answers with a moonwave block.
+            "triggerCharacters": [".", ":", "\"", "'", "`", "/", "@", "-"],
         });
     }
 

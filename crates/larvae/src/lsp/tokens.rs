@@ -926,13 +926,24 @@ fn encode(src: &str, lexed: &Lexed, marks: &[Option<(u32, u32)>]) -> Vec<u32> {
         if let Some((ty, mods)) = *mark {
             let tok = lexed.toks[i];
 
+            /*
+            A backtick string is one token to the lexer, and painting
+            it whole leaves the names inside `{ }` reading as string.
+            They are code, so they take the colour code takes.
+            */
+            if tok.kind == TokKind::InterpStr {
+                raw.extend(interp_spans(src, tok.start, tok.end));
+
+                continue;
+            }
+
             raw.push((tok.start, tok.end, ty, mods));
         }
     }
 
     // A comment is not a token, so the lexer keeps its range on the side.
     for &(start, end) in &lexed.comments {
-        raw.push((start, end, COMMENT, 0));
+        raw.extend(doc_spans(src, start, end));
     }
 
     raw.sort_unstable_by_key(|&(start, end, ..)| (start, end));
@@ -967,6 +978,294 @@ fn encode(src: &str, lexed: &Lexed, marks: &[Option<(u32, u32)>]) -> Vec<u32> {
             prev_char = character;
         }
     }
+
+    out
+}
+
+/*
+One interpolated string, split into its text and the code in its holes.
+
+The lexer keeps the whole string as one token, so this reads the bytes.
+A `{` opens a hole unless a backslash escapes it, and the hole ends at
+the `}` that closes it, counting the braces of a table inside. The text
+between holes stays a string, and inside a hole each word takes the
+colour it would take anywhere else: a name after a dot is a property,
+a keyword is a keyword, and everything else that is a name is a
+variable.
+*/
+fn interp_spans(src: &str, start: u32, end: u32) -> Vec<(u32, u32, u32, u32)> {
+    let text = &src[start as usize..end as usize];
+    let bytes = text.as_bytes();
+
+    let mut out = Vec::new();
+    let mut piece = 0usize;
+    let mut at = 0usize;
+
+    while at < bytes.len() {
+        match bytes[at] {
+            b'\\' => at += 2,
+
+            b'{' => {
+                // The string up to the brace, and the brace with it.
+                if at + 1 > piece {
+                    out.push((start + piece as u32, start + at as u32 + 1, STRING, 0));
+                }
+
+                let hole = at + 1;
+                let mut depth = 1usize;
+                at = hole;
+
+                while at < bytes.len() && depth > 0 {
+                    match bytes[at] {
+                        b'\\' => at += 1,
+                        b'{' => depth += 1,
+                        b'}' => depth -= 1,
+
+                        _ => {}
+                    }
+
+                    if depth > 0 {
+                        at += 1;
+                    }
+                }
+
+                out.extend(hole_spans(
+                    src,
+                    start + hole as u32,
+                    start + at.min(bytes.len()) as u32,
+                ));
+
+                piece = at.min(bytes.len());
+            }
+
+            _ => at += 1,
+        }
+    }
+
+    if piece < bytes.len() {
+        out.push((start + piece as u32, end, STRING, 0));
+    }
+
+    out
+}
+
+/// The words of one hole, each with the colour code gives it
+fn hole_spans(src: &str, start: u32, end: u32) -> Vec<(u32, u32, u32, u32)> {
+    let text = &src[start as usize..end as usize];
+    let bytes = text.as_bytes();
+
+    let mut out = Vec::new();
+    let mut at = 0usize;
+
+    while at < bytes.len() {
+        let b = bytes[at];
+
+        if b.is_ascii_alphabetic() || b == b'_' {
+            let from = at;
+
+            while at < bytes.len() && (bytes[at].is_ascii_alphanumeric() || bytes[at] == b'_') {
+                at += 1;
+            }
+
+            let word = &text[from..at];
+
+            // The character before the name decides whether it is a field.
+            let before = text[..from].trim_end().chars().next_back();
+
+            let ty = match () {
+                _ if is_keyword(word) => KEYWORD,
+                _ if matches!(before, Some('.') | Some(':')) => PROPERTY,
+
+                _ => VARIABLE,
+            };
+
+            out.push((start + from as u32, start + at as u32, ty, 0));
+
+            continue;
+        }
+
+        if b.is_ascii_digit() {
+            let from = at;
+
+            while at < bytes.len()
+                && (bytes[at].is_ascii_alphanumeric() || bytes[at] == b'.' || bytes[at] == b'_')
+            {
+                at += 1;
+            }
+
+            out.push((start + from as u32, start + at as u32, NUMBER, 0));
+
+            continue;
+        }
+
+        // A string inside a hole, which the holes of Luau allow.
+        if b == b'"' || b == b'\'' {
+            let quote = b;
+            let from = at;
+            at += 1;
+
+            while at < bytes.len() && bytes[at] != quote {
+                at += if bytes[at] == b'\\' { 2 } else { 1 };
+            }
+
+            at = (at + 1).min(bytes.len());
+            out.push((start + from as u32, start + at as u32, STRING, 0));
+
+            continue;
+        }
+
+        at += 1;
+    }
+
+    out
+}
+
+/// The moonwave tags larvae colours, and the ones that name something after
+const DOC_TAGS: &[&str] = &[
+    "class",
+    "client",
+    "deprecated",
+    "error",
+    "external",
+    "field",
+    "function",
+    "ignore",
+    "interface",
+    "lifecycle",
+    "method",
+    "param",
+    "plugin",
+    "private",
+    "prop",
+    "readonly",
+    "return",
+    "server",
+    "since",
+    "tag",
+    "type",
+    "unreleased",
+    "within",
+    "yields",
+];
+
+/// The tags whose first word names a thing, so that word reads as a parameter
+const DOC_NAMED: &[&str] = &["param", "prop", "field"];
+
+/*
+One comment, split so its moonwave tags read as tags.
+
+A doc comment carries structure that a reader scans for: `@param`,
+`@return`, `@private`. Painted as one comment they disappear into the
+prose around them. A tag takes the colour of a keyword, and the word a
+tag names takes the colour of a parameter.
+
+A tag counts only at the start of its line, after the comment marks. A
+mail address in the middle of a sentence is prose, and colouring it
+would be worse than leaving the whole line alone.
+*/
+fn doc_spans(src: &str, start: u32, end: u32) -> Vec<(u32, u32, u32, u32)> {
+    let text = &src[start as usize..end as usize];
+
+    if !text.contains('@') {
+        return vec![(start, end, COMMENT, 0)];
+    }
+
+    let mut out = Vec::new();
+    let mut at = 0usize;
+
+    for line in text.split_inclusive('\n') {
+        let base = at;
+        at += line.len();
+
+        // Past the comment marks and the whitespace, where a tag may open.
+        let after_marks = line
+            .char_indices()
+            .find(|(_, c)| !matches!(c, '-' | '[' | ']' | '=' | '*' | ' ' | '\t'))
+            .map(|(i, _)| i);
+
+        let Some(open) = after_marks else {
+            out.push((start + base as u32, start + at as u32, COMMENT, 0));
+
+            continue;
+        };
+
+        let rest = &line[open..];
+
+        let Some(word) = rest.strip_prefix('@') else {
+            out.push((start + base as u32, start + at as u32, COMMENT, 0));
+
+            continue;
+        };
+
+        let name: String = word
+            .chars()
+            .take_while(|c| c.is_ascii_alphabetic())
+            .collect();
+
+        if !DOC_TAGS.contains(&name.as_str()) {
+            out.push((start + base as u32, start + at as u32, COMMENT, 0));
+
+            continue;
+        }
+
+        let tag_end = open + 1 + name.len();
+
+        // The marks before the tag stay comment, then the tag itself.
+        if open > 0 {
+            out.push((
+                start + base as u32,
+                start + (base + open) as u32,
+                COMMENT,
+                0,
+            ));
+        }
+
+        out.push((
+            start + (base + open) as u32,
+            start + (base + tag_end) as u32,
+            KEYWORD,
+            0,
+        ));
+
+        let mut cursor = tag_end;
+
+        if DOC_NAMED.contains(&name.as_str()) {
+            let after = &line[cursor..];
+            let lead = after.len() - after.trim_start().len();
+            let word_len = after[lead..]
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
+                .count();
+
+            if word_len > 0 {
+                out.push((
+                    start + (base + cursor + lead) as u32,
+                    start + (base + cursor + lead) as u32,
+                    COMMENT,
+                    0,
+                ));
+                out.push((
+                    start + (base + cursor + lead) as u32,
+                    start + (base + cursor + lead + word_len) as u32,
+                    PARAMETER,
+                    0,
+                ));
+
+                cursor += lead + word_len;
+            }
+        }
+
+        if cursor < line.len() {
+            out.push((
+                start + (base + cursor) as u32,
+                start + at as u32,
+                COMMENT,
+                0,
+            ));
+        }
+    }
+
+    out.retain(|&(from, to, ..)| to > from);
 
     out
 }
@@ -1682,5 +1981,103 @@ mod standard_library {
                 "print is a library name under {std:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod interpolated_strings {
+    use super::*;
+
+    fn spans(src: &str) -> Vec<(&str, u32)> {
+        let start = src.find('`').expect("a backtick") as u32;
+        let end = src.rfind('`').expect("a backtick") as u32 + 1;
+
+        interp_spans(src, start, end)
+            .into_iter()
+            .map(|(from, to, ty, _)| (&src[from as usize..to as usize], ty))
+            .collect()
+    }
+
+    /*
+    The names inside a hole are code and take the colour code takes.
+
+    The lexer keeps the whole string as one token, so painting it whole
+    left `{name}` reading as string. A reader cannot tell the text of
+    the string from the value it interpolates that way.
+    */
+    #[test]
+    fn a_hole_colours_its_names() {
+        assert_eq!(
+            spans("local g = `hi {name}!`\n"),
+            vec![("`hi {", STRING), ("name", VARIABLE), ("}!`", STRING)]
+        );
+    }
+
+    /// A field of a table reads as a property, as it does outside a string.
+    #[test]
+    fn a_field_inside_a_hole_is_a_property() {
+        let found = spans("local g = `{t.count}`\n");
+
+        assert_eq!(
+            found,
+            vec![
+                ("`{", STRING),
+                ("t", VARIABLE),
+                ("count", PROPERTY),
+                ("}`", STRING)
+            ]
+        );
+    }
+
+    /*
+    An escaped brace opens no hole. `\{` is one character of the string,
+    and reading it as a hole would colour the rest of the line wrong.
+    */
+    #[test]
+    fn an_escaped_brace_stays_text() {
+        let src = "local g = `a \\{ b`\n";
+
+        assert_eq!(spans(src).len(), 1, "{:?}", spans(src));
+        assert_eq!(spans(src)[0].1, STRING);
+    }
+
+    /// A keyword and a number inside a hole keep their own colours.
+    #[test]
+    fn a_hole_colours_more_than_names() {
+        let found = spans("local g = `{if x then 1 else 2}`\n");
+        let kinds: Vec<u32> = found.iter().map(|(_, ty)| *ty).collect();
+
+        assert!(kinds.contains(&KEYWORD), "{found:?}");
+        assert!(kinds.contains(&NUMBER), "{found:?}");
+    }
+}
+
+#[cfg(test)]
+mod doc_tag_spans {
+    use super::*;
+
+    /// A tag takes the keyword colour; the marks and the prose stay comment.
+    #[test]
+    fn only_the_tag_is_a_keyword() {
+        let src = "--[[\n\t@lifecycle\n]]\nlocal x = 1\n";
+        let end = src.find("]]").expect("the close") as u32 + 2;
+
+        let found: Vec<(&str, u32)> = doc_spans(src, 0, end)
+            .into_iter()
+            .map(|(from, to, ty, _)| (&src[from as usize..to as usize], ty))
+            .collect();
+
+        assert!(
+            found
+                .iter()
+                .any(|(text, ty)| *text == "@lifecycle" && *ty == KEYWORD),
+            "{found:?}"
+        );
+        assert!(
+            found
+                .iter()
+                .all(|(text, ty)| *ty != KEYWORD || text.starts_with('@')),
+            "only a tag may be a keyword: {found:?}"
+        );
     }
 }

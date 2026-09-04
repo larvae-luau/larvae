@@ -256,6 +256,12 @@ impl Server {
             self.lsp.sourcemap_command = text.to_owned();
         }
 
+        if let Some(text) = editor(&["robloxSecurityLevel"]).as_str()
+            && let Ok(level) = serde_json::from_value(serde_json::json!(text))
+        {
+            self.lsp.roblox_security_level = level;
+        }
+
         if let Some(list) = editor(&["definitions"]).as_array() {
             self.lsp.definitions = list
                 .iter()
@@ -287,6 +293,11 @@ impl Server {
 
                 _ => {}
             }
+        }
+
+        // The command line spoke last. See `Forced`.
+        if self.forced.new_solver {
+            self.lsp.fflags.enable_new_solver = true;
         }
     }
 
@@ -422,6 +433,27 @@ impl Server {
                 rojo.as_ref(),
                 &mut ignored,
             ));
+
+            /*
+            The `[aliases]` of the project, absolute, so the resolver
+            behind the seam joins them without knowing the root. A
+            DataModel value stays as written, because the mounts are
+            what turn one into a directory.
+            */
+            analysis.set_aliases(
+                cfg.alias_map()
+                    .into_iter()
+                    .map(|(name, value)| {
+                        let value = match value.starts_with("@game/") {
+                            true => value,
+
+                            false => root.join(&value).to_string_lossy().into_owned(),
+                        };
+
+                        (name, value)
+                    })
+                    .collect(),
+            );
         }
 
         /*
@@ -516,11 +548,17 @@ impl Server {
             return;
         };
 
-        let flags = self.lsp.fflags.clone();
+        /*
+        The whole `[lsp]` table, because two of its keys decide what a
+        session is: the flags pick the solver the globals register
+        under, and the security level picks which Roblox definitions
+        those globals are.
+        */
+        let cfg = self.lsp.clone();
 
         std::thread::spawn(move || {
             // The server is gone if this fails, and there is nothing to do about it.
-            let _ = events.send(crate::lsp::Event::Analysis(build(&flags)));
+            let _ = events.send(crate::lsp::Event::Analysis(build(&cfg)));
         });
     }
 
@@ -917,99 +955,6 @@ impl Server {
     }
 
     /*
-    The held hints follow the lines as they move.
-
-    The hold serves cached hints while the author types, and a pressed
-    enter moves every line below the cursor. Served at their old lines,
-    the hints sat one line up from the code they described until the
-    pause. The editor sends whole texts, so the shift is the line delta
-    from the first line the two texts disagree on. Hints above the edit
-    hold still, and character drift within the edited line itself waits
-    for the settle like everything else.
-    */
-    pub(super) fn shift_hint_cache(&self, uri: &str, old: &str, new: &str) {
-        let mut cache = self.hint_cache.borrow_mut();
-
-        let Some(held) = cache.get_mut(uri) else {
-            return;
-        };
-
-        let old_lines: Vec<&str> = old.lines().collect();
-        let new_lines: Vec<&str> = new.lines().collect();
-
-        let from = old_lines
-            .iter()
-            .zip(&new_lines)
-            .take_while(|(a, b)| a == b)
-            .count();
-
-        let tail = old_lines[from..]
-            .iter()
-            .rev()
-            .zip(new_lines[from..].iter().rev())
-            .take_while(|(a, b)| a == b)
-            .count();
-
-        // The lines the edit rewrote, in the old text's numbering.
-        let changed_end = old_lines.len().saturating_sub(tail).max(from) as i64;
-        let delta = new_lines.len() as i64 - old_lines.len() as i64;
-        let from = from as i64;
-
-        if let Some(hints) = held.as_array_mut() {
-            hints.retain_mut(|hint| {
-                let Some(line) = hint["position"]["line"].as_i64() else {
-                    return false;
-                };
-
-                if line < from {
-                    return true;
-                }
-
-                /*
-                A hint inside the rewritten lines is at a character that
-                may now split a word, and `props: Pr: ()ops` is worse
-                than a hint that waits out the pause. It drops; the ones
-                below follow their lines.
-                */
-                if line < changed_end {
-                    return false;
-                }
-
-                hint["position"]["line"] = (line + delta).max(from).into();
-
-                true
-            });
-        }
-    }
-
-    /*
-    A keystroke: stamp the document and wake the settle thread.
-
-    Answers whether a pause is coming, so the caller knows the work it
-    would do now happens at the pause instead. Without a delay, or
-    without the thread, there is no pause to wait for.
-    */
-    pub(super) fn note_typing(&mut self, uri: &str) -> bool {
-        let delay = self.lsp.inlay_hints.update_delay;
-
-        if delay == 0 {
-            return false;
-        }
-
-        self.hint_hold
-            .insert(uri.to_string(), std::time::Instant::now());
-        self.last_typed = Some(uri.to_string());
-
-        match &self.settle {
-            Some(settle) => settle
-                .send(std::time::Instant::now() + std::time::Duration::from_millis(delay))
-                .is_ok(),
-
-            None => false,
-        }
-    }
-
-    /*
     The open documents that require a changed module republish now.
 
     Editing a claimed file invalidates its module, and every dependent
@@ -1390,6 +1335,13 @@ impl Server {
         and the editor's reply says nothing the server acts on.
         */
         rpc::request(out, "workspace/inlayHint/refresh", Value::Null)?;
+
+        // The lists that waited on the session. See `held`.
+        for message in std::mem::take(&mut self.held) {
+            let result = self.completions(&message.params);
+
+            self.reply(&message, out, result)?;
+        }
 
         Ok(())
     }

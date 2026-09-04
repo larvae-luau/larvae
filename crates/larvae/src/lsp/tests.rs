@@ -468,153 +468,6 @@ fn a_space_named_key_accepts_as_a_bracket_access() {
 }
 
 /*
-The hold answers a mid-edit request with the last settled hints.
-
-It is off by default, the way luau-lsp computes every request, so the
-test asks for it. A project sets a delay when it wants less inference
-on a slow machine, and takes the cost that a held hint can sit a
-column from its text until the pause.
-*/
-#[test]
-fn hints_hold_still_while_typing() {
-    let mut server = Server {
-        analysis: std::cell::RefCell::new(Some(Box::new(BytecodeAnalysis))),
-        ..Server::default()
-    };
-    server.lsp.inlay_hints.variable_types = true;
-    server.lsp.inlay_hints.update_delay = 700;
-
-    let uri = "file:///t.luau";
-    server.documents.insert(uri.into(), "local a = 1\n".into());
-
-    let params = json!({ "textDocument": { "uri": uri } });
-
-    // settled: computes and caches (the mock analysis answers nothing)
-    let first = server.inlay_hints(&params);
-
-    assert_eq!(first, json!([]));
-
-    // pretend a settled answer was cached, then a keystroke lands
-    server
-        .hint_cache
-        .borrow_mut()
-        .insert(uri.into(), json!([{ "label": ": held" }]));
-    server.note_typing(uri);
-
-    assert_eq!(
-        server.inlay_hints(&params),
-        json!([{ "label": ": held" }]),
-        "mid-typing serves the settled hints"
-    );
-
-    // the pause passed: fresh hints compute again
-    server.hint_hold.insert(
-        uri.into(),
-        std::time::Instant::now() - std::time::Duration::from_secs(5),
-    );
-
-    assert_eq!(server.inlay_hints(&params), json!([]));
-}
-
-/*
-The held hints follow the lines, and leave the edited ones.
-
-An enter moves every hint below the cursor down with its line. The
-rewritten lines themselves drop their hints: a stale character there
-can split a word, and `props: Pr: ()ops` is worse than a hint that
-waits out the pause. An append at the end of the file moves nothing.
-*/
-#[test]
-fn held_hints_follow_the_lines_and_leave_the_edited_ones() {
-    let server = Server::default();
-    let uri = "file:///t.luau";
-
-    let held = json!([
-        { "position": { "line": 0, "character": 11 }, "label": ": number" },
-        { "position": { "line": 1, "character": 20 }, "label": ": ()" },
-        { "position": { "line": 3, "character": 9 }, "label": ": string" },
-    ]);
-
-    // enter pressed at the end of line 1: lines below shift, line 1 keeps
-    server
-        .hint_cache
-        .borrow_mut()
-        .insert(uri.into(), held.clone());
-    server.shift_hint_cache(
-        uri,
-        "local a = 1
-local function t()
-end
-local s = 'x'
-",
-        "local a = 1
-local function t()
-
-end
-local s = 'x'
-",
-    );
-
-    let cache = server.hint_cache.borrow();
-    let shifted = cache.get(uri).unwrap().as_array().unwrap();
-
-    assert_eq!(shifted[0]["position"]["line"], 0);
-    assert_eq!(shifted[1]["position"]["line"], 1);
-    assert_eq!(shifted[2]["position"]["line"], 4, "{shifted:?}");
-    drop(cache);
-
-    // typing inside line 1: that line's hint drops, the rest hold
-    server
-        .hint_cache
-        .borrow_mut()
-        .insert(uri.into(), held.clone());
-    server.shift_hint_cache(
-        uri,
-        "local a = 1
-local function t()
-end
-local s = 'x'
-",
-        "local a = 1
-local function te()
-end
-local s = 'x'
-",
-    );
-
-    let cache = server.hint_cache.borrow();
-    let edited = cache.get(uri).unwrap().as_array().unwrap();
-
-    assert_eq!(edited.len(), 2, "{edited:?}");
-    assert_eq!(edited[0]["position"]["line"], 0);
-    assert_eq!(edited[1]["position"]["line"], 3);
-    drop(cache);
-
-    // an append at the end moves nothing
-    server.hint_cache.borrow_mut().insert(uri.into(), held);
-    server.shift_hint_cache(
-        uri,
-        "local a = 1
-local function t()
-end
-local s = 'x'
-",
-        "local a = 1
-local function t()
-end
-local s = 'x'
-return t
-",
-    );
-
-    let cache = server.hint_cache.borrow();
-    let appended = cache.get(uri).unwrap().as_array().unwrap();
-
-    assert_eq!(appended.len(), 3);
-    assert_eq!(appended[2]["position"]["line"], 3, "{appended:?}");
-}
-
-/*
 A module a worm refuses to lower says why, at the require.
 
 The load hook records the refusal keyed by the file, and the publish
@@ -3471,40 +3324,172 @@ fn the_flag_defaults_are_conservative() {
 }
 
 /*
-The default computes every request, which is what luau-lsp does.
+A doc comment opened above a declaration answers with its block.
 
-A held hint is drawn at the offset it had when the hold started, so it
-drifts from its text while the author types. The editor holds its own
-hints against the edits it makes and asks again on its own schedule,
-and that is what keeps a hint with the text it describes.
+The author types `---` and wants the shape of the thing below it
+written out: the name, a line per parameter with the type they wrote,
+and the return. A name that opens with an underscore takes `@private`,
+the same convention that hides it from a completion list.
 */
 #[test]
-fn the_hints_compute_live_by_default() {
-    let mut server = Server {
-        analysis: std::cell::RefCell::new(Some(Box::new(BytecodeAnalysis))),
-        ..Server::default()
-    };
-    server.lsp.inlay_hints.variable_types = true;
+fn a_doc_comment_offers_the_moonwave_block() {
+    let src = "---\nlocal function add(a: number, b: string): boolean\n\treturn true\nend\n";
+    let (text, _) = super::features::doc_scaffold_for(src, 3).expect("a block");
 
     assert_eq!(
-        server.lsp.inlay_hints.update_delay, 0,
-        "the hold is off unless a project asks for it"
+        text,
+        "--[=[\n\tadd\n\n\t@param a number\n\t@param b string\n\t@return boolean\n]=]"
     );
 
-    let uri = "file:///t.luau";
-    server.documents.insert(uri.into(), "local a = 1\n".into());
+    // A method keeps the last piece of its path, and an underscore is private.
+    let hidden = "---\nfunction Class:_hidden(x)\nend\n";
+    let (text, _) = super::features::doc_scaffold_for(hidden, 3).expect("a block");
 
-    let params = json!({ "textDocument": { "uri": uri } });
+    assert!(text.contains("\t_hidden\n"), "{text}");
+    assert!(text.contains("@private"), "{text}");
+    assert!(text.contains("@param x"), "{text}");
+}
 
-    server
-        .hint_cache
-        .borrow_mut()
-        .insert(uri.into(), json!([{ "label": ": stale" }]));
-    server.note_typing(uri);
+/// The block answers only where a comment opens above a declaration.
+#[test]
+fn the_moonwave_block_stays_out_of_prose() {
+    // A comment with words in it is prose the author is writing.
+    assert!(super::features::doc_scaffold_for("--- a note\nlocal function f() end\n", 4).is_none());
 
-    assert_eq!(
-        server.inlay_hints(&params),
-        json!([]),
-        "a keystroke does not serve the cache when the hold is off"
+    // Nothing to describe below it.
+    assert!(super::features::doc_scaffold_for("---\nlocal x = 1\n", 3).is_none());
+
+    // An ordinary comment is not a doc comment.
+    assert!(super::features::doc_scaffold_for("--\nlocal function f() end\n", 2).is_none());
+}
+
+/*
+A completion asked while the session is still being built waits for it.
+
+The editor asks on the first keystroke, and the session takes seconds.
+An empty answer closed the popup for good; the held answer opens it the
+moment the types land. The editor cancels the ask it no longer wants,
+and the cancel takes that one back and answers it as cancelled.
+*/
+#[test]
+fn a_completion_asked_while_loading_answers_when_the_session_lands() {
+    struct Ready;
+
+    impl crate::lsp::analysis::Analysis for Ready {
+        fn open(&mut self, _: &std::path::Path, _: &str) {}
+
+        fn check(&mut self, _: &std::path::Path) -> Vec<crate::lsp::analysis::AnalysisDiag> {
+            Vec::new()
+        }
+
+        fn hover(&mut self, _: &std::path::Path, _: u32, _: bool, _: bool) -> Option<String> {
+            None
+        }
+
+        fn invalidate(&mut self, _: &std::path::Path) {}
+
+        fn completions(
+            &mut self,
+            _: &std::path::Path,
+            _: u32,
+        ) -> Vec<crate::lsp::analysis::AnalysisCompletion> {
+            vec![crate::lsp::analysis::AnalysisCompletion {
+                label: "local".into(),
+                kind: 14,
+                detail: None,
+                label_detail: None,
+                insert_text: None,
+                documentation: None,
+                deprecated: false,
+                type_correct: 0,
+                wrong_index_type: false,
+            }]
+        }
+    }
+
+    fn message(value: Value) -> rpc::Message {
+        serde_json::from_value(value).expect("a message")
+    }
+
+    fn ask(id: u64) -> rpc::Message {
+        message(json!({
+            "id": id,
+            "method": "textDocument/completion",
+            "params": {
+                "textDocument": { "uri": "file:///t.luau" },
+                "position": { "line": 0, "character": 2 },
+            },
+        }))
+    }
+
+    let mut server = Server {
+        analysis_pending: true,
+        ..server_with("lo\n")
+    };
+    server.lsp.analyzer = true;
+
+    let mut out = Vec::new();
+
+    assert!(!server.handle(&ask(1), &mut out).unwrap());
+    assert!(!server.handle(&ask(2), &mut out).unwrap());
+    assert!(
+        out.is_empty(),
+        "an answer before the session: {}",
+        String::from_utf8_lossy(&out)
+    );
+    assert_eq!(server.held.len(), 2);
+
+    let cancel = message(json!({ "method": "$/cancelRequest", "params": { "id": 1 } }));
+    server.handle(&cancel, &mut out).unwrap();
+
+    let text = String::from_utf8_lossy(&out).into_owned();
+    assert!(
+        text.contains("\"id\":1"),
+        "the cancel answers the ask it took back: {text}"
+    );
+    assert_eq!(server.held.len(), 1);
+    out.clear();
+
+    server.take_analysis(Box::new(Ready), &mut out).unwrap();
+
+    let text = String::from_utf8_lossy(&out).into_owned();
+    assert!(
+        text.contains("\"id\":2"),
+        "the held ask answers at the landing: {text}"
+    );
+    assert!(
+        text.contains("\"label\":\"local\""),
+        "with the list: {text}"
+    );
+    assert!(
+        !text.contains("\"id\":1"),
+        "the cancelled ask stays answered once: {text}"
+    );
+    assert!(server.held.is_empty());
+}
+
+/*
+`--new-solver` wins over the project file and the editor.
+
+Both sources say the old solver here, the way a project that never set
+the key reads, and the forced value stands after they have spoken.
+*/
+#[test]
+fn the_forced_new_solver_stands_over_every_settings_source() {
+    let mut server = Server {
+        forced: Forced { new_solver: true },
+        ..Server::default()
+    };
+    server.editor = json!({ "larvae-lsp": { "fflags": { "enableNewSolver": false } } });
+
+    let project: toml::Value = toml::from_str("[lsp.fflags]\nenable_new_solver = false\n").unwrap();
+    server.apply_editor_settings(Some(&project));
+
+    assert!(server.lsp.fflags.enable_new_solver);
+
+    let plain = Server::default();
+    assert!(
+        !plain.lsp.fflags.enable_new_solver,
+        "the default is still the old solver"
     );
 }

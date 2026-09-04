@@ -36,6 +36,28 @@ pub enum QuoteStyle {
     Preserve,
 }
 
+/*
+Selects whether a decimal number literal carries its leading zero.
+
+`.5` and `0.5` are one number, and Luau reads both. A file that mixes
+them reads as two hands, so the formatter picks one: `add` writes the
+zero, which is how most people write a fraction, and `strip` takes it
+off. The rule touches a literal that opens with `.` or with `0.` and a
+digit after it, and nothing else: `0.` alone stays, because `.` is not
+a number, and `0x10` has no fraction to speak of.
+*/
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LeadingZero {
+    /// `.5` becomes `0.5`.
+    #[default]
+    Add,
+    /// `0.5` becomes `.5`.
+    Strip,
+    /// Keep every literal exactly as written.
+    Preserve,
+}
+
 /// Selects when a call with one string or table argument keeps its parentheses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -842,6 +864,9 @@ pub struct FmtConfig {
 
     #[serde(default)]
     pub quote_style: QuoteStyle,
+
+    #[serde(default)]
+    pub leading_zero: LeadingZero,
 
     #[serde(default)]
     pub call_parentheses: CallParens,

@@ -1060,6 +1060,16 @@
           "default": "auto-prefer-double",
           "description": "Where a string literal's quotes come from. The auto pair switches when the other quote needs fewer escapes; \"preserve\" leaves every literal exactly as written.\n\n[quote_style \u2192](https://larvae-luau.github.io/docs/reference/formatting#quote-style)"
         },
+        "leading_zero": {
+          "type": "string",
+          "enum": [
+            "add",
+            "strip",
+            "preserve"
+          ],
+          "default": "add",
+          "description": "Whether a decimal literal carries its leading zero. add writes .5 as 0.5, strip writes 0.5 as .5, preserve keeps every literal as written. Only a fraction moves: 0. alone and 0x10 stay.\n\n[leading_zero \u2192](https://larvae-luau.github.io/docs/reference/formatting#leading-zero)"
+        },
         "recommended": {
           "type": "boolean",
           "enum": [
@@ -2336,6 +2346,17 @@
           "default": "r15",
           "description": "What Player.Character types to. r15 and r6 carry the body parts of their rig, so player.Character.Humanoid resolves with no cast. not_set types it as the union of the two, for a place that allows both."
         },
+        "roblox_security_level": {
+          "type": "string",
+          "enum": [
+            "none",
+            "local-user-security",
+            "plugin-security",
+            "roblox-script-security"
+          ],
+          "default": "roblox-script-security",
+          "description": "Which Roblox API surface the analyzer types against. The definitions are generated per security level, and roblox-script-security holds every member, which is what larvae has always loaded. A plugin sees less, and a live game less again, so a project that ships to one of those gets the surface it really has. luau-lsp names the same four through types.robloxSecurityLevel."
+        },
         "sourcemap": {
           "type": "string",
           "default": "sourcemap.json",
@@ -2552,7 +2573,7 @@
           "type": "integer",
           "minimum": 0,
           "default": 0,
-          "description": "How long the hints hold still while the author types, in milliseconds. Zero is the default and what luau-lsp does: every request computes and the editor holds each hint against its own edits, which is what keeps a hint with its text. A number answers a mid-edit request with the last settled hints, which costs less inference and can leave a hint a column from its text until the pause."
+          "description": "No effect since 0.8: every hint request computes against the current text, the way luau-lsp does. The key stays so a config that wrote it still loads."
         },
         "accept_imports": {
           "type": "string",

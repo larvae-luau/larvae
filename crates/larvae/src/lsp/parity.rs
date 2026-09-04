@@ -512,13 +512,7 @@ impl Server {
             .map(|s| render(s, src, &lines))
             .collect();
 
-        let answer = json!(out);
-
-        self.hint_cache
-            .borrow_mut()
-            .insert(uri.to_string(), answer.clone());
-
-        answer
+        json!(out)
     }
 }
 
@@ -676,26 +670,30 @@ impl Server {
         }
 
         /*
-        While the author types, the hints hold still. A request that
-        lands mid-edit answers with the last settled hints, so the text
-        does not jump under the cursor, and the refresh after the pause
-        makes the editor ask again for fresh ones.
+        Every request computes, against the text the editor holds now.
+
+        This is what luau-lsp does, and it is the whole cure for a hint
+        that split a word: a hint computed from an older text landed at
+        a column the new text moved. The analyzer reads the buffer as
+        it is at this request, so each position is a position in that
+        text. No hold, no cache, no refresh on a timer: the editor asks
+        after an edit, and the answer is current.
         */
         let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
-        let typing = cfg.update_delay > 0
-            && self.hint_hold.get(uri).is_some_and(|at| {
-                at.elapsed() < std::time::Duration::from_millis(cfg.update_delay)
-            });
 
-        if typing && let Some(held) = self.hint_cache.borrow().get(uri) {
-            return held.clone();
-        }
+        let Some(src) = self.documents.get(uri) else {
+            return json!([]);
+        };
+
+        let view = super::analysis::plain_view(src);
 
         let hints = self
             .analysis
             .borrow_mut()
             .as_mut()
             .map(|a| {
+                a.open(&path, &view);
+
                 a.hints(
                     &path,
                     cfg.variable_types,

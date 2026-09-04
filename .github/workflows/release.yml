@@ -228,8 +228,16 @@ jobs:
         run: |
           set -euo pipefail
 
+          # A tag with a prerelease suffix, ex: v0.7.6-canary, is an
+          # in-dev build: GitHub marks it Pre-release so nobody takes it
+          # for the current version, and crates.io never sees it.
+          prerelease=""
+          case "$TAG" in
+            *-*) prerelease="--prerelease" ;;
+          esac
+
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --title "$TAG" --generate-notes
+            gh release create "$TAG" --title "$TAG" --generate-notes $prerelease
           fi
 
           gh release upload "$TAG" dist/*.zip --clobber
@@ -237,6 +245,10 @@ jobs:
   crates:
     name: Publish to crates.io
     needs: [verify, release]
+    # A prerelease tag builds and lands on GitHub, and stops there. A
+    # version on crates.io cannot be taken back, so an in-dev build does
+    # not spend one.
+    if: ${{ !contains(needs.verify.outputs.tag, '-') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -259,7 +271,7 @@ jobs:
           set -euo pipefail
           VERSION="${TAG#v}"
 
-          for CRATE in larvae-worm larvae; do
+          for CRATE in larvae-worm larvae larvae-lsp; do
             if curl -fsS -A "larvae-release" "https://crates.io/api/v1/crates/${CRATE}/${VERSION}" >/dev/null 2>&1; then
               echo "${CRATE} ${VERSION} is already on crates.io, skipping"
               continue

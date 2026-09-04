@@ -13,6 +13,8 @@ mod analyzer;
 
 #[cfg(all(test, feature = "analyzer"))]
 mod roblox_enum_tests;
+#[cfg(all(test, feature = "analyzer"))]
+mod roblox_magic_tests;
 
 // Pure path logic, so it compiles and tests without the vendored C++.
 mod resolve;
@@ -30,6 +32,21 @@ fn main() -> std::process::ExitCode {
     }
 
     /*
+    `--version` answers and stops, so a check that the server starts is
+    a check and not a session that reads an empty stdin.
+
+    The analyzer is a library this binary links at load, so a loader
+    that refuses it kills the process before this line. That is what
+    the caller is testing: an exit code, and the loader's own words on
+    stderr when there are any.
+    */
+    if matches!(args.first().map(String::as_str), Some("--version" | "-V")) {
+        println!("larvae-lsp {}", env!("CARGO_PKG_VERSION"));
+
+        return std::process::ExitCode::SUCCESS;
+    }
+
+    /*
     The session is built on a thread, because Luau's type definitions take a
     few seconds to load and the editor should not wait for them.
 
@@ -43,22 +60,35 @@ fn main() -> std::process::ExitCode {
     editor has said where it is.
     */
     #[cfg(feature = "analyzer")]
-    let analysis = Some(larvae::lsp::Pending::Builder(Box::new(|flags| {
+    let analysis = Some(larvae::lsp::Pending::Builder(Box::new(|cfg| {
         /*
         The flags go in first, on this thread, before the session exists.
         `LuauSolverV2` decides which type solver the globals are registered
         under, so a session built before the project was read would be built
         under the wrong one and the setting would do nothing.
         */
-        analyzer::apply_flags(flags);
+        analyzer::apply_flags(&cfg.fflags);
 
-        Box::new(analyzer::LuauAnalysis::new()) as Box<dyn larvae::lsp::analysis::Analysis>
+        Box::new(analyzer::LuauAnalysis::with_security(
+            cfg.roblox_security_level,
+        )) as Box<dyn larvae::lsp::analysis::Analysis>
     })));
 
     #[cfg(not(feature = "analyzer"))]
     let analysis = None;
 
-    match larvae::lsp::run_pending(analysis) {
+    /*
+    `--new-solver` turns Luau's new type solver on for the whole session,
+    over the project file and the editor. An embedded host has neither,
+    and a library written for the new solver, jecs for one, types wrong
+    under the old. Any other argument is the editor's own, `--stdio`
+    for one, and passes.
+    */
+    let forced = larvae::lsp::Forced {
+        new_solver: args.iter().any(|a| a == "--new-solver"),
+    };
+
+    match larvae::lsp::run_forced(analysis, forced) {
         Ok(()) => std::process::ExitCode::SUCCESS,
 
         Err(e) => {
@@ -78,8 +108,9 @@ fn analyze(args: &[String]) -> std::process::ExitCode {
         let lsp = larvae::commands::analyze::lsp_config(&opts)?;
         analyzer::apply_flags(&lsp.fflags);
 
-        let analysis =
-            Box::new(analyzer::LuauAnalysis::new()) as Box<dyn larvae::lsp::analysis::Analysis>;
+        let analysis = Box::new(analyzer::LuauAnalysis::with_security(
+            lsp.roblox_security_level,
+        )) as Box<dyn larvae::lsp::analysis::Analysis>;
 
         larvae::commands::analyze::engine(analysis, &opts)
     };
