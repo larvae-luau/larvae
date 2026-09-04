@@ -4,6 +4,14 @@ Notable changes land here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow
 [semver](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- `larvae-lsp --no-warning` keeps every warning off screen and publishes
+  the errors alone, whoever raised the warning. Hints stay: a
+  strikethrough is not a warning
+
 ## 0.8.0
 
 ### Added

@@ -283,9 +283,20 @@ impl Server {
 
         // Tier 3: the worms that transform diagnostics see the list first.
         let context = json!({ "path": path, "text": src });
-        let diagnostics = self
+        let mut diagnostics = self
             .worms
             .lsp_respond("diagnostics", &context, json!(diagnostics));
+
+        /*
+        `--no-warning` drops every warning after the worms have spoken, so
+        a warning a worm added goes the same way as a builtin one. Errors
+        stay, and so do the hints: a strikethrough is not a warning.
+        */
+        if self.forced.no_warnings
+            && let Some(list) = diagnostics.as_array_mut()
+        {
+            list.retain(|d| d["severity"] != 2);
+        }
 
         rpc::notify(
             out,

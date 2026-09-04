@@ -82,10 +82,14 @@ fn main() -> std::process::ExitCode {
     over the project file and the editor. An embedded host has neither,
     and a library written for the new solver, jecs for one, types wrong
     under the old. Any other argument is the editor's own, `--stdio`
-    for one, and passes.
+    for one, and passes. `--no-warning` keeps every warning off screen, so a
+    host that wants errors alone gets errors alone.
     */
     let forced = larvae::lsp::Forced {
         new_solver: args.iter().any(|a| a == "--new-solver"),
+        no_warnings: args
+            .iter()
+            .any(|a| a == "--no-warning" || a == "--no-warnings"),
     };
 
     match larvae::lsp::run_forced(analysis, forced) {

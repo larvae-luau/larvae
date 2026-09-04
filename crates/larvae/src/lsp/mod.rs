@@ -135,6 +135,8 @@ every config reload of the session.
 pub struct Forced {
     /// `--new-solver`: Luau's new type solver, whatever the project says
     pub new_solver: bool,
+    /// `--no-warning`: only errors publish; every warning stays off screen
+    pub no_warnings: bool,
 }
 
 pub fn run_pending(analysis: Option<Pending>) -> Result<()> {

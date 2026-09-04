@@ -3493,3 +3493,30 @@ fn the_forced_new_solver_stands_over_every_settings_source() {
         "the default is still the old solver"
     );
 }
+
+/// `--no-warning` keeps the warnings off screen and leaves the errors.
+#[test]
+fn the_forced_no_warnings_drops_every_warning_and_keeps_the_errors() {
+    let src = "local unused = 1\nlocal x = = 2\n";
+
+    let mut server = server_with(src);
+    server.lint = LintConfig::default();
+    assert!(
+        published(&server, "file:///t.luau")
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["severity"] == 2),
+        "a warning publishes without the flag"
+    );
+
+    server.forced = Forced {
+        no_warnings: true,
+        ..Forced::default()
+    };
+    let diags = published(&server, "file:///t.luau");
+    let list = diags.as_array().unwrap();
+
+    assert!(!list.is_empty(), "the error stays");
+    assert!(list.iter().all(|d| d["severity"] == 1), "{diags}");
+}

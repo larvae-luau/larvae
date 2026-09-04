@@ -15,7 +15,7 @@ it out on first run, so it works from wherever `cargo install` put it.
 The [Larvae extension](https://marketplace.visualstudio.com/items?itemName=AndrewBordis.larvae)
 starts it in VS Code; any other editor starts `larvae-lsp` over stdio, and
 `larvae-lsp --new-solver` fixes Luau's new type solver on for a host with no
-`larvae.toml`. The
+`larvae.toml`, and `--no-warning` publishes the errors alone. The
 release archives of larvae ship the same binary, and `larvae self install`
 puts it on PATH beside the CLI.
 
