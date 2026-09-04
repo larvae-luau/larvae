@@ -3500,7 +3500,8 @@ fn the_forced_new_solver_stands_over_every_settings_source() {
 /// `--no-warning` keeps the warnings off screen and leaves the errors.
 #[test]
 fn the_forced_no_warnings_drops_every_warning_and_keeps_the_errors() {
-    let src = "local unused = 1\nlocal x = = 2\n";
+    // An unused local is a warning; an undefined global is denied, so an error.
+    let src = "local unused = 1\nreturn notDefinedAnywhere\n";
 
     let mut server = server_with(src);
     server.lint = LintConfig::default();
