@@ -370,7 +370,7 @@ pub fn claimed(
     The worm speaks first, and its reply can also carry the Luau shadow. Thus
     a worm that both reports and inherits answers one request and not two.
     */
-    let reply = match spec.lints() {
+    let mut reply = match spec.lints() {
         true => Some(
             pool.lint(index, src)
                 .map_err(|e| Diag::error(path, format!("{e:#}")))?,
@@ -378,33 +378,44 @@ pub fn claimed(
 
         false => None,
     };
+    let reported = reply.as_ref().is_some_and(|r| !r.findings.is_empty());
+    let shadow = reply.as_mut().and_then(|r| r.luau.take());
+    let own = match reply {
+        Some(reply) => worm_findings(path, src, reply, cfg, &spec.manifest.lints, worm)?,
+
+        None => Vec::new(),
+    };
 
     if spec.inherits_lints() {
-        let shadow = reply.as_ref().and_then(|r| r.luau.clone());
-
         /*
-        A worm that sends no shadow still inherits, through the output of its
-        own front-end. That output costs the worm nothing, because the worm
-        already compiles the file for the pipeline.
+        A worm that sends no shadow inherits through its front-end output.
+        When compilation fails, its validated findings remain the report,
+        with their configured levels and suppression.
         */
-        let view = match shadow {
-            Some(text) => Some(text),
+        let projection;
+        let view = match shadow.as_deref() {
+            Some(text) => Some(LuauView::Shadow(text)),
 
-            None => pool
+            None => match pool
                 .compile(index, src)
-                .map_err(|e| Diag::error(path, format!("{e:#}")))?
-                .into_source()
-                .map(Some)
-                .map_err(|e| Diag::error(path, format!("worm `{worm}`, {e:#}")))?,
+                .map_err(|e| Diag::error(path, format!("{e:#}")))
+                .and_then(|output| {
+                    output
+                        .into_source()
+                        .map_err(|e| Diag::error(path, format!("worm `{worm}`, {e:#}")))
+                }) {
+                Ok(text) => {
+                    projection = text;
+                    Some(LuauView::Projection(&projection))
+                }
+
+                Err(_) if reported => None,
+
+                Err(error) => return Err(error),
+            },
         };
 
-        if let Some(text) = view {
-            let view = match reply.as_ref().and_then(|r| r.luau.as_ref()).is_some() {
-                true => LuauView::Shadow(&text),
-
-                false => LuauView::Projection(&text),
-            };
-
+        if let Some(view) = view {
             findings.extend(inherited_findings(
                 path,
                 src,
@@ -425,21 +436,12 @@ pub fn claimed(
     findings rather than misplaced ones.
     */
     if spec.shares()
-        && let Some(shadow) = reply.as_ref().and_then(|r| r.luau.as_ref())
+        && let Some(shadow) = shadow.as_deref()
     {
         findings.extend(foreign(path, shadow, cfg, pool, Some(index))?);
     }
 
-    if let Some(reply) = reply {
-        findings.extend(worm_findings(
-            path,
-            src,
-            reply,
-            cfg,
-            &spec.manifest.lints,
-            worm,
-        )?);
-    }
+    findings.extend(own);
 
     // A stable sort keeps an inherited finding before a worm finding on one byte.
     findings.sort_by_key(|f| f.span.0);

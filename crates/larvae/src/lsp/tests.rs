@@ -1,6 +1,8 @@
 use super::uri::path_of_uri;
 use super::*;
 
+mod worm_diagnostics;
+
 fn server_with(src: &str) -> Server {
     let mut server = Server::default();
     server.documents.insert("file:///t.luau".into(), src.into());
