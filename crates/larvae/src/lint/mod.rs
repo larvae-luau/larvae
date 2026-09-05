@@ -390,12 +390,35 @@ pub fn claimed(
         let view = match shadow {
             Some(text) => Some(text),
 
-            None => pool
-                .compile(index, src)
-                .map_err(|e| Diag::error(path, format!("{e:#}")))?
-                .into_source()
-                .map(Some)
-                .map_err(|e| Diag::error(path, format!("worm `{worm}`, {e:#}")))?,
+            None => {
+                let lowered = pool
+                    .compile(index, src)
+                    .map_err(|e| Diag::error(path, format!("{e:#}")))
+                    .and_then(|outcome| {
+                        outcome
+                            .into_source()
+                            .map_err(|e| Diag::error(path, format!("worm `{worm}`, {e:#}")))
+                    });
+
+                match lowered {
+                    Ok(text) => Some(text),
+
+                    /*
+                    A front-end that refuses the file leaves the inherited
+                    lints nothing to read, and that is all it means when
+                    the worm's own reply already marks the problem. The
+                    refusal names the same byte in its text, and it used to
+                    replace the whole reply with one message at the top of
+                    the file. A worm that marked nothing still needs the
+                    refusal, or a file that does not lower looks clean.
+                    */
+                    Err(refusal) => match reply.as_ref().is_some_and(|r| !r.findings.is_empty()) {
+                        true => None,
+
+                        false => return Err(refusal),
+                    },
+                }
+            }
         };
 
         if let Some(text) = view {

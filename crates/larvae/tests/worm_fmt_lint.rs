@@ -113,9 +113,18 @@ while True:
             i = src.index("bad")
             findings.append({"span": [i, i + 3], "lint": "bad_word",
                              "message": "the word bad"})
+        # a file that does not lower still gets a mark, and no shadow
+        if "broken" in src:
+            i = src.index("broken")
+            findings.append({"span": [i, i + 6], "lint": "bad_word",
+                             "message": "broken markup"})
+            send({"ok": True, "findings": findings, "comments": comments(src)})
+            continue
         shadow = src.replace("<Frame/>", "(nil)   ")
         send({"ok": True, "findings": findings, "comments": comments(src),
               "luau": shadow})
+    elif "broken" in req.get("source", ""):
+        send({"ok": False, "error": "line 1, column 11: broken markup"})
     else:
         send({"ok": True, "output": req["source"]})
 "#,
@@ -271,6 +280,31 @@ fn lint_reports_a_worm_finding_and_the_level_lever_works() {
     let (ok, text) = run(root.path(), &["lint"]);
 
     assert!(!ok, "{text}");
+}
+
+/*
+A file the front-end refuses keeps the findings of the worm.
+
+The inherited lints read the front-end's output when the worm sends no
+shadow, and a refusal there threw the worm's own reply away. The editor
+then showed "worm failed" at the top of the file in place of the mark the
+worm had put under the broken byte.
+*/
+#[test]
+fn a_refused_file_keeps_the_findings_of_the_worm() {
+    let root = project(true);
+    write(
+        root.path(),
+        "src/app.luaux",
+        "local x = broken
+",
+    );
+
+    let (_, text) = run(root.path(), &["lint"]);
+
+    assert!(text.contains("markup.bad_word"), "{text}");
+    assert!(text.contains("broken markup"), "{text}");
+    assert!(!text.contains("failed"), "{text}");
 }
 
 #[test]
