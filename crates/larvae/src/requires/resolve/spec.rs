@@ -1,5 +1,6 @@
 //! Spec string and filesystem helpers that the resolver shares
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use super::ModuleNode;
@@ -81,10 +82,19 @@ pub(super) fn resolve_module(
 ) -> Result<Option<ModuleNode>, String> {
     let mut found: Vec<ModuleNode> = Vec::new();
 
-    let builtin = ["luau", "lua"].into_iter().map(str::to_owned);
+    /*
+    A set, so a claim of a builtin extension counts one time. A worm that
+    formats plain Luau claims `.luau`, and the resolver found `module.luau`
+    twice, once as a builtin and once as a claim, and called one file
+    ambiguous.
+    */
+    let extensions: BTreeSet<&str> = ["luau", "lua"]
+        .into_iter()
+        .chain(claimed.iter().map(String::as_str))
+        .collect();
 
-    for ext in builtin.chain(claimed.iter().cloned()) {
-        let candidate = base.with_extension(&ext);
+    for ext in &extensions {
+        let candidate = base.with_extension(ext);
 
         if candidate.is_file() {
             found.push(ModuleNode::File(candidate));
@@ -96,10 +106,8 @@ pub(super) fn resolve_module(
     The pipeline writes `init.luaux` as `init.luau`, so the directory is a
     module at runtime and a require that names it has to resolve here.
     */
-    let init = ["luau", "lua"]
+    let init = extensions
         .iter()
-        .map(|e| (*e).to_owned())
-        .chain(claimed.iter().cloned())
         .any(|ext| base.join(format!("init.{ext}")).is_file());
 
     if base.is_dir() && init {
@@ -239,6 +247,36 @@ mod claimed_modules {
                 .expect("no ambiguity")
                 .is_none()
         );
+    }
+
+    /*
+    A claim of a builtin extension counts one time.
+
+    A worm that formats plain Luau claims `.luau`, and the resolver found
+    `module.luau` as a builtin and again as a claim. One file then read as
+    two modules, and every extensionless require in the project was an error.
+    */
+    #[test]
+    fn a_claim_of_a_builtin_extension_counts_once() {
+        let dir = tree(&["module.luau"]);
+
+        let found = resolve_module(&dir.path().join("module"), &["luau".to_string()])
+            .expect("one file is not ambiguous")
+            .expect("the module is found");
+
+        assert!(matches!(found, ModuleNode::File(_)));
+    }
+
+    /// The same, for a directory whose init file has the claimed extension.
+    #[test]
+    fn a_claim_of_a_builtin_extension_counts_an_init_once() {
+        let dir = tree(&["Pkg/init.luau"]);
+
+        let found = resolve_module(&dir.path().join("Pkg"), &["luau".to_string()])
+            .expect("one directory is not ambiguous")
+            .expect("the directory is a module");
+
+        assert!(matches!(found, ModuleNode::Dir(_)));
     }
 
     #[test]
