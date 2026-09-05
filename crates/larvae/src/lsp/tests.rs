@@ -866,6 +866,19 @@ fn the_unsupported_example_is_really_unsupported() {
     );
 }
 
+/*
+The semantic colours are advertised with the analyzer alone.
+
+A project that turns the analyzer off runs another server for the types,
+and that server colours the file. A larvae that still answered would put
+its colours in competition with it.
+*/
+#[test]
+fn semantic_tokens_go_with_the_analyzer() {
+    assert!(capabilities(false)["capabilities"]["semanticTokensProvider"].is_null());
+    assert!(capabilities(true)["capabilities"]["semanticTokensProvider"].is_object());
+}
+
 /// A reply to a notification is a protocol error
 #[test]
 fn an_unsupported_notification_is_answered_with_nothing() {

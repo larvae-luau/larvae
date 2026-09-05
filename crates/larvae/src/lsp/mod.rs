@@ -880,19 +880,6 @@ fn capabilities(analysis: bool) -> Value {
         */
         "definitionProvider": true,
         "workspaceSymbolProvider": true,
-        /*
-        The legend comes from the module that fills it, so the two cannot
-        drift. An editor reads a token type by its index in this list, and a
-        server that advertised a different order would paint every file
-        wrong.
-        */
-        "semanticTokensProvider": {
-            "legend": {
-                "tokenTypes": tokens::legend().types,
-                "tokenModifiers": tokens::legend().modifiers,
-            },
-            "full": true,
-        },
         "referencesProvider": true,
         "documentHighlightProvider": true,
         "renameProvider": true,
@@ -917,6 +904,26 @@ fn capabilities(analysis: bool) -> Value {
     */
     if analysis {
         caps["hoverProvider"] = json!(true);
+        /*
+        The colours come from larvae's own parser, and they still go with
+        the analyzer. A project that turns the analyzer off runs stock
+        luau-lsp beside larvae for the types, and that server colours the
+        file from the type graph. Two servers that both answer leave the
+        editor to pick one, so larvae steps back with the rest of the type
+        work and the grammar colours the file until the other server does.
+
+        The legend comes from the module that fills it, so the two cannot
+        drift. An editor reads a token type by its index in this list, and a
+        server that advertised a different order would paint every file
+        wrong.
+        */
+        caps["semanticTokensProvider"] = json!({
+            "legend": {
+                "tokenTypes": tokens::legend().types,
+                "tokenModifiers": tokens::legend().modifiers,
+            },
+            "full": true,
+        });
         // Only the frontend knows where a type was declared.
         caps["typeDefinitionProvider"] = json!(true);
         // Both read the type graph, so neither means anything without it.

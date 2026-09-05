@@ -4,6 +4,25 @@ Notable changes land here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow
 [semver](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- `larvae-lsp` advertises semantic tokens with the analyzer alone. A
+  project that turns the analyzer off runs another server for the types,
+  and that server now colours the file without larvae's colours on top
+
+### Fixed
+
+- A worm whose front-end refuses a file keeps the findings the worm
+  reported for it. The inherited lints read the front-end's output when
+  the worm sends no shadow, and a refusal there threw the worm's reply
+  away, so the editor showed "worm failed" at the top of the file in
+  place of the mark under the broken byte (#36)
+- A front-end that claims `.luau` or `.lua` no longer makes every
+  extensionless require ambiguous. The resolver counted a claimed builtin
+  extension twice and read one file as two modules (#30)
+
 ## 0.8.1
 
 ### Added
