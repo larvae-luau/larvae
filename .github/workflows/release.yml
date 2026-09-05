@@ -215,6 +215,15 @@ jobs:
     needs: [verify, build]
     runs-on: ubuntu-latest
     steps:
+      # The schema ships as a release asset, so an editor or a tool can
+      # fetch the schema that matches a version and not only the one on
+      # master. The checkout is at the tag for that reason.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.tag }}
+          sparse-checkout: crates/larvae/larvae.schema.json
+          sparse-checkout-cone-mode: false
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -240,7 +249,7 @@ jobs:
             gh release create "$TAG" --title "$TAG" --generate-notes $prerelease
           fi
 
-          gh release upload "$TAG" dist/*.zip --clobber
+          gh release upload "$TAG" dist/*.zip crates/larvae/larvae.schema.json --clobber
 
   crates:
     name: Publish to crates.io
