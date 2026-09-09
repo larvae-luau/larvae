@@ -382,6 +382,10 @@ enabled = true
 # "roblox-script-security", which holds every member.
 roblox_security_level = "roblox-script-security"
 claim_only = false
+# The swatch beside a Color3 the file writes out in full, and the picker that
+# opens from it. Off takes the capability out of the server, so the editor
+# never asks and no decoration appears.
+color_picker = true
 # definitions = ["types/global.d.luau"]
 # documentation = ["types/documentation.json"]
 

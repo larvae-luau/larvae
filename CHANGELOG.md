@@ -16,6 +16,9 @@ Notable changes land here. Format follows
 - `[fmt] call_chains.preserve_breaks` keeps a call chain that is already
   written over several lines open, whatever `min_calls` says. On by
   default, and it does nothing under `style = "preserve"`
+- `[lsp] color_picker` turns the colour swatch and its picker off. The
+  server then advertises no colour provider, so the editor never asks and
+  reserves no gutter for a decoration that will not come
 - `[lint.options.deprecated] ambiguous_methods` reports a replaced
   Instance method on any receiver, for a project that has no method of
   its own under one of those names

@@ -2379,6 +2379,15 @@
           "default": "sourcemap.json",
           "description": "The rojo sourcemap to read, relative to the root of the project. It gives every script the type of its own instance, so script.Parent and its neighbours resolve. A project without the file gets no instance tree and no message."
         },
+        "color_picker": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": true,
+          "description": "The swatch the editor draws beside a Color3 the file writes out in full, and the picker that opens from it. Off takes the colour capability out of the server, so the editor never asks and no decoration appears."
+        },
         "sourcemap_autogenerate": {
           "type": "boolean",
           "enum": [
