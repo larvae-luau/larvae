@@ -1995,6 +1995,50 @@ fn an_author_wrapped_short_alias_collapses() {
     );
 }
 
+/*
+The array type takes no trailing separator.
+
+`{ T }` is a rule of its own in Luau: the element is a type and not a
+property, so the parser reads it and then wants the `}`. A separator after it
+is a syntax error, which is what a comma on every field writes here. The
+formatter must never emit source that does not parse.
+*/
+#[test]
+fn an_opened_array_type_takes_no_trailing_comma() {
+    let out = fmt(
+        "export type Migrations = { { backwardsCompatible: boolean, migrate: (data: any) -> any } }\n",
+    );
+
+    assert_eq!(
+        out,
+        "export type Migrations = {\n\t{\n\t\tbackwardsCompatible: boolean,\n\t\tmigrate: (data: any) -> any,\n\t}\n}\n"
+    );
+}
+
+/// A property and an indexer still take theirs; Luau reads a trailing one there.
+#[test]
+fn a_property_and_an_indexer_keep_their_trailing_comma() {
+    let props = fmt("type P = { alpha: string, beta: number, gamma: boolean, delta: Vector3 }\n");
+    assert!(props.ends_with("\tdelta: Vector3,\n}\n"), "{props}");
+
+    let indexed = fmt(
+        "type I = { [string]: { someFieldName: string, anotherFieldName: number, aThird: boolean } }\n",
+    );
+    assert!(indexed.contains("\taThird: boolean,\n\t},\n}"), "{indexed}");
+}
+
+/// The output of the array layout parses, and a second run does not move it.
+#[test]
+fn the_array_type_layout_is_stable() {
+    let src = "type Rows = { { name: string, health: number, position: Vector3, tags: { string } } }\nreturn nil\n";
+    let once = fmt(src);
+
+    assert_eq!(fmt(&once), once, "the second run moved something");
+
+    let lexed = larvae::syntax::lexer::lex(&once).expect("lexes");
+    larvae::syntax::parser::parse(&once, &lexed.toks).expect("parses");
+}
+
 // --- the order of the properties of a table type -------------------------
 
 fn sorted(order: PropertyOrder, indexer_first: bool) -> FmtConfig {

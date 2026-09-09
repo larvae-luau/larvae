@@ -350,6 +350,14 @@ impl<'a> Emitter<'a> {
             return Doc::text("{}");
         }
 
+        /*
+        `{ T }` is the array type, and Luau reads it with one rule of its
+        own: the element is a type and not a property, so the parser takes
+        it and then wants the `}`. A separator after it is a syntax error,
+        which is what a trailing comma on every field would write here.
+        */
+        let array = spans.len() == 1 && self.is_array_element(spans[0]);
+
         self.sort_properties(&mut spans);
 
         let fields: Vec<Doc<'a>> = spans
@@ -383,9 +391,16 @@ impl<'a> Emitter<'a> {
             ]);
         }
 
-        let broken = fields
-            .into_iter()
-            .map(|field| Doc::concat([Doc::Hard, field, Doc::text(sep)]));
+        let last = fields.len() - 1;
+        let broken = fields.into_iter().enumerate().map(|(i, field)| {
+            let tail = match array && i == last {
+                true => Doc::Nil,
+
+                false => Doc::text(sep),
+            };
+
+            Doc::concat([Doc::Hard, field, tail])
+        });
 
         Doc::concat([
             Doc::text("{"),
@@ -393,6 +408,26 @@ impl<'a> Emitter<'a> {
             Doc::Hard,
             Doc::text("}"),
         ])
+    }
+
+    /*
+    Reports if this field of a table type is the element of an array type.
+
+    A property opens with a name and a `:`, and an indexer with a `[`.
+    Either one may carry a `read` or a `write` in front of it. Anything
+    else is a type standing on its own, which is `{ T }`.
+    */
+    fn is_array_element(&self, (from, to): (u32, u32)) -> bool {
+        let at = |i: u32| if i < to { self.tok(i) } else { "" };
+
+        let from = match at(from) {
+            // A field NAMED read is a field; the modifier needs something after it.
+            "read" | "write" if at(from + 1) == "[" || at(from + 2) == ":" => from + 1,
+
+            _ => from,
+        };
+
+        at(from) != "[" && at(from + 1) != ":"
     }
 
     /*

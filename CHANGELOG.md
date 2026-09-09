@@ -14,6 +14,11 @@ Notable changes land here. Format follows
 
 ### Fixed
 
+- A table type that opens over several lines no longer takes a trailing
+  separator on an array element. `{ T }` is a rule of its own in Luau: the
+  element is a type and not a property, so the parser reads it and then
+  wants the `}`. The comma after it made every opened `{ { ... } }` a
+  syntax error
 - A worm whose front-end refuses a file keeps the findings the worm
   reported for it. The inherited lints read the front-end's output when
   the worm sends no shadow, and a refusal there threw the worm's reply
