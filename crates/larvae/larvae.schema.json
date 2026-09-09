@@ -2758,6 +2758,15 @@
           "minimum": 0,
           "default": 3,
           "description": "The number of calls at which a chain opens although it fits. Zero opens only a chain that runs past column_width."
+        },
+        "preserve_breaks": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": true,
+          "description": "A chain the author already wrote over several lines stays open, whatever min_calls says. This is the magic trailing comma of a table, for a chain. Off, width and min_calls alone decide, and a short chain collapses onto one line however it was written. preserve style reads no breaks either way."
         }
       }
     }

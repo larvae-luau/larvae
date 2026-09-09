@@ -3322,7 +3322,11 @@ fn a_removed_import_leaves_no_blank_line() {
 
 fn chained(style: larvae::fmt::config::ChainStyle, min_calls: usize) -> FmtConfig {
     FmtConfig {
-        call_chains: larvae::fmt::config::CallChains { style, min_calls },
+        call_chains: larvae::fmt::config::CallChains {
+            style,
+            min_calls,
+            ..Default::default()
+        },
         ..Default::default()
     }
 }
@@ -3425,6 +3429,88 @@ fn a_plain_index_is_not_a_chain() {
     ] {
         assert_eq!(fmt_with(src, chained(ChainStyle::Full, 2)), src, "{src}");
     }
+}
+
+/*
+A chain the author already opened stays open.
+
+This is the reported case. `min_calls` is three by default, and a chain of
+two calls that fits the line collapsed onto it however the author had laid
+it out, which read as the option doing nothing.
+*/
+#[test]
+fn a_chain_the_author_broke_stays_broken() {
+    use larvae::fmt::config::ChainStyle;
+
+    let src = "replicator:set_reliable(entity, ids.player)\n\t:set_networked(entity)\n";
+
+    assert_eq!(fmt_with(src, chained(ChainStyle::Method, 3)), src);
+}
+
+/// The same signal read at `full`, where the base stands alone.
+#[test]
+fn the_full_style_reads_the_authors_breaks_too() {
+    use larvae::fmt::config::ChainStyle;
+
+    let src = "local a = map\n\t.new()\n\t:some()\nreturn a\n";
+
+    assert_eq!(fmt_with(src, chained(ChainStyle::Full, 3)), src);
+}
+
+/*
+`method` holds the first step on the line of the base, so a break before
+that one says nothing about the layout and the chain still collapses.
+*/
+#[test]
+fn a_break_before_the_first_step_is_not_the_signal_under_method() {
+    use larvae::fmt::config::ChainStyle;
+
+    assert_eq!(
+        fmt_with(
+            "local a = map\n\t.new():some()\nreturn a\n",
+            chained(ChainStyle::Method, 3)
+        ),
+        "local a = map.new():some()\nreturn a\n"
+    );
+}
+
+/// A chain the author wrote on one line stays on it, as it always did.
+#[test]
+fn a_chain_written_flat_is_left_flat() {
+    use larvae::fmt::config::ChainStyle;
+
+    let src = "local a = obj:one():two()\nreturn a\n";
+
+    assert_eq!(fmt_with(src, chained(ChainStyle::Method, 3)), src);
+}
+
+/// Off, width and `min_calls` decide alone, which is the older layout.
+#[test]
+fn preserve_breaks_off_collapses_the_chain_again() {
+    use larvae::fmt::config::{CallChains, ChainStyle};
+
+    let cfg = FmtConfig {
+        call_chains: CallChains {
+            style: ChainStyle::Method,
+            min_calls: 3,
+            preserve_breaks: false,
+        },
+        ..Default::default()
+    };
+
+    assert_eq!(
+        fmt_with("local a = obj:one()\n\t:two()\nreturn a\n", cfg),
+        "local a = obj:one():two()\nreturn a\n"
+    );
+}
+
+/// `preserve` has no opened layout to keep, so it reads no breaks.
+#[test]
+fn the_preserve_style_still_puts_a_chain_on_one_line() {
+    assert_eq!(
+        fmt("local a = obj:one()\n\t:two()\nreturn a\n"),
+        "local a = obj:one():two()\nreturn a\n"
+    );
 }
 
 // --- the leading zero of a decimal ----------------------------------------

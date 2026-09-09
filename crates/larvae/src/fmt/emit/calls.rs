@@ -476,7 +476,15 @@ impl<'a> Emitter<'a> {
             return None;
         }
 
-        let forced = cfg.min_calls > 0 && steps.len() >= cfg.min_calls;
+        /*
+        Two things open a chain that fits: enough steps to read as a
+        list, and a break the author already wrote before one of them.
+        The second is the magic trailing comma of a table, said for a
+        chain: the author laid the steps out, and a formatter that
+        pulls them back onto one line overrules that on width alone.
+        */
+        let forced = (cfg.min_calls > 0 && steps.len() >= cfg.min_calls)
+            || (cfg.preserve_breaks && self.chain_broken(base, &steps));
 
         if forced {
             for part in &mut rest {
@@ -490,5 +498,25 @@ impl<'a> Emitter<'a> {
             Doc::concat(head),
             Doc::indent(Doc::concat(rest)),
         ])))
+    }
+
+    /*
+    Reports if the author wrote a line break before a step of this chain.
+
+    The break sits before the `.` or the `:`, which is the token ahead
+    of the name of the step. `method` holds the first step on the line
+    of the base, so a break before that one says nothing about the
+    layout the author chose and this skips it.
+    */
+    fn chain_broken(&self, base: &Expr, steps: &[Step<'_>]) -> bool {
+        let skip = usize::from(self.cfg.call_chains.style == ChainStyle::Method);
+        let after_base = base.span().end;
+
+        steps.iter().skip(skip).any(|step| {
+            // The separator, and the token before it, which the break sits between.
+            let sep = step.name.start.saturating_sub(1);
+
+            sep > 0 && sep >= after_base && self.newline_between(sep - 1, sep)
+        })
     }
 }

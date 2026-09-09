@@ -762,6 +762,21 @@ pub struct CallChains {
     */
     #[serde(default = "default_min_calls")]
     pub min_calls: usize,
+
+    /*
+    A chain the author already wrote over several lines stays open.
+
+    This is the magic trailing comma of a table, for a chain. A break
+    the author put before a step is the same signal a trailing comma
+    is: this is a sequence of steps and not one expression. Without
+    it, `min_calls` alone decides, and a chain of two calls that fits
+    the line collapses onto it however the author wrote it.
+
+    `preserve` reads no breaks, because that style has no opened
+    layout to keep. The option applies to `method` and `full`.
+    */
+    #[serde(default = "default_true")]
+    pub preserve_breaks: bool,
 }
 
 impl Default for CallChains {
@@ -769,6 +784,7 @@ impl Default for CallChains {
         Self {
             style: ChainStyle::default(),
             min_calls: default_min_calls(),
+            preserve_breaks: default_true(),
         }
     }
 }

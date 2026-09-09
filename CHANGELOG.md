@@ -6,7 +6,18 @@ Notable changes land here. Format follows
 
 ## Unreleased
 
+### Added
+
+- `[fmt] call_chains.preserve_breaks` keeps a call chain that is already
+  written over several lines open, whatever `min_calls` says. On by
+  default, and it does nothing under `style = "preserve"`
+
 ### Changed
+
+- `larvae fmt` no longer collapses a call chain that is already written
+  over several lines, under `call_chains.style` of `method` or `full`. A
+  chain of two calls that fits the line went back onto one line whatever
+  the layout in the file, which read as the option doing nothing
 
 - `larvae-lsp` advertises semantic tokens with the analyzer alone. A
   project that turns the analyzer off runs another server for the types,
