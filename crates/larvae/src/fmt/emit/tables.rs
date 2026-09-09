@@ -90,22 +90,57 @@ impl<'a> Emitter<'a> {
             .collect();
 
         if expanded {
+            /*
+            A sorted table keeps no gaps. The fields move out of the order
+            the gaps describe, so a kept one would group what the author
+            never grouped, and the cursor that reads them walks the source
+            backwards once a field moves ahead of the one before it.
+            */
+            let keeps_gaps = self.keeps_table_gaps()
+                && self.cfg.sort_tables.order == crate::fmt::config::PropertyOrder::None;
             let mut parts = Vec::with_capacity(each.len() * 5 + 2);
             let mut cursor = self.tok_end(open);
 
-            for (field, doc) in fields.iter().copied().zip(each) {
+            for (index, (field, doc)) in fields.iter().copied().zip(each).enumerate() {
                 let start = self.tok_start(self.field_span(field).start);
                 let att = self.trivia.split(cursor, start);
+
+                /*
+                The blank line an author left between two fields marks a
+                group inside the table, the way it marks one inside a
+                block. The gap above the first field is not one of those:
+                it sits between the `{` and the table, so it says nothing
+                about the fields and larvae closes it.
+                */
+                let gap = index > 0
+                    && keeps_gaps
+                    && match att.leading.is_empty() {
+                        true => self.trivia.blank_before_code(cursor, start),
+
+                        false => att.blank_before_leading,
+                    };
 
                 // The trailing comment of this gap sits on the line above, not on this line.
                 parts.push(self.trailing_doc(att.trailing));
 
+                /*
+                The gap is the separator and not an addition to it, the
+                rule a block holds. So the blank goes in the place of the
+                first break of this field, which is the break above its
+                first leading comment where it has one.
+                */
+                let mut first = match gap {
+                    true => Doc::Blank,
+
+                    false => Doc::Hard,
+                };
+
                 for c in att.leading {
-                    parts.push(Doc::Hard);
+                    parts.push(std::mem::replace(&mut first, Doc::Hard));
                     parts.push(self.comment_doc(*c));
                 }
 
-                parts.push(Doc::Hard);
+                parts.push(first);
                 parts.push(doc);
                 parts.push(Doc::text(","));
 

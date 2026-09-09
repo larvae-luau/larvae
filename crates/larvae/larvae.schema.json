@@ -843,6 +843,14 @@
           "default": "never",
           "description": "Whether a blank line the author left at the very start or end of a block survives.\n\n[block_newline_gaps \u2192](https://larvae-luau.github.io/docs/reference/formatting#block-newline-gaps)"
         },
+        "table_newline_gaps": {
+          "enum": [
+            "preserve",
+            "never"
+          ],
+          "default": "preserve",
+          "description": "Whether the blank lines an author left between the fields of a table survive. preserve keeps one blank line where they left one or more, in a table constructor and a table type alike, so the groups they wrote stay groups. never closes every gap, which is what larvae did before this option.\n\n[table_newline_gaps \u2192](https://larvae-luau.github.io/docs/reference/formatting#table-newline-gaps)"
+        },
         "call_parentheses": {
           "enum": [
             "always",
@@ -1998,6 +2006,15 @@
                 "type": "string"
               },
               "description": "Names the project has deprecated of its own, as old = \"what to use instead\"."
+            },
+            "ambiguous_methods": {
+              "type": "boolean",
+              "enum": [
+                true,
+                false
+              ],
+              "default": false,
+              "description": "Report a replaced Instance method on any receiver, and not only on one that roots at an Instance larvae can see. Remove is the only name this reaches: Instance:Remove() is deprecated and Trove:Remove() is not, and the spelling tells them apart not at all. On for a project with no Remove of its own."
             }
           }
         },
@@ -2361,6 +2378,15 @@
           "type": "string",
           "default": "sourcemap.json",
           "description": "The rojo sourcemap to read, relative to the root of the project. It gives every script the type of its own instance, so script.Parent and its neighbours resolve. A project without the file gets no instance tree and no message."
+        },
+        "color_picker": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": true,
+          "description": "The swatch the editor draws beside a Color3 the file writes out in full, and the picker that opens from it. Off takes the colour capability out of the server, so the editor never asks and no decoration appears."
         },
         "sourcemap_autogenerate": {
           "type": "boolean",
@@ -2758,6 +2784,15 @@
           "minimum": 0,
           "default": 3,
           "description": "The number of calls at which a chain opens although it fits. Zero opens only a chain that runs past column_width."
+        },
+        "preserve_breaks": {
+          "type": "boolean",
+          "enum": [
+            true,
+            false
+          ],
+          "default": true,
+          "description": "A chain the author already wrote over several lines stays open, whatever min_calls says. This is the magic trailing comma of a table, for a chain. Off, width and min_calls alone decide, and a short chain collapses onto one line however it was written. preserve style reads no breaks either way."
         }
       }
     }

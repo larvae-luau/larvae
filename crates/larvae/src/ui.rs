@@ -140,6 +140,37 @@ pub fn visible_width(line: &str) -> usize {
     width
 }
 
+/*
+How long a run took, for the end of a summary line.
+
+The unit follows the size, because the reader wants the same three or four
+significant digits at every scale: milliseconds under a second, seconds with
+two decimals under a minute, and minutes and seconds above that. A build that
+finishes in under a millisecond still reports one, since `0ms` reads as a
+measurement that did not happen.
+
+The clock is the wall clock of the whole command, which is what a user waited
+through. It is not the sum of the per file work: larvae formats in parallel,
+and a sum over the threads would report a number larger than the wait.
+*/
+pub fn took(elapsed: std::time::Duration) -> String {
+    let ms = elapsed.as_millis();
+
+    if ms < 1000 {
+        return format!("{}ms", ms.max(1));
+    }
+
+    let secs = elapsed.as_secs_f64();
+
+    if secs < 60.0 {
+        return format!("{secs:.2}s");
+    }
+
+    let whole = elapsed.as_secs();
+
+    format!("{}m {}s", whole / 60, whole % 60)
+}
+
 /// Print `✓ message` in the brand color, to stderr
 pub fn print_success(message: &str) {
     let color = want_color_stderr();
@@ -307,5 +338,22 @@ mod tests {
     fn accent_gates_on_color() {
         assert_eq!(accent("x", false), "x");
         assert!(accent("x", true).contains("38;2;16;230;148"));
+    }
+
+    /// The unit follows the size, so the reader gets the same digits at each scale.
+    #[test]
+    fn took_picks_the_unit_from_the_duration() {
+        use std::time::Duration;
+
+        assert_eq!(took(Duration::from_millis(100)), "100ms");
+        assert_eq!(took(Duration::from_millis(999)), "999ms");
+        assert_eq!(took(Duration::from_millis(1500)), "1.50s");
+        assert_eq!(took(Duration::from_secs(90)), "1m 30s");
+    }
+
+    /// A run too fast to measure still reports a measurement, because `0ms` reads as none.
+    #[test]
+    fn took_never_reports_zero() {
+        assert_eq!(took(std::time::Duration::ZERO), "1ms");
     }
 }

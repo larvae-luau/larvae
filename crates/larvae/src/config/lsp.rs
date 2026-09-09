@@ -48,6 +48,23 @@ pub struct LspConfig {
     #[serde(default)]
     pub hover: HoverConfig,
 
+    /*
+    The swatch the editor draws beside a colour the file writes out, and
+    the picker that opens from it.
+
+    On by default. It reads `Color3.new`, `Color3.fromRGB` and
+    `Color3.fromHex` with literal channels, and gives the editor a colour
+    for each one; picking from the swatch writes the call back in the form
+    the author already used.
+
+    Off for a project that would rather not have a swatch in the gutter of
+    every line that names a colour, or one whose editor draws its own. The
+    server then advertises no colour provider at all, so the editor never
+    asks and the decoration cannot appear.
+    */
+    #[serde(default = "on")]
+    pub color_picker: bool,
+
     /// The project wide symbol index that `workspace/symbol` searches
     #[serde(default)]
     pub index: IndexConfig,

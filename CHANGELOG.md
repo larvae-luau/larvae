@@ -6,14 +6,53 @@ Notable changes land here. Format follows
 
 ## Unreleased
 
+### Added
+
+- `[fmt] table_newline_gaps` decides whether the blank lines an author
+  left between the fields of a table survive. `preserve` is the new
+  default and keeps one blank line where they left one or more, in a
+  table constructor and a table type alike, because a long table is
+  written in groups and the blank line is what marks a group. `never`
+  closes every gap, which is the layout larvae had before the option
+- `[fmt] call_chains.preserve_breaks` keeps a chain the author already
+  wrote over several lines open, whatever `min_calls` says. This is the
+  magic trailing comma of a table, said for a chain. On by default, and
+  it does nothing under `style = "preserve"`
+- `[lsp] color_picker` turns the colour swatch and its picker off. The
+  server then advertises no colour provider, so the editor never asks
+  and reserves no gutter for a decoration that will not come
+- `[lint.options.deprecated] ambiguous_methods` reports a replaced
+  Instance method on any receiver, for a project that has no method of
+  its own under one of those names
+- Every command that walks the project reports how long it took, at the
+  end of its summary line: `formatted 12 files, 3 unchanged in 41ms`.
+  The clock is the wall clock of the whole command, which is the wait a
+  user sat through, and not the sum of the per file work
+
 ### Changed
 
+- `larvae fmt` no longer collapses a call chain that the author wrote
+  over several lines, under `call_chains.style` `method` or `full`. A
+  chain of two calls that fits the line went back onto it whatever the
+  author had done, which read as the option doing nothing. See
+  `call_chains.preserve_breaks` above
+- The `deprecated` lint reports `:Remove()` only where the receiver
+  roots at an Instance larvae can see, such as `workspace.Part` or
+  `script.Parent`. `Instance:Remove()` is deprecated and `Trove:Remove()`
+  is not, and the casing tells the two apart not at all, so the name
+  alone was reporting the author's own methods. This is the reasoning
+  that already kept lowercase `remove` off the list
 - `larvae-lsp` advertises semantic tokens with the analyzer alone. A
   project that turns the analyzer off runs another server for the types,
   and that server now colours the file without larvae's colours on top
 
 ### Fixed
 
+- A table type that the formatter opens no longer takes a trailing
+  separator on an array element. `{ T }` is a rule of its own in Luau:
+  the element is a type and not a property, so the parser reads it and
+  then wants the `}`. The comma after it made every opened `{ { ... } }`
+  a syntax error
 - A worm whose front-end refuses a file keeps the findings the worm
   reported for it. The inherited lints read the front-end's output when
   the worm sends no shadow, and a refusal there threw the worm's reply

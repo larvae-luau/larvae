@@ -422,7 +422,10 @@ impl Server {
                 let caps = match self.lsp.enabled {
                     // What it will do, not what it can do this instant.
                     // What it will do: the analyzer half needs the seam AND the setting.
-                    true => capabilities(self.will_analyse() && self.lsp.analyzer),
+                    true => capabilities(
+                        self.will_analyse() && self.lsp.analyzer,
+                        self.lsp.color_picker,
+                    ),
 
                     false => serde_json::json!({ "capabilities": {} }),
                 };
@@ -858,7 +861,7 @@ impl Server {
 }
 
 /// The abilities of this server; the editor then asks only for these
-fn capabilities(analysis: bool) -> Value {
+fn capabilities(analysis: bool, colors: bool) -> Value {
     let mut caps = json!({
         // 1 is full sync, see the note on didChange
         "textDocumentSync": { "openClose": true, "change": 1, "save": true },
@@ -886,7 +889,6 @@ fn capabilities(analysis: bool) -> Value {
         "foldingRangeProvider": true,
         "selectionRangeProvider": true,
         "documentLinkProvider": { "resolveProvider": false },
-        "colorProvider": true,
         /*
         The rename notice, so a moved file can carry its requires along.
         The editor tells the server after the move, the server asks the
@@ -902,6 +904,16 @@ fn capabilities(analysis: bool) -> Value {
     without one does not advertise them. The editor then never asks, and
     stock luau-lsp answers instead when both servers run.
     */
+    /*
+    `[lsp] color_picker = false` takes the capability out rather than
+    answering every request with nothing. An editor that is told about the
+    provider draws the gutter it reserves for one, so the way to have no
+    swatch is to never claim to have any.
+    */
+    if colors {
+        caps["colorProvider"] = json!(true);
+    }
+
     if analysis {
         caps["hoverProvider"] = json!(true);
         /*

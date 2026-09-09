@@ -421,6 +421,11 @@ impl Server {
 
     /// A swatch on every Color3 the file writes out in full
     pub(super) fn colors(&self, params: &Value) -> Value {
+        // The capability is gone with the option off, and a client may still ask.
+        if !self.lsp.color_picker {
+            return json!([]);
+        }
+
         let Some((src, lines)) = self.document(params) else {
             return json!([]);
         };
@@ -446,6 +451,10 @@ impl Server {
     form is read back from the source rather than carried through the client.
     */
     pub(super) fn color_presentation(&self, params: &Value) -> Value {
+        if !self.lsp.color_picker {
+            return json!([]);
+        }
+
         let Some((src, lines)) = self.document(params) else {
             return json!([]);
         };

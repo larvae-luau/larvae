@@ -40,6 +40,8 @@ pub fn run(
     stdin_filepath: Option<PathBuf>,
     config: Option<PathBuf>,
 ) -> Result<ExitCode> {
+    // The whole command, so the walk and the worm pool are in the number too.
+    let started = std::time::Instant::now();
     let mut cfg = discover(root, config.clone())?;
 
     /*
@@ -96,7 +98,7 @@ pub fn run(
         })
         .collect();
 
-    report(outcomes, check)
+    report(outcomes, check, started.elapsed())
 }
 
 /*
@@ -384,7 +386,11 @@ fn files(n: usize) -> String {
     }
 }
 
-fn report(outcomes: Vec<(PathBuf, Outcome)>, check: bool) -> Result<ExitCode> {
+fn report(
+    outcomes: Vec<(PathBuf, Outcome)>,
+    check: bool,
+    elapsed: std::time::Duration,
+) -> Result<ExitCode> {
     let mut changed = Vec::new();
     let mut failed = Vec::new();
     let mut clean = 0usize;
@@ -409,7 +415,11 @@ fn report(outcomes: Vec<(PathBuf, Outcome)>, check: bool) -> Result<ExitCode> {
         }
 
         if changed.is_empty() && failed.is_empty() {
-            ui::print_success(&format!("{} already formatted", files(clean)));
+            ui::print_success(&format!(
+                "{} already formatted in {}",
+                files(clean),
+                ui::took(elapsed)
+            ));
 
             return Ok(ExitCode::SUCCESS);
         }
@@ -419,8 +429,9 @@ fn report(outcomes: Vec<(PathBuf, Outcome)>, check: bool) -> Result<ExitCode> {
 
     if failed.is_empty() {
         ui::print_success(&format!(
-            "formatted {}, {clean} unchanged",
-            files(changed.len())
+            "formatted {}, {clean} unchanged in {}",
+            files(changed.len()),
+            ui::took(elapsed)
         ));
 
         return Ok(ExitCode::SUCCESS);

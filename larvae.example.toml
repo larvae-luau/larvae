@@ -180,6 +180,12 @@ call_parentheses = "always"              # no-single-string, no-single-table, no
 space_after_function_names = "never"     # definitions, calls, always
 collapse_simple_statement = "never"      # function-only, conditional-only, always
 block_newline_gaps = "never"             # or "preserve", keeps a blank line at the edge of a block
+# Whether the blank lines an author left between the fields of a table
+# survive, in a table constructor and a table type alike. A long table is
+# written in groups and the blank line is what marks a group, so "preserve"
+# is the default. "never" closes every gap, which is what larvae did before
+# this option.
+table_newline_gaps = "preserve"          # or "never", closes every gap inside a table
 
 # past stylua
 magic_trailing_comma = true              # a trailing comma means "keep this expanded"
@@ -199,7 +205,10 @@ unused_imports = "ignore"                # or "underscore", "remove"
 # call together and breaks before each call after it; "full" breaks
 # before every step. min_calls opens a chain that fits once it holds
 # that many calls, and 0 opens only what runs past column_width.
-call_chains = { style = "preserve", min_calls = 3 }
+# preserve_breaks keeps a chain that the author already wrote over several
+# lines open, whatever min_calls says: it is the magic trailing comma of a
+# table, said for a chain. It does nothing under style = "preserve".
+call_chains = { style = "preserve", min_calls = 3, preserve_breaks = true }
 
 exclude = ["Packages", "**/*.gen.luau"]  # relative to the project root
 # syntax = "Luau"                        # accepted from stylua, and ignored
@@ -285,8 +294,14 @@ maximum_complexity = 40                  # selene's number
 loadstring = "compiles a string at runtime, ship the code instead"
 getfenv = "turns the optimiser off for this function"
 
+# `Instance:Remove()` is deprecated and `Trove:Remove()` is not, and the
+# spelling tells them apart not at all. So larvae reports `Remove` only where
+# the receiver roots at an Instance it can see, such as `workspace.Part` or
+# `script.Parent`. A project with no `Remove` of its own can have the name
+# matched everywhere with ambiguous_methods.
 [lint.options.deprecated]
 additional = { "myOldHelper" = "myNewHelper" }
+ambiguous_methods = false
 
 [lint.options.restricted_module_paths]
 paths = { "@game/ServerStorage/secrets" = "server only, never require this from shared" }
@@ -368,6 +383,10 @@ enabled = true
 # "roblox-script-security", which holds every member.
 roblox_security_level = "roblox-script-security"
 claim_only = false
+# The swatch beside a Color3 the file writes out in full, and the picker that
+# opens from it. Off takes the capability out of the server, so the editor
+# never asks and no decoration appears.
+color_picker = true
 # definitions = ["types/global.d.luau"]
 # documentation = ["types/documentation.json"]
 
