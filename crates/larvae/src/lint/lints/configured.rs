@@ -287,20 +287,78 @@ larvae does not know the type of the receiver.
 For that reason, `remove` is not on the list. `Instance:remove()` is
 deprecated, and `Queue:remove(1)` is the author's own collection. The two
 have the same spelling. To report the second is worse than to miss the
-first. The list keeps the legacy camelCase names that only Roblox had.
+first. The list keeps the legacy camelCase names that only Roblox had:
+these three are spellings that no other library ever wrote, so a receiver
+larvae cannot type is still an Instance in practice.
 */
 const REPLACED_METHODS: &[(&str, &str)] = &[
-    ("Remove", "Destroy"),
     ("children", "GetChildren"),
     ("findFirstChild", "FindFirstChild"),
     ("getChildren", "GetChildren"),
 ];
+
+/*
+The replaced methods whose spelling is not Roblox's alone.
+
+`Instance:Remove()` is deprecated, and `Trove:Remove()`, `Janitor:Remove()`
+and every hand written `Queue:Remove(item)` are the author's own methods
+under the same name. The reasoning that kept lowercase `remove` off the
+list above holds here word for word: the casing is the ordinary one for a
+method in this ecosystem, so the name alone identifies nothing.
+
+So these report only where the receiver roots at an Instance that larvae
+can see for itself. A project that would rather have the name matched
+everywhere, and the false reports with it, sets `ambiguous_methods`.
+*/
+const AMBIGUOUS_METHODS: &[(&str, &str)] = &[("Remove", "Destroy")];
+
+/*
+The globals that are Instances, for the receiver test above.
+
+A dot or a call may follow any of them, so `game:GetService("Debris")` and
+`workspace.Baseplate` root here too. The name has to be a global: a local
+named `script` is the author's own binding and says nothing about a type.
+*/
+const INSTANCE_ROOTS: &[&str] = &["game", "script", "workspace", "Workspace"];
 
 #[derive(Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct DeprecatedOptions {
     /// The names that the project itself deprecated, as `old = "new"`.
     pub additional: std::collections::BTreeMap<String, String>,
+
+    /*
+    Report a replaced Instance method on any receiver, and not only on one
+    that larvae can see is an Instance.
+
+    Off by default. `Remove` is the only name this reaches, and a project
+    with no table of its own under that name loses nothing by turning it
+    on. See [`AMBIGUOUS_METHODS`].
+    */
+    pub ambiguous_methods: bool,
+}
+
+/*
+Reports if this expression roots at a global that is an Instance.
+
+The walk goes down the left of an index and of a call, so the receiver of
+`game:GetService("Players").LocalPlayer.Character:Remove()` answers here.
+Anything else, a local above all, answers no: larvae has no types in the
+linter and a guess about one is the false report this test exists to
+prevent.
+*/
+fn instance_rooted(ctx: &LintCtx<'_>, e: &Expr) -> bool {
+    match e {
+        Expr::Name(span) => {
+            ctx.names.is_global(span.start) && INSTANCE_ROOTS.contains(&ctx.text(*span))
+        }
+
+        Expr::Index { object, .. } => instance_rooted(ctx, object),
+
+        Expr::Call { func, .. } => instance_rooted(ctx, func),
+
+        _ => false,
+    }
 }
 
 impl Deprecated {
@@ -323,9 +381,16 @@ impl Deprecated {
                     return;
                 }
 
-                if let Some((_, replacement)) =
-                    REPLACED_METHODS.iter().find(|(old, _)| *old == name)
-                {
+                let ambiguous = AMBIGUOUS_METHODS.iter().find(|(old, _)| *old == name);
+                let reported = REPLACED_METHODS
+                    .iter()
+                    .find(|(old, _)| *old == name)
+                    .or_else(|| {
+                        ambiguous
+                            .filter(|_| options.ambiguous_methods || instance_rooted(ctx, func))
+                    });
+
+                if let Some((_, replacement)) = reported {
                     out.push(
                         Finding::new("deprecated", ctx.bytes(*m), format!("{name} is deprecated"))
                             .with_help(format!("use {replacement} instead")),

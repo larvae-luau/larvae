@@ -16,6 +16,9 @@ Notable changes land here. Format follows
 - `[fmt] call_chains.preserve_breaks` keeps a call chain that is already
   written over several lines open, whatever `min_calls` says. On by
   default, and it does nothing under `style = "preserve"`
+- `[lint.options.deprecated] ambiguous_methods` reports a replaced
+  Instance method on any receiver, for a project that has no method of
+  its own under one of those names
 
 ### Changed
 
@@ -23,6 +26,11 @@ Notable changes land here. Format follows
   over several lines, under `call_chains.style` of `method` or `full`. A
   chain of two calls that fits the line went back onto one line whatever
   the layout in the file, which read as the option doing nothing
+- The `deprecated` lint reports `:Remove()` only where the receiver roots
+  at an Instance larvae can see, such as `workspace.Part` or
+  `script.Parent`. `Instance:Remove()` is deprecated and `Trove:Remove()`
+  is not, and the casing tells the two apart not at all, so matching the
+  name alone reported a project's own methods
 
 - `larvae-lsp` advertises semantic tokens with the analyzer alone. A
   project that turns the analyzer off runs another server for the types,

@@ -2006,6 +2006,15 @@
                 "type": "string"
               },
               "description": "Names the project has deprecated of its own, as old = \"what to use instead\"."
+            },
+            "ambiguous_methods": {
+              "type": "boolean",
+              "enum": [
+                true,
+                false
+              ],
+              "default": false,
+              "description": "Report a replaced Instance method on any receiver, and not only on one that roots at an Instance larvae can see. Remove is the only name this reaches: Instance:Remove() is deprecated and Trove:Remove() is not, and the spelling tells them apart not at all. On for a project with no Remove of its own."
             }
           }
         },

@@ -293,8 +293,14 @@ maximum_complexity = 40                  # selene's number
 loadstring = "compiles a string at runtime, ship the code instead"
 getfenv = "turns the optimiser off for this function"
 
+# `Instance:Remove()` is deprecated and `Trove:Remove()` is not, and the
+# spelling tells them apart not at all. So larvae reports `Remove` only where
+# the receiver roots at an Instance it can see, such as `workspace.Part` or
+# `script.Parent`. A project with no `Remove` of its own can have the name
+# matched everywhere with ambiguous_methods.
 [lint.options.deprecated]
 additional = { "myOldHelper" = "myNewHelper" }
+ambiguous_methods = false
 
 [lint.options.restricted_module_paths]
 paths = { "@game/ServerStorage/secrets" = "server only, never require this from shared" }
