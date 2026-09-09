@@ -22,7 +22,7 @@ use crate::syntax::lexer::{Tok, TokKind};
 use super::config::{
     BlockNewlineGaps, CallParens, CallStyle, CollapseSimpleStatement, FmtConfig, IfExpansion,
     IfPlacement, IfStyle, ListExpansion, PropertyOrder, QuoteStyle, RequireGrouping, Semicolons,
-    TypeExpansion,
+    TableNewlineGaps, TypeExpansion,
 };
 use super::doc::Doc;
 use super::trivia::{Attached, Comment, Trivia};
@@ -358,6 +358,28 @@ impl<'a> Emitter<'a> {
         */
         let array = spans.len() == 1 && self.is_array_element(spans[0]);
 
+        /*
+        The blank lines the author left between the fields, read before
+        the sort. A sort moves the fields out of the order these gaps
+        describe, so a table it touches keeps none of them: a gap that
+        landed between two other fields would group what the author never
+        grouped.
+        */
+        let keeps_gaps =
+            self.keeps_table_gaps() && self.cfg.sort_table_types.order == PropertyOrder::None;
+
+        let gaps: Vec<bool> = match keeps_gaps {
+            true => spans
+                .windows(2)
+                .map(|pair| {
+                    self.trivia
+                        .blank_between(self.tok_end(pair[0].1 - 1), self.tok_start(pair[1].0))
+                })
+                .collect(),
+
+            false => Vec::new(),
+        };
+
         self.sort_properties(&mut spans);
 
         let fields: Vec<Doc<'a>> = spans
@@ -399,7 +421,14 @@ impl<'a> Emitter<'a> {
                 false => Doc::text(sep),
             };
 
-            Doc::concat([Doc::Hard, field, tail])
+            // The gap is the separator, not an addition to it, as in a block.
+            let lead = match i > 0 && gaps.get(i - 1).copied().unwrap_or(false) {
+                true => Doc::Blank,
+
+                false => Doc::Hard,
+            };
+
+            Doc::concat([lead, field, tail])
         });
 
         Doc::concat([
@@ -408,6 +437,11 @@ impl<'a> Emitter<'a> {
             Doc::Hard,
             Doc::text("}"),
         ])
+    }
+
+    /// Reports if the option keeps the blank lines an author left inside a table.
+    fn keeps_table_gaps(&self) -> bool {
+        self.cfg.table_newline_gaps == TableNewlineGaps::Preserve
     }
 
     /*

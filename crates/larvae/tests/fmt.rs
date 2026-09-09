@@ -1000,6 +1000,116 @@ fn preserving_gaps_is_still_idempotent() {
     assert_eq!(fmt_with(&once, cfg), once);
 }
 
+// --- table_newline_gaps ----------------------------------------------------
+
+fn table_gaps(mode: larvae::fmt::config::TableNewlineGaps) -> FmtConfig {
+    FmtConfig {
+        table_newline_gaps: mode,
+        ..Default::default()
+    }
+}
+
+/*
+The default keeps the groups the author wrote. A long table is written in
+groups and the blank line is what marks one, so closing them turns the table
+into one run of lines and loses the grouping.
+*/
+#[test]
+fn a_blank_between_two_fields_survives_by_default() {
+    let src = "local t = {\n\ta = 1,\n\n\tb = 2,\n}\nreturn t\n";
+
+    assert_eq!(fmt(src), src);
+}
+
+/// More than one blank says nothing more than one does, as in a block.
+#[test]
+fn several_blanks_between_fields_become_one() {
+    assert_eq!(
+        fmt("local t = {\n\ta = 1,\n\n\n\n\tb = 2,\n}\nreturn t\n"),
+        "local t = {\n\ta = 1,\n\n\tb = 2,\n}\nreturn t\n"
+    );
+}
+
+/*
+The gap above the first field sits between the `{` and the table, so it says
+nothing about the fields and it closes. The one below the last field reads the
+same way.
+*/
+#[test]
+fn the_gaps_at_the_edges_of_a_table_close() {
+    assert_eq!(
+        fmt("local t = {\n\n\ta = 1,\n\tb = 2,\n\n}\nreturn t\n"),
+        "local t = {\n\ta = 1,\n\tb = 2,\n}\nreturn t\n"
+    );
+}
+
+/// The gap is the separator and not an addition to it, so a comment keeps its field.
+#[test]
+fn a_gap_above_a_comment_stays_above_the_comment() {
+    let src = "local t = {\n\ta = 1,\n\n\t-- the second group\n\tb = 2,\n}\nreturn t\n";
+
+    assert_eq!(fmt(src), src);
+}
+
+/// A table type reads its gaps the same way.
+#[test]
+fn a_table_type_keeps_its_gaps_too() {
+    let src = "type Config = {\n\tfirstFieldNameHere: string,\n\tsecondFieldNameHere: number,\n\n\tthirdFieldNameHere: boolean,\n\tfourthFieldName: string,\n}\nreturn nil\n";
+
+    assert_eq!(fmt(src), src);
+}
+
+/*
+A sorted table type keeps none of them. The fields move out of the order the
+gaps describe, so a kept gap would group what the author never grouped.
+*/
+#[test]
+fn a_sorted_table_type_drops_its_gaps() {
+    let cfg = FmtConfig {
+        sort_table_types: larvae::fmt::config::SortTableTypes {
+            order: larvae::fmt::config::PropertyOrder::Ascending,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let out = fmt_with(
+        "type Config = {\n\tlongestFieldNameHere: string,\n\n\tmid: number,\n\tab: boolean,\n}\nreturn nil\n",
+        cfg,
+    );
+
+    assert!(!out.contains("\n\n"), "{out}");
+}
+
+/// `never` is the layout larvae had before the option.
+#[test]
+fn never_closes_every_gap_inside_a_table() {
+    let cfg = table_gaps(larvae::fmt::config::TableNewlineGaps::Never);
+
+    assert_eq!(
+        fmt_with(
+            "local t = {\n\ta = 1,\n\n\tb = 2,\n}\nreturn t\n",
+            cfg.clone()
+        ),
+        "local t = {\n\ta = 1,\n\tb = 2,\n}\nreturn t\n"
+    );
+    assert_eq!(
+        fmt_with(
+            "type C = {\n\tfirstFieldNameHere: string,\n\tsecondFieldNameHere: number,\n\n\tthirdFieldNameHere: boolean,\n\tfourthFieldName: string,\n}\nreturn nil\n",
+            cfg
+        ),
+        "type C = {\n\tfirstFieldNameHere: string,\n\tsecondFieldNameHere: number,\n\tthirdFieldNameHere: boolean,\n\tfourthFieldName: string,\n}\nreturn nil\n"
+    );
+}
+
+#[test]
+fn a_kept_table_gap_is_idempotent() {
+    let src = "local t = {\n\ta = 1,\n\n\t-- second\n\tb = 2,\n\n\tc = 3,\n}\nreturn t\n";
+    let once = fmt(src);
+
+    assert_eq!(fmt(&once), once, "the second run moved something");
+}
+
 // --- require_binding -------------------------------------------------------
 
 fn binding(mode: larvae::fmt::config::RequireBinding) -> FmtConfig {

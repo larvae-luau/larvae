@@ -8,6 +8,11 @@ Notable changes land here. Format follows
 
 ### Added
 
+- `[fmt] table_newline_gaps` decides whether the blank lines between the
+  fields of a table survive. `preserve` is the new default and keeps one
+  blank line where the file has one or more, in a table constructor and a
+  table type alike. `never` closes every gap, which is the layout larvae
+  had before the option
 - `[fmt] call_chains.preserve_breaks` keeps a call chain that is already
   written over several lines open, whatever `min_calls` says. On by
   default, and it does nothing under `style = "preserve"`

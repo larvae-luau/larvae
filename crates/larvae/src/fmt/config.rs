@@ -116,6 +116,32 @@ pub enum BlockNewlineGaps {
     Preserve,
 }
 
+/*
+Selects if the blank lines that an author left between the fields of a
+table survive.
+
+`preserve` is the default, and it reads the gaps the way a block reads
+them: one blank line where the author left one or more, and none where
+they left none. A long table is written in groups, and the blank line is
+what marks a group. A formatter that closes every gap turns that table
+into one undifferentiated run of lines and loses the grouping the author
+wrote, which no width or separator option can put back.
+
+`never` closes every gap, which is what larvae did before this option, for
+a project that wants each table to come out as one solid block.
+
+The option reads a table constructor and a table type alike. A gap only
+survives in a table that opens over several lines; one that fits on a line
+has no gap to keep.
+*/
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TableNewlineGaps {
+    #[default]
+    Preserve,
+    Never,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LineEndings {
@@ -895,6 +921,10 @@ pub struct FmtConfig {
 
     #[serde(default)]
     pub block_newline_gaps: BlockNewlineGaps,
+
+    /// Selects if the blank lines an author left inside a table survive.
+    #[serde(default)]
+    pub table_newline_gaps: TableNewlineGaps,
 
     #[serde(default)]
     pub sort_requires: SortRequires,
