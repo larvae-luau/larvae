@@ -15,6 +15,7 @@ pub fn run(
     config: Option<PathBuf>,
     profile: Option<String>,
 ) -> Result<ExitCode> {
+    let started = std::time::Instant::now();
     let config = load_config(root, config, profile.as_deref())?;
 
     /*
@@ -123,14 +124,15 @@ pub fn run(
     let shaken = resolved.graph.nodes().count().saturating_sub(modules.len());
 
     ui::print_success(&format!(
-        "bundled {} modules into {}{}",
+        "bundled {} modules into {}{} in {}",
         modules.len(),
         ui::rel(&out_path),
         match shaken {
             0 => String::new(),
 
             n => format!(", {n} unreachable left out"),
-        }
+        },
+        ui::took(started.elapsed())
     ));
 
     Ok(ExitCode::SUCCESS)

@@ -16,6 +16,10 @@ Notable changes land here. Format follows
 - `[fmt] call_chains.preserve_breaks` keeps a call chain that is already
   written over several lines open, whatever `min_calls` says. On by
   default, and it does nothing under `style = "preserve"`
+- Every command that walks the project reports how long it took at the end
+  of its summary line: `formatted 12 files, 3 unchanged in 41ms`. The clock
+  is the wall clock of the whole command and not the sum of the per file
+  work, which larvae runs in parallel
 - `[lsp] color_picker` turns the colour swatch and its picker off. The
   server then advertises no colour provider, so the editor never asks and
   reserves no gutter for a decoration that will not come

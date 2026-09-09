@@ -89,6 +89,8 @@ pub fn run(root: &Path, config: &Config, config_path: Option<PathBuf>) -> Result
 }
 
 fn build_once(root: &Path, config: &Config, color: bool) {
+    let started = std::time::Instant::now();
+
     match pipeline::run(root, config, true) {
         Ok(outcome) => {
             for d in &outcome.diags {
@@ -108,9 +110,11 @@ fn build_once(root: &Path, config: &Config, color: bool) {
                 String::new()
             };
 
+            let took = ui::took(started.elapsed());
+
             if outcome.has_errors() {
                 ui::print_error(&format!(
-                    "build finished with errors, {} file(s){cached}{pruned}",
+                    "build finished with errors, {} file(s){cached}{pruned} in {took}",
                     s.files_processed
                 ));
             } else {
@@ -127,7 +131,7 @@ fn build_once(root: &Path, config: &Config, color: bool) {
                 }
 
                 ui::print_success(&format!(
-                    "{} file(s), {} require(s) rewritten{rules}{cached}{pruned}",
+                    "{} file(s), {} require(s) rewritten{rules}{cached}{pruned} in {took}",
                     s.files_processed, s.requires_rewritten
                 ));
             }
