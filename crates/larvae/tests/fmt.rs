@@ -1000,6 +1000,116 @@ fn preserving_gaps_is_still_idempotent() {
     assert_eq!(fmt_with(&once, cfg), once);
 }
 
+// --- table_newline_gaps ----------------------------------------------------
+
+fn table_gaps(mode: larvae::fmt::config::TableNewlineGaps) -> FmtConfig {
+    FmtConfig {
+        table_newline_gaps: mode,
+        ..Default::default()
+    }
+}
+
+/*
+The default keeps the groups the author wrote. A long table is written in
+groups and the blank line is what marks one, so closing them turns the table
+into one run of lines and loses the grouping.
+*/
+#[test]
+fn a_blank_between_two_fields_survives_by_default() {
+    let src = "local t = {\n\ta = 1,\n\n\tb = 2,\n}\nreturn t\n";
+
+    assert_eq!(fmt(src), src);
+}
+
+/// More than one blank says nothing more than one does, as in a block.
+#[test]
+fn several_blanks_between_fields_become_one() {
+    assert_eq!(
+        fmt("local t = {\n\ta = 1,\n\n\n\n\tb = 2,\n}\nreturn t\n"),
+        "local t = {\n\ta = 1,\n\n\tb = 2,\n}\nreturn t\n"
+    );
+}
+
+/*
+The gap above the first field sits between the `{` and the table, so it says
+nothing about the fields and it closes. The one below the last field reads the
+same way.
+*/
+#[test]
+fn the_gaps_at_the_edges_of_a_table_close() {
+    assert_eq!(
+        fmt("local t = {\n\n\ta = 1,\n\tb = 2,\n\n}\nreturn t\n"),
+        "local t = {\n\ta = 1,\n\tb = 2,\n}\nreturn t\n"
+    );
+}
+
+/// The gap is the separator and not an addition to it, so a comment keeps its field.
+#[test]
+fn a_gap_above_a_comment_stays_above_the_comment() {
+    let src = "local t = {\n\ta = 1,\n\n\t-- the second group\n\tb = 2,\n}\nreturn t\n";
+
+    assert_eq!(fmt(src), src);
+}
+
+/// A table type reads its gaps the same way.
+#[test]
+fn a_table_type_keeps_its_gaps_too() {
+    let src = "type Config = {\n\tfirstFieldNameHere: string,\n\tsecondFieldNameHere: number,\n\n\tthirdFieldNameHere: boolean,\n\tfourthFieldName: string,\n}\nreturn nil\n";
+
+    assert_eq!(fmt(src), src);
+}
+
+/*
+A sorted table type keeps none of them. The fields move out of the order the
+gaps describe, so a kept gap would group what the author never grouped.
+*/
+#[test]
+fn a_sorted_table_type_drops_its_gaps() {
+    let cfg = FmtConfig {
+        sort_table_types: larvae::fmt::config::SortTableTypes {
+            order: larvae::fmt::config::PropertyOrder::Ascending,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let out = fmt_with(
+        "type Config = {\n\tlongestFieldNameHere: string,\n\n\tmid: number,\n\tab: boolean,\n}\nreturn nil\n",
+        cfg,
+    );
+
+    assert!(!out.contains("\n\n"), "{out}");
+}
+
+/// `never` is the layout larvae had before the option.
+#[test]
+fn never_closes_every_gap_inside_a_table() {
+    let cfg = table_gaps(larvae::fmt::config::TableNewlineGaps::Never);
+
+    assert_eq!(
+        fmt_with(
+            "local t = {\n\ta = 1,\n\n\tb = 2,\n}\nreturn t\n",
+            cfg.clone()
+        ),
+        "local t = {\n\ta = 1,\n\tb = 2,\n}\nreturn t\n"
+    );
+    assert_eq!(
+        fmt_with(
+            "type C = {\n\tfirstFieldNameHere: string,\n\tsecondFieldNameHere: number,\n\n\tthirdFieldNameHere: boolean,\n\tfourthFieldName: string,\n}\nreturn nil\n",
+            cfg
+        ),
+        "type C = {\n\tfirstFieldNameHere: string,\n\tsecondFieldNameHere: number,\n\tthirdFieldNameHere: boolean,\n\tfourthFieldName: string,\n}\nreturn nil\n"
+    );
+}
+
+#[test]
+fn a_kept_table_gap_is_idempotent() {
+    let src = "local t = {\n\ta = 1,\n\n\t-- second\n\tb = 2,\n\n\tc = 3,\n}\nreturn t\n";
+    let once = fmt(src);
+
+    assert_eq!(fmt(&once), once, "the second run moved something");
+}
+
 // --- require_binding -------------------------------------------------------
 
 fn binding(mode: larvae::fmt::config::RequireBinding) -> FmtConfig {
@@ -1993,6 +2103,50 @@ fn an_author_wrapped_short_alias_collapses() {
         fmt("type T = {\n\tx: number,\n\ty: number,\n}\n"),
         "type T = { x: number, y: number }\n"
     );
+}
+
+/*
+The array type takes no trailing separator.
+
+`{ T }` is a rule of its own in Luau: the element is a type and not a
+property, so the parser reads it and then wants the `}`. A separator after it
+is a syntax error, which is what a comma on every field writes here. The
+formatter must never emit source that does not parse.
+*/
+#[test]
+fn an_opened_array_type_takes_no_trailing_comma() {
+    let out = fmt(
+        "export type Migrations = { { backwardsCompatible: boolean, migrate: (data: any) -> any } }\n",
+    );
+
+    assert_eq!(
+        out,
+        "export type Migrations = {\n\t{\n\t\tbackwardsCompatible: boolean,\n\t\tmigrate: (data: any) -> any,\n\t}\n}\n"
+    );
+}
+
+/// A property and an indexer still take theirs; Luau reads a trailing one there.
+#[test]
+fn a_property_and_an_indexer_keep_their_trailing_comma() {
+    let props = fmt("type P = { alpha: string, beta: number, gamma: boolean, delta: Vector3 }\n");
+    assert!(props.ends_with("\tdelta: Vector3,\n}\n"), "{props}");
+
+    let indexed = fmt(
+        "type I = { [string]: { someFieldName: string, anotherFieldName: number, aThird: boolean } }\n",
+    );
+    assert!(indexed.contains("\taThird: boolean,\n\t},\n}"), "{indexed}");
+}
+
+/// The output of the array layout parses, and a second run does not move it.
+#[test]
+fn the_array_type_layout_is_stable() {
+    let src = "type Rows = { { name: string, health: number, position: Vector3, tags: { string } } }\nreturn nil\n";
+    let once = fmt(src);
+
+    assert_eq!(fmt(&once), once, "the second run moved something");
+
+    let lexed = larvae::syntax::lexer::lex(&once).expect("lexes");
+    larvae::syntax::parser::parse(&once, &lexed.toks).expect("parses");
 }
 
 // --- the order of the properties of a table type -------------------------
@@ -3278,7 +3432,11 @@ fn a_removed_import_leaves_no_blank_line() {
 
 fn chained(style: larvae::fmt::config::ChainStyle, min_calls: usize) -> FmtConfig {
     FmtConfig {
-        call_chains: larvae::fmt::config::CallChains { style, min_calls },
+        call_chains: larvae::fmt::config::CallChains {
+            style,
+            min_calls,
+            ..Default::default()
+        },
         ..Default::default()
     }
 }
@@ -3381,6 +3539,88 @@ fn a_plain_index_is_not_a_chain() {
     ] {
         assert_eq!(fmt_with(src, chained(ChainStyle::Full, 2)), src, "{src}");
     }
+}
+
+/*
+A chain the author already opened stays open.
+
+This is the reported case. `min_calls` is three by default, and a chain of
+two calls that fits the line collapsed onto it however the author had laid
+it out, which read as the option doing nothing.
+*/
+#[test]
+fn a_chain_the_author_broke_stays_broken() {
+    use larvae::fmt::config::ChainStyle;
+
+    let src = "replicator:set_reliable(entity, ids.player)\n\t:set_networked(entity)\n";
+
+    assert_eq!(fmt_with(src, chained(ChainStyle::Method, 3)), src);
+}
+
+/// The same signal read at `full`, where the base stands alone.
+#[test]
+fn the_full_style_reads_the_authors_breaks_too() {
+    use larvae::fmt::config::ChainStyle;
+
+    let src = "local a = map\n\t.new()\n\t:some()\nreturn a\n";
+
+    assert_eq!(fmt_with(src, chained(ChainStyle::Full, 3)), src);
+}
+
+/*
+`method` holds the first step on the line of the base, so a break before
+that one says nothing about the layout and the chain still collapses.
+*/
+#[test]
+fn a_break_before_the_first_step_is_not_the_signal_under_method() {
+    use larvae::fmt::config::ChainStyle;
+
+    assert_eq!(
+        fmt_with(
+            "local a = map\n\t.new():some()\nreturn a\n",
+            chained(ChainStyle::Method, 3)
+        ),
+        "local a = map.new():some()\nreturn a\n"
+    );
+}
+
+/// A chain the author wrote on one line stays on it, as it always did.
+#[test]
+fn a_chain_written_flat_is_left_flat() {
+    use larvae::fmt::config::ChainStyle;
+
+    let src = "local a = obj:one():two()\nreturn a\n";
+
+    assert_eq!(fmt_with(src, chained(ChainStyle::Method, 3)), src);
+}
+
+/// Off, width and `min_calls` decide alone, which is the older layout.
+#[test]
+fn preserve_breaks_off_collapses_the_chain_again() {
+    use larvae::fmt::config::{CallChains, ChainStyle};
+
+    let cfg = FmtConfig {
+        call_chains: CallChains {
+            style: ChainStyle::Method,
+            min_calls: 3,
+            preserve_breaks: false,
+        },
+        ..Default::default()
+    };
+
+    assert_eq!(
+        fmt_with("local a = obj:one()\n\t:two()\nreturn a\n", cfg),
+        "local a = obj:one():two()\nreturn a\n"
+    );
+}
+
+/// `preserve` has no opened layout to keep, so it reads no breaks.
+#[test]
+fn the_preserve_style_still_puts_a_chain_on_one_line() {
+    assert_eq!(
+        fmt("local a = obj:one()\n\t:two()\nreturn a\n"),
+        "local a = obj:one():two()\nreturn a\n"
+    );
 }
 
 // --- the leading zero of a decimal ----------------------------------------

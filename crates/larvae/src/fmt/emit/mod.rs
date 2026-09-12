@@ -22,7 +22,7 @@ use crate::syntax::lexer::{Tok, TokKind};
 use super::config::{
     BlockNewlineGaps, CallParens, CallStyle, CollapseSimpleStatement, FmtConfig, IfExpansion,
     IfPlacement, IfStyle, ListExpansion, PropertyOrder, QuoteStyle, RequireGrouping, Semicolons,
-    TypeExpansion,
+    TableNewlineGaps, TypeExpansion,
 };
 use super::doc::Doc;
 use super::trivia::{Attached, Comment, Trivia};
@@ -350,6 +350,36 @@ impl<'a> Emitter<'a> {
             return Doc::text("{}");
         }
 
+        /*
+        `{ T }` is the array type, and Luau reads it with one rule of its
+        own: the element is a type and not a property, so the parser takes
+        it and then wants the `}`. A separator after it is a syntax error,
+        which is what a trailing comma on every field would write here.
+        */
+        let array = spans.len() == 1 && self.is_array_element(spans[0]);
+
+        /*
+        The blank lines the author left between the fields, read before
+        the sort. A sort moves the fields out of the order these gaps
+        describe, so a table it touches keeps none of them: a gap that
+        landed between two other fields would group what the author never
+        grouped.
+        */
+        let keeps_gaps =
+            self.keeps_table_gaps() && self.cfg.sort_table_types.order == PropertyOrder::None;
+
+        let gaps: Vec<bool> = match keeps_gaps {
+            true => spans
+                .windows(2)
+                .map(|pair| {
+                    self.trivia
+                        .blank_between(self.tok_end(pair[0].1 - 1), self.tok_start(pair[1].0))
+                })
+                .collect(),
+
+            false => Vec::new(),
+        };
+
         self.sort_properties(&mut spans);
 
         let fields: Vec<Doc<'a>> = spans
@@ -383,9 +413,23 @@ impl<'a> Emitter<'a> {
             ]);
         }
 
-        let broken = fields
-            .into_iter()
-            .map(|field| Doc::concat([Doc::Hard, field, Doc::text(sep)]));
+        let last = fields.len() - 1;
+        let broken = fields.into_iter().enumerate().map(|(i, field)| {
+            let tail = match array && i == last {
+                true => Doc::Nil,
+
+                false => Doc::text(sep),
+            };
+
+            // The gap is the separator, not an addition to it, as in a block.
+            let lead = match i > 0 && gaps.get(i - 1).copied().unwrap_or(false) {
+                true => Doc::Blank,
+
+                false => Doc::Hard,
+            };
+
+            Doc::concat([lead, field, tail])
+        });
 
         Doc::concat([
             Doc::text("{"),
@@ -393,6 +437,31 @@ impl<'a> Emitter<'a> {
             Doc::Hard,
             Doc::text("}"),
         ])
+    }
+
+    /// Reports if the option keeps the blank lines an author left inside a table.
+    fn keeps_table_gaps(&self) -> bool {
+        self.cfg.table_newline_gaps == TableNewlineGaps::Preserve
+    }
+
+    /*
+    Reports if this field of a table type is the element of an array type.
+
+    A property opens with a name and a `:`, and an indexer with a `[`.
+    Either one may carry a `read` or a `write` in front of it. Anything
+    else is a type standing on its own, which is `{ T }`.
+    */
+    fn is_array_element(&self, (from, to): (u32, u32)) -> bool {
+        let at = |i: u32| if i < to { self.tok(i) } else { "" };
+
+        let from = match at(from) {
+            // A field NAMED read is a field; the modifier needs something after it.
+            "read" | "write" if at(from + 1) == "[" || at(from + 2) == ":" => from + 1,
+
+            _ => from,
+        };
+
+        at(from) != "[" && at(from + 1) != ":"
     }
 
     /*

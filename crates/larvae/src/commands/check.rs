@@ -9,6 +9,7 @@ use crate::commands::process::{load_config, report};
 use crate::pipeline;
 
 pub fn run(root: &Path, config: Option<PathBuf>, profile: Option<String>) -> Result<ExitCode> {
+    let started = std::time::Instant::now();
     let config = load_config(root, config, profile.as_deref())?;
     let mut outcome = pipeline::run_analysing(root, &config)?;
 
@@ -33,5 +34,5 @@ pub fn run(root: &Path, config: Option<PathBuf>, profile: Option<String>) -> Res
 
     crate::diag::sort(&mut outcome.diags);
 
-    report(&outcome, false)
+    report(&outcome, false, started.elapsed())
 }

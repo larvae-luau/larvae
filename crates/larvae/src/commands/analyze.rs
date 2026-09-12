@@ -92,6 +92,7 @@ pub fn engine(
     mut analysis: Box<dyn crate::lsp::analysis::Analysis>,
     opts: &Options,
 ) -> Result<ExitCode> {
+    let started = std::time::Instant::now();
     let root = std::env::current_dir()?;
     let lsp = lsp_config(opts)?;
     let cfg_path = opts
@@ -266,8 +267,9 @@ pub fn engine(
     let warnings = diags.len() - errors;
 
     println!(
-        "{} file(s), {errors} error(s), {warnings} warning(s)",
-        files.len()
+        "{} file(s), {errors} error(s), {warnings} warning(s) in {}",
+        files.len(),
+        crate::ui::took(started.elapsed())
     );
 
     Ok(match errors {

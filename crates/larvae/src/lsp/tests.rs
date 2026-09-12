@@ -11,7 +11,7 @@ fn server_with(src: &str) -> Server {
 /// The dispatch must handle every advertised capability.
 #[test]
 fn the_advertised_capabilities_are_all_implemented() {
-    let caps = capabilities(false);
+    let caps = capabilities(false, true);
     let caps = &caps["capabilities"];
 
     assert_eq!(caps["documentFormattingProvider"], true);
@@ -858,7 +858,7 @@ fn an_unsupported_request_is_answered_with_an_error() {
 /// The method above must stay one the server does not advertise.
 #[test]
 fn the_unsupported_example_is_really_unsupported() {
-    let caps = capabilities(true);
+    let caps = capabilities(true, true);
 
     assert!(
         caps["capabilities"]["monikerProvider"].is_null(),
@@ -875,8 +875,8 @@ its colours in competition with it.
 */
 #[test]
 fn semantic_tokens_go_with_the_analyzer() {
-    assert!(capabilities(false)["capabilities"]["semanticTokensProvider"].is_null());
-    assert!(capabilities(true)["capabilities"]["semanticTokensProvider"].is_object());
+    assert!(capabilities(false, true)["capabilities"]["semanticTokensProvider"].is_null());
+    assert!(capabilities(true, true)["capabilities"]["semanticTokensProvider"].is_object());
 }
 
 /// A reply to a notification is a protocol error
@@ -2453,7 +2453,7 @@ capability added without a handler fails here.
 #[test]
 fn every_advertised_provider_answers() {
     // `true` so the analyzer-only providers are walked as well.
-    let caps = capabilities(true);
+    let caps = capabilities(true, true);
     let caps = caps["capabilities"].as_object().expect("a table");
 
     let method_of = |provider: &str| match provider {
@@ -2689,6 +2689,40 @@ fn a_computed_colour_gets_no_swatch() {
     assert_eq!(result.as_array().expect("a list").len(), 0, "{result}");
 }
 
+/*
+`color_picker = false` takes the capability out and answers nothing.
+
+The capability is the half that matters: an editor told about a colour
+provider reserves the gutter for one, so the way to have no swatch is to
+never claim to have any. The handler answers empty as well, because a client
+that asks anyway must not get a decoration back.
+*/
+#[test]
+fn the_colour_option_off_removes_the_provider_and_the_answer() {
+    assert!(capabilities(false, true)["capabilities"]["colorProvider"].is_boolean());
+    assert!(capabilities(false, false)["capabilities"]["colorProvider"].is_null());
+
+    let mut server = server_with("local red = Color3.fromRGB(255, 0, 0)\nreturn red\n");
+    server.lsp.color_picker = false;
+
+    let params = json!({ "textDocument": { "uri": "file:///t.luau" } });
+    let result = ask(&mut server, "textDocument/documentColor", params);
+
+    assert_eq!(result.as_array().expect("a list").len(), 0, "{result}");
+
+    let picked = ask(
+        &mut server,
+        "textDocument/colorPresentation",
+        json!({
+            "textDocument": { "uri": "file:///t.luau" },
+            "color": { "red": 1.0, "green": 0.0, "blue": 0.0, "alpha": 1.0 },
+            "range": { "start": { "line": 0, "character": 12 }, "end": { "line": 0, "character": 36 } },
+        }),
+    );
+
+    assert_eq!(picked.as_array().expect("a list").len(), 0, "{picked}");
+}
+
 /// The outline is a tree, so a nested function is a child and not a sibling.
 #[test]
 fn the_document_symbol_reply_nests() {
@@ -2879,7 +2913,10 @@ fn analyzer_off_is_the_classic_server() {
     let mut out = Vec::new();
 
     // Not advertised, so the editor never asks.
-    let caps = capabilities(server.will_analyse() && server.lsp.analyzer);
+    let caps = capabilities(
+        server.will_analyse() && server.lsp.analyzer,
+        server.lsp.color_picker,
+    );
     assert!(caps["capabilities"]["hoverProvider"].is_null(), "{caps}");
     assert!(caps["capabilities"]["completionProvider"].is_null());
 

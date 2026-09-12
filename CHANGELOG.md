@@ -6,7 +6,38 @@ Notable changes land here. Format follows
 
 ## Unreleased
 
+### Added
+
+- `[fmt] table_newline_gaps` decides whether the blank lines between the
+  fields of a table survive. `preserve` is the new default and keeps one
+  blank line where the file has one or more, in a table constructor and a
+  table type alike. `never` closes every gap, which is the layout larvae
+  had before the option
+- `[fmt] call_chains.preserve_breaks` keeps a call chain that is already
+  written over several lines open, whatever `min_calls` says. On by
+  default, and it does nothing under `style = "preserve"`
+- Every command that walks the project reports how long it took at the end
+  of its summary line: `formatted 12 files, 3 unchanged in 41ms`. The clock
+  is the wall clock of the whole command and not the sum of the per file
+  work, which larvae runs in parallel
+- `[lsp] color_picker` turns the colour swatch and its picker off. The
+  server then advertises no colour provider, so the editor never asks and
+  reserves no gutter for a decoration that will not come
+- `[lint.options.deprecated] ambiguous_methods` reports a replaced
+  Instance method on any receiver, for a project that has no method of
+  its own under one of those names
+
 ### Changed
+
+- `larvae fmt` no longer collapses a call chain that is already written
+  over several lines, under `call_chains.style` of `method` or `full`. A
+  chain of two calls that fits the line went back onto one line whatever
+  the layout in the file, which read as the option doing nothing
+- The `deprecated` lint reports `:Remove()` only where the receiver roots
+  at an Instance larvae can see, such as `workspace.Part` or
+  `script.Parent`. `Instance:Remove()` is deprecated and `Trove:Remove()`
+  is not, and the casing tells the two apart not at all, so matching the
+  name alone reported a project's own methods
 
 - `larvae-lsp` advertises semantic tokens with the analyzer alone. A
   project that turns the analyzer off runs another server for the types,
@@ -14,6 +45,11 @@ Notable changes land here. Format follows
 
 ### Fixed
 
+- A table type that opens over several lines no longer takes a trailing
+  separator on an array element. `{ T }` is a rule of its own in Luau: the
+  element is a type and not a property, so the parser reads it and then
+  wants the `}`. The comma after it made every opened `{ { ... } }` a
+  syntax error
 - A worm whose front-end refuses a file keeps the findings the worm
   reported for it. The inherited lints read the front-end's output when
   the worm sends no shadow, and a refusal there threw the worm's reply

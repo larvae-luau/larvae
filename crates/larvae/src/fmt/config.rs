@@ -116,6 +116,32 @@ pub enum BlockNewlineGaps {
     Preserve,
 }
 
+/*
+Selects if the blank lines that an author left between the fields of a
+table survive.
+
+`preserve` is the default, and it reads the gaps the way a block reads
+them: one blank line where the author left one or more, and none where
+they left none. A long table is written in groups, and the blank line is
+what marks a group. A formatter that closes every gap turns that table
+into one undifferentiated run of lines and loses the grouping the author
+wrote, which no width or separator option can put back.
+
+`never` closes every gap, which is what larvae did before this option, for
+a project that wants each table to come out as one solid block.
+
+The option reads a table constructor and a table type alike. A gap only
+survives in a table that opens over several lines; one that fits on a line
+has no gap to keep.
+*/
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TableNewlineGaps {
+    #[default]
+    Preserve,
+    Never,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LineEndings {
@@ -762,6 +788,21 @@ pub struct CallChains {
     */
     #[serde(default = "default_min_calls")]
     pub min_calls: usize,
+
+    /*
+    A chain the author already wrote over several lines stays open.
+
+    This is the magic trailing comma of a table, for a chain. A break
+    the author put before a step is the same signal a trailing comma
+    is: this is a sequence of steps and not one expression. Without
+    it, `min_calls` alone decides, and a chain of two calls that fits
+    the line collapses onto it however the author wrote it.
+
+    `preserve` reads no breaks, because that style has no opened
+    layout to keep. The option applies to `method` and `full`.
+    */
+    #[serde(default = "default_true")]
+    pub preserve_breaks: bool,
 }
 
 impl Default for CallChains {
@@ -769,6 +810,7 @@ impl Default for CallChains {
         Self {
             style: ChainStyle::default(),
             min_calls: default_min_calls(),
+            preserve_breaks: default_true(),
         }
     }
 }
@@ -879,6 +921,10 @@ pub struct FmtConfig {
 
     #[serde(default)]
     pub block_newline_gaps: BlockNewlineGaps,
+
+    /// Selects if the blank lines an author left inside a table survive.
+    #[serde(default)]
+    pub table_newline_gaps: TableNewlineGaps,
 
     #[serde(default)]
     pub sort_requires: SortRequires,

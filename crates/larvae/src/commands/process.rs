@@ -16,6 +16,7 @@ pub fn run(
     profile: Option<String>,
     watch: bool,
 ) -> Result<ExitCode> {
+    let started = std::time::Instant::now();
     let config_path = config.clone();
     let config = load_config(root, config, profile.as_deref())?;
 
@@ -25,7 +26,7 @@ pub fn run(
 
     let outcome = pipeline::run(root, &config, true)?;
 
-    report(&outcome, true)
+    report(&outcome, true, started.elapsed())
 }
 
 pub(crate) fn load_config(
@@ -40,7 +41,11 @@ pub(crate) fn load_config(
     }
 }
 
-pub(crate) fn report(outcome: &Outcome, wrote: bool) -> Result<ExitCode> {
+pub(crate) fn report(
+    outcome: &Outcome,
+    wrote: bool,
+    elapsed: std::time::Duration,
+) -> Result<ExitCode> {
     let color = ui::want_color_stderr();
 
     for d in &outcome.diags {
@@ -64,11 +69,12 @@ pub(crate) fn report(outcome: &Outcome, wrote: bool) -> Result<ExitCode> {
     }
 
     eprintln!(
-        "{} {} file(s): {} require(s) rewritten, {} dynamic require(s) left untouched{extra}",
+        "{} {} file(s): {} require(s) rewritten, {} dynamic require(s) left untouched{extra} in {}",
         ui::accent(verb, color),
         s.files_processed,
         s.requires_rewritten,
         s.requires_dynamic,
+        ui::took(elapsed),
     );
 
     /*

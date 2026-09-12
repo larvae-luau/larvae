@@ -832,7 +832,7 @@ fn the_replacement_is_not_itself_deprecated() {
 
 #[test]
 fn deprecated_catches_the_replaced_methods() {
-    assert!(fires("deprecated", "part:Remove()\n"));
+    assert!(fires("deprecated", "workspace.Part:Remove()\n"));
     assert!(fires("deprecated", "local c = part:children()\nprint(c)\n"));
 }
 
@@ -1188,10 +1188,52 @@ fn a_lowercase_remove_on_an_unknown_receiver_is_not_deprecated() {
     assert!(!fires("deprecated", "local q = Queue.new()\nq:remove(1)\n"));
 }
 
+/*
+`Remove` reads the same way. `Trove:Remove()` and `Queue:Remove(item)` are
+ordinary methods in this ecosystem, and the casing tells them apart from
+`Instance:Remove()` not at all.
+*/
+#[test]
+fn a_remove_on_an_unknown_receiver_is_not_deprecated() {
+    assert!(!fires("deprecated", "local q = Queue.new()\nq:Remove(1)\n"));
+    assert!(!fires(
+        "deprecated",
+        "local trove = Trove.new()\ntrove:Remove()\n"
+    ));
+}
+
+/// A receiver that roots at an Instance global is one larvae can read.
+#[test]
+fn a_remove_on_an_instance_is_reported() {
+    for src in [
+        "workspace.Part:Remove()\n",
+        "game.Workspace.Baseplate:Remove()\n",
+        "script.Parent:Remove()\n",
+        "game:GetService(\"Debris\").Thing:Remove()\n",
+    ] {
+        assert!(fires("deprecated", src), "{src}");
+    }
+}
+
+/// A project with no `Remove` of its own can ask for the name alone.
+#[test]
+fn the_option_reports_a_remove_on_any_receiver() {
+    let cfg = opts("deprecated", "ambiguous_methods = true");
+
+    assert!(
+        fired("local q = Queue.new()\nq:Remove(1)\n", &cfg)
+            .iter()
+            .any(|n| n == "deprecated")
+    );
+}
+
 #[test]
 fn the_legacy_roblox_casing_is_still_reported() {
-    assert!(fires("deprecated", "part:Remove()\n"));
     assert!(fires("deprecated", "local c = part:children()\nprint(c)\n"));
+    assert!(fires(
+        "deprecated",
+        "local n = part:findFirstChild(\"x\")\nprint(n)\n"
+    ));
 }
 
 /// These names have no meaning outside Roblox.
@@ -1203,7 +1245,7 @@ fn deprecated_methods_are_silent_under_plain_luau() {
     };
 
     assert!(
-        !fired("part:Remove()\n", &cfg)
+        !fired("workspace.Part:Remove()\n", &cfg)
             .iter()
             .any(|n| n == "deprecated")
     );

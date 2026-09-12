@@ -36,6 +36,7 @@ pub fn run(
         return explain_lint(root, config.as_deref(), &name);
     }
 
+    let started = std::time::Instant::now();
     let cfg = discover(root, config.clone())?;
 
     /*
@@ -104,7 +105,7 @@ pub fn run(
 
     diags.sort_by(|a, b| a.file.cmp(&b.file).then(a.line_col.cmp(&b.line_col)));
 
-    report(&diags, files.len())
+    report(&diags, files.len(), started.elapsed())
 }
 
 /*
@@ -154,6 +155,7 @@ fn from_stdin(
     path: Option<&Path>,
     config: Option<PathBuf>,
 ) -> Result<ExitCode> {
+    let started = std::time::Instant::now();
     let mut bytes = Vec::new();
     std::io::stdin()
         .read_to_end(&mut bytes)
@@ -181,7 +183,7 @@ fn from_stdin(
         },
     };
 
-    report(&diags, 1)
+    report(&diags, 1, started.elapsed())
 }
 
 /// `--explain <name>` shows the details of a finding in the terminal
@@ -291,7 +293,7 @@ fn files(n: usize) -> String {
     }
 }
 
-fn report(diags: &[Diag], scanned: usize) -> Result<ExitCode> {
+fn report(diags: &[Diag], scanned: usize, elapsed: std::time::Duration) -> Result<ExitCode> {
     let color = ui::want_color();
 
     /*
@@ -330,7 +332,11 @@ fn report(diags: &[Diag], scanned: usize) -> Result<ExitCode> {
     let infos = count(Severity::Info);
 
     if diags.is_empty() {
-        ui::print_success(&format!("{}, nothing to report", files(scanned)));
+        ui::print_success(&format!(
+            "{}, nothing to report in {}",
+            files(scanned),
+            ui::took(elapsed)
+        ));
 
         return Ok(ExitCode::SUCCESS);
     }
@@ -346,8 +352,9 @@ fn report(diags: &[Diag], scanned: usize) -> Result<ExitCode> {
     };
 
     println!(
-        "\n{}, {errors} errors, {warnings} warnings{tail}",
-        files(scanned)
+        "\n{}, {errors} errors, {warnings} warnings{tail} in {}",
+        files(scanned),
+        ui::took(elapsed)
     );
 
     /*
