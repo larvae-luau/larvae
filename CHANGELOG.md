@@ -4,7 +4,7 @@ Notable changes land here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow
 [semver](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.9.0
 
 ### Added
 
@@ -38,7 +38,6 @@ Notable changes land here. Format follows
   `script.Parent`. `Instance:Remove()` is deprecated and `Trove:Remove()`
   is not, and the casing tells the two apart not at all, so matching the
   name alone reported a project's own methods
-
 - `larvae-lsp` advertises semantic tokens with the analyzer alone. A
   project that turns the analyzer off runs another server for the types,
   and that server now colours the file without larvae's colours on top
