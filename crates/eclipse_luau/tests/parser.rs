@@ -495,15 +495,15 @@ fn the_file_name_selects_the_mode() {
 }
 
 /*
-The real 837KB globalTypes.d.luau of luau-lsp must parse whole and print
-back byte for byte. The file lives in the larvae-lsp crate and the nightly
-refreshes it, so this test tracks real upstream output over time.
+The real 837KB globalTypes.d.luau of luau-lsp, as of 2026-08-29, must parse
+whole and print back byte for byte. It is the largest definitions file in
+use, so it holds every declaration form upstream writes.
 */
 #[test]
 fn the_vendored_global_types_parse_and_round_trip() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../larvae-lsp/types/globalTypes.d.luau"
+        "/tests/fixtures/globalTypes.d.luau"
     );
 
     let src = std::fs::read_to_string(path).expect("the vendored types exist");

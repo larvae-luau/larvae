@@ -99,287 +99,34 @@ fn install() -> Result<ExitCode> {
         ui::print_success(&format!("Installed larvae to {}", target.display()));
     }
 
-    install_server(&me, &bin_dir);
+    remove_retired_server(&bin_dir);
     add_to_path(&bin_dir);
 
     Ok(ExitCode::SUCCESS)
 }
 
 /*
-Put the language server beside `larvae`, with the library it needs.
+Remove the language server of a release before 0.10, and its library.
 
-The editor extension looks for `larvae-lsp` next to the binary it resolved,
-so a release that installs one and not the other gives a user the fallback
-server: lint and format, no hover, no completion.
-
-The analyzer lives in a shared library, and the server finds it through an
-rpath of `$ORIGIN`, which is the directory the server sits in. So the library
-travels with it. A server installed without the library does not fall back,
-it refuses to start:
-
-```text
-larvae-lsp: error while loading shared libraries: libeclipse_analysis.so
-```
-
-The editor then restarts it five times and gives up, which is a worse
-failure than not installing the server at all.
-
-A silent skip is right when a file is not there. A build without the analyzer
-has the server and no library, `larvae lsp` still runs, and a user who
-installed the CLI alone has not done anything wrong.
+The analyzer left larvae in 0.10, and luau-lsp serves the types now. An
+older editor extension still starts `larvae-lsp` when it finds one beside
+`larvae`, so a stale server kept answering with the old analyzer. With the
+file gone, the extension falls back to `larvae lsp`.
 */
-fn install_server(me: &Path, bin_dir: &Path) {
-    let Some(from) = me.parent() else {
-        return;
-    };
-
+fn remove_retired_server(bin_dir: &Path) {
     let server = format!("larvae-lsp{}", std::env::consts::EXE_SUFFIX);
-
-    /*
-    A tool manager installs the one binary its manifest names, so a
-    larvae that arrived through rokit, aftman, or ember sits alone: the
-    server and the analyzer library of the same release never landed.
-    The editor then falls back to `larvae lsp`, which serves the lints
-    and none of the types, and nothing says why.
-
-    The release holds all three files, so the install fetches the two
-    that are missing rather than leaving the editor half served.
-    */
-    if !from.join(&server).is_file() {
-        match fetch_server(bin_dir) {
-            Ok(true) => {}
-
-            Ok(false) => {}
-
-            Err(e) => eprintln!(
-                "note: larvae-lsp is not beside this binary and could not be fetched: {e:#}\n      the editor keeps the lints and loses hover, completion, and types"
-            ),
-        }
-
-        return;
-    }
-
-    /*
-    The library is named the way the platform names one. The server's build
-    script writes a `.so` today, and the constants keep this right if it
-    ever writes the other two.
-    */
     let library = format!(
         "{}eclipse_analysis{}",
         std::env::consts::DLL_PREFIX,
         std::env::consts::DLL_SUFFIX
     );
 
-    /*
-    A server without the analyzer never replaces one that has it.
+    for name in [server, library] {
+        let path = bin_dir.join(&name);
 
-    The workspace builds larvae-lsp without the feature for its tests, so a
-    featureless binary sits beside larvae after any test run. Installing it
-    silently took hover and completion away from the editor, and nothing
-    said why. The analyzer build carries the shim's exported names; the
-    check reads for one of them.
-    */
-    let sibling = from.join(&server);
-
-    if sibling.is_file() && !file_mentions(&sibling, b"larvae_session_new") {
-        eprintln!(
-            "note: larvae-lsp beside this binary was built without the analyzer, so the installed server is kept"
-        );
-        eprintln!("      a test run builds that form; build the real one with:");
-        eprintln!("          cargo build -p larvae-lsp --features analyzer          (debug)");
-        eprintln!("          cargo build --release -p larvae-lsp --features analyzer (release)");
-
-        return;
-    }
-
-    for name in [server.as_str(), library.as_str()] {
-        let source = from.join(name);
-
-        if !source.is_file() {
-            continue;
+        if path.is_file() && std::fs::remove_file(&path).is_ok() {
+            eprintln!("note: removed {name}; since larvae 0.10, luau-lsp serves the types");
         }
-
-        let target = bin_dir.join(name);
-
-        if paths::same_file(&source, &target) {
-            continue;
-        }
-
-        match replace_exe(&source, &target) {
-            Ok(()) => {
-                unquarantine(&target);
-                ui::print_success(&format!("Installed {name} to {}", target.display()));
-            }
-
-            // The CLI is on disk and works; the message says what was lost.
-            Err(e) => eprintln!(
-                "note: could not install {name}, the editor falls back to `larvae lsp`: {e:#}"
-            ),
-        }
-    }
-
-    check_server_runs(&bin_dir.join(&server));
-}
-
-/*
-Fetch the server and the analyzer library of this release.
-
-The zip of a release holds the CLI, the server, and the library. A
-tool manager unpacks the CLI alone, so the two that serve the editor
-have to come from the archive here. The version is the running one,
-because a server of another version speaks another protocol to the
-same larvae.
-
-The answer is whether anything was installed. A release without the
-archive, ex: an old one, is not a failure: the editor keeps the
-fallback server it always had.
-*/
-fn fetch_server(bin_dir: &Path) -> Result<bool> {
-    let stem = format!("larvae-{}-{}", std::env::consts::OS, std::env::consts::ARCH);
-    let zip_name = format!("{stem}.zip");
-    let version = env!("CARGO_PKG_VERSION");
-
-    let url = format!("https://github.com/{REPO}/releases/download/v{version}/{zip_name}");
-
-    eprintln!("larvae-lsp is not beside this binary; fetching it from release v{version}");
-
-    let archive = http::get_bytes(&url)
-        .with_context(|| format!("cannot download {zip_name} of v{version}"))?;
-
-    let library = format!(
-        "{}eclipse_analysis{}",
-        std::env::consts::DLL_PREFIX,
-        std::env::consts::DLL_SUFFIX
-    );
-
-    let server = format!("larvae-lsp{}", std::env::consts::EXE_SUFFIX);
-
-    std::fs::create_dir_all(bin_dir)
-        .with_context(|| format!("failed to create {}", bin_dir.display()))?;
-
-    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&archive))
-        .context("the release archive does not read as a zip")?;
-
-    let mut wrote = false;
-
-    for index in 0..zip.len() {
-        let mut entry = zip.by_index(index)?;
-
-        // The base name only: a crafted path in an archive reaches nothing.
-        let Some(name) = entry
-            .enclosed_name()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-        else {
-            continue;
-        };
-
-        if name != server && name != library {
-            continue;
-        }
-
-        use std::io::Read;
-
-        let mut bytes = Vec::new();
-        entry.read_to_end(&mut bytes)?;
-
-        let target = bin_dir.join(&name);
-        let staged = std::env::temp_dir().join(&name);
-
-        std::fs::write(&staged, &bytes)
-            .with_context(|| format!("failed to stage {}", staged.display()))?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-
-            std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))?;
-        }
-
-        replace_exe(&staged, &target).with_context(|| format!("failed to install {name}"))?;
-
-        let _ = std::fs::remove_file(&staged);
-
-        unquarantine(&target);
-        ui::print_success(&format!("Installed {name} to {}", target.display()));
-
-        wrote = true;
-    }
-
-    if wrote {
-        check_server_runs(&bin_dir.join(&server));
-    }
-
-    Ok(wrote)
-}
-
-/*
-Clear the quarantine macOS puts on a downloaded file.
-
-A release arrives as a zip from a browser, and every file unpacked from
-one carries `com.apple.quarantine`. Gatekeeper then refuses the server,
-and it refuses the analyzer library the server links against, so the
-process dies before it writes a line. An editor sees a server that
-answered nothing and says nothing, which is the worst shape a failure
-takes.
-
-The user asked for this install, so the attribute goes. The command is
-absent on every other platform and the call costs nothing there.
-*/
-fn unquarantine(path: &Path) {
-    if !cfg!(target_os = "macos") {
-        return;
-    }
-
-    let _ = std::process::Command::new("xattr")
-        .arg("-d")
-        .arg("com.apple.quarantine")
-        .arg(path)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-}
-
-/*
-Prove the installed server starts, and say what stopped it.
-
-The analyzer is a library the server links at load, not one it opens
-when it needs it, so a library the loader refuses kills the process
-before `main`. The editor then starts a server that dies at once and
-reports nothing, and the user is left with an editor that lost its
-types for no stated reason. One run here turns that into a sentence
-with the loader's own words in it.
-*/
-fn check_server_runs(server: &Path) {
-    if !server.is_file() {
-        return;
-    }
-
-    let Ok(out) = std::process::Command::new(server).arg("--version").output() else {
-        eprintln!(
-            "note: the installed larvae-lsp did not start, so the editor keeps the lints and loses the types"
-        );
-
-        return;
-    };
-
-    if out.status.success() {
-        return;
-    }
-
-    let said = String::from_utf8_lossy(&out.stderr);
-    let said = said.trim();
-
-    eprintln!(
-        "note: the installed larvae-lsp does not start, so the editor loses hover, completion, and types"
-    );
-
-    if !said.is_empty() {
-        eprintln!("      {said}");
-    }
-
-    if cfg!(target_os = "macos") {
-        eprintln!("      on macOS this is usually the quarantine of a downloaded file:");
-        eprintln!("          xattr -dr com.apple.quarantine ~/.larvae/bin");
     }
 }
 
@@ -509,6 +256,10 @@ fn update(force: bool) -> Result<ExitCode> {
     self_replace::self_replace(&staged).context("failed to replace the running executable")?;
     let _ = std::fs::remove_file(&staged);
 
+    if let Some(dir) = me.parent() {
+        remove_retired_server(dir);
+    }
+
     ui::print_success(&format!("Updated larvae v{current} -> v{latest}"));
 
     Ok(ExitCode::SUCCESS)
@@ -621,15 +372,6 @@ Put the bin directory on PATH. On Windows, the command writes the registry.
 Unix shells differ too much for a safe profile edit without user consent, so
 the command prints the line instead.
 */
-/// True when the file holds the byte string, read in one pass
-fn file_mentions(path: &Path, needle: &[u8]) -> bool {
-    let Ok(bytes) = std::fs::read(path) else {
-        return false;
-    };
-
-    bytes.windows(needle.len()).any(|w| w == needle)
-}
-
 fn add_to_path(bin_dir: &Path) {
     let on_path = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).any(|entry| entry == bin_dir))

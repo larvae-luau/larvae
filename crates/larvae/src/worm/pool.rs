@@ -346,19 +346,6 @@ impl Pool {
             .collect()
     }
 
-    /*
-    The extensions a resolving worm claims, without the dot.
-
-    A require of one of these is answered by the worm, which vendors the
-    type of the file. A require of any other non-Luau file is a path Luau
-    cannot load, and it reports one. So this list is the difference between
-    a type and an `unsupported path`, and it takes both halves: the worm has
-    to claim the extension and to answer resolution.
-    */
-    pub fn lsp_resolved_claims(&self) -> Vec<String> {
-        Self::extensions(self.specs.iter().filter(|s| s.manifest.lsp.resolve))
-    }
-
     fn extensions<'a>(specs: impl Iterator<Item = &'a Arc<Spec>>) -> Vec<String> {
         specs
             .flat_map(|s| &s.claims)
@@ -383,138 +370,6 @@ impl Pool {
     }
 
     /// Ask a worm for the findings of one file, on the instance of this thread
-    /*
-    The first claiming worm that resolves the spec answers; the rest pass.
-
-    The order is the order of the pool, which is the order of the config,
-    so a project that installs two resolving worms decides precedence by
-    writing them in order.
-    */
-    pub fn lsp_resolve(&self, from: &str, spec: &str) -> Option<String> {
-        for index in self.lsp_resolvers() {
-            if let Ok(Some(path)) = self.with_worm(index, |worm, _| worm.lsp_resolve(from, spec)) {
-                return Some(path);
-            }
-        }
-
-        None
-    }
-
-    /// The lowered module from the worm that owns the path
-    pub fn lsp_load(&self, index: usize, path: &str) -> Result<super::proto::LspLoadReply> {
-        self.with_worm(index, |worm, _| worm.lsp_load(path))
-    }
-
-    /// Every declaration of every declaring worm, in pool order
-    pub fn lsp_declarations(&self) -> Vec<super::proto::LspDeclaration> {
-        let mut out = Vec::new();
-
-        for index in 0..self.specs().len() {
-            if !self.specs()[index].manifest.lsp.declarations {
-                continue;
-            }
-
-            if let Ok(mut decls) = self.with_worm(index, |worm, _| worm.lsp_declarations()) {
-                out.append(&mut decls);
-            }
-        }
-
-        out
-    }
-
-    /*
-    One response through every worm that transforms this kind, in order.
-
-    The context carries the request: the path, the document text, and the
-    cursor's byte offset when the kind has one. A worm that injects, ex:
-    tag completions inside its markup, reads the position from here; the
-    response alone cannot say where the cursor sits.
-    */
-    pub fn lsp_respond(
-        &self,
-        kind: &str,
-        context: &serde_json::Value,
-        response: serde_json::Value,
-    ) -> serde_json::Value {
-        let mut current = response;
-        let context = context.to_string();
-
-        for index in 0..self.specs().len() {
-            if !self.specs()[index]
-                .manifest
-                .lsp
-                .respond
-                .iter()
-                .any(|k| k == kind)
-            {
-                continue;
-            }
-
-            let json = current.to_string();
-
-            if let Ok(Some(next)) =
-                self.with_worm(index, |worm, _| worm.lsp_respond(kind, &context, &json))
-            {
-                current = next;
-            }
-        }
-
-        current
-    }
-
-    /// The lowered source from the first resolver worm that loads the path
-    pub fn lsp_load_any(&self, path: &str) -> Option<super::proto::LspLoadReply> {
-        self.lsp_load_traced(path).ok().flatten()
-    }
-
-    /*
-    The same load, and a refusal comes back with its reason.
-
-    A worm that cannot lower a file is the only one who knows why, and a
-    require of that file otherwise fails as a bare `*error-type*` with
-    nothing to read. `Ok(None)` is a path no resolver claims, which is a
-    different answer from a claimed file that will not lower.
-    */
-    pub fn lsp_load_traced(
-        &self,
-        path: &str,
-    ) -> Result<Option<super::proto::LspLoadReply>, String> {
-        let mut refusal = None;
-
-        for index in self.lsp_resolvers() {
-            match self.lsp_load(index, path) {
-                Ok(reply) => return Ok(Some(reply)),
-
-                // The root cause is the worm's own sentence; the context
-                // chain above it repeats the worm's name.
-                Err(e) => refusal = Some(e.root_cause().to_string()),
-            }
-        }
-
-        match refusal {
-            Some(reason) => Err(reason),
-
-            None => Ok(None),
-        }
-    }
-
-    /// The indexes of the worms that answer tier-1 resolution
-    fn lsp_resolvers(&self) -> Vec<usize> {
-        (0..self.specs().len())
-            .filter(|i| self.specs()[*i].manifest.lsp.resolve)
-            .collect()
-    }
-
-    /// True when any worm declares that its hooks answer in plain Luau files
-    pub fn lsp_serves_luau(&self) -> bool {
-        self.specs().iter().any(|s| s.manifest.lsp.serves_luau)
-    }
-
-    /// True when any worm declares any LSP hook
-    pub fn has_lsp_hooks(&self) -> bool {
-        self.specs().iter().any(|s| !s.manifest.lsp.is_empty())
-    }
-
     pub fn lint(&self, index: usize, source: &str) -> Result<super::proto::LintReply> {
         self.with_worm(index, |worm, _spec| worm.lint(source))
     }
@@ -590,25 +445,6 @@ impl Pool {
             };
 
             out.extend(reply.actions.into_iter().map(|a| (name.clone(), a)));
-        }
-
-        out
-    }
-
-    /// The type definitions every worm supplies, by the worm that supplied each.
-    pub fn definitions(&self) -> Vec<(String, String)> {
-        let mut out = Vec::new();
-
-        for (index, spec) in self.specs.iter().enumerate() {
-            let name = spec.manifest.name.clone();
-
-            let Ok(reply) = self.with_worm(index, |worm, _| worm.definitions()) else {
-                continue;
-            };
-
-            if !reply.definitions.trim().is_empty() {
-                out.push((name, reply.definitions));
-            }
         }
 
         out

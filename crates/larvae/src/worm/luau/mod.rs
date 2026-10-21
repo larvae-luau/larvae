@@ -57,8 +57,6 @@ pub struct LuauWorm {
     lint: Option<mlua::Function>,
     /// `frontend.actions`, absent where the worm offers none
     actions: Option<mlua::Function>,
-    /// `frontend.definitions`, absent where the worm supplies no types
-    definitions: Option<mlua::Function>,
     /// The `visit` function for each rule the worm declared, keyed by rule name
     rules: BTreeMap<String, mlua::Function>,
     /// Optional. Larvae calls it once with the settings before the worm sees a file.
@@ -90,7 +88,7 @@ impl LuauWorm {
             .eval()
             .with_context(|| format!("worm `{chunk_name}` failed to load"))?;
 
-        let (compile, format, lint, actions, definitions) =
+        let (compile, format, lint, actions) =
             match exports.get::<Option<mlua::Table>>("frontend")? {
                 Some(frontend) => {
                     let compile = frontend.get::<mlua::Function>("compile").with_context(|| {
@@ -117,16 +115,10 @@ impl LuauWorm {
                             format!("worm `{chunk_name}`: frontend.actions is not a function")
                         })?;
 
-                    let definitions = frontend
-                        .get::<Option<mlua::Function>>("definitions")
-                        .with_context(|| {
-                            format!("worm `{chunk_name}`: frontend.definitions is not a function")
-                        })?;
-
-                    (Some(compile), format, lint, actions, definitions)
+                    (Some(compile), format, lint, actions)
                 }
 
-                None => (None, None, None, None, None),
+                None => (None, None, None, None),
             };
 
         let mut rules = BTreeMap::new();
@@ -173,7 +165,6 @@ impl LuauWorm {
             format,
             lint,
             actions,
-            definitions,
             rules,
             init,
             budget,
@@ -353,23 +344,6 @@ impl LuauWorm {
         self.lua
             .from_value(value)
             .context("the actions reply does not have the documented shape")
-    }
-
-    /// The Luau type definitions this worm supplies, or none.
-    pub fn definitions(&mut self) -> Result<proto::DefinitionsReply> {
-        let Some(definitions) = self.definitions.clone() else {
-            return Ok(proto::DefinitionsReply::default());
-        };
-
-        self.budget.store(0, Ordering::Relaxed);
-
-        let value = definitions
-            .call::<mlua::Value>(())
-            .map_err(|e| anyhow!(worm_message(&e)))?;
-
-        self.lua
-            .from_value(value)
-            .context("the definitions reply does not have the documented shape")
     }
 
     pub fn lint(&mut self, source: &str) -> Result<proto::LintReply> {

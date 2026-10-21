@@ -133,40 +133,6 @@ pub struct Frontend {
     pub shared: bool,
 }
 
-/*
-What a worm does for the language server, declared so gating never runs
-worm code. A worm that resolves answers tier 1: the requires it claims,
-lowered source with a span map. Declarations are tier 2: .d.luau text the
-analyzer loads. Respond lists the tier 3 transforms, by request kind.
-*/
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LspDecl {
-    /// This worm answers lsp_resolve and lsp_load for the specs it claims
-    #[serde(default)]
-    pub resolve: bool,
-    /// This worm answers lsp_declarations with .d.luau text at load
-    #[serde(default)]
-    pub declarations: bool,
-    /// The request kinds this worm transforms: hover, completions, diagnostics
-    #[serde(default)]
-    pub respond: Vec<String>,
-    /*
-    This worm's hooks answer inside plain Luau files, not only inside the
-    files it claims. The json worm is the example: the requires it
-    resolves are written in ordinary .luau code. Claim-only gating widens
-    for a project that loads such a worm, or the worm's whole value hides.
-    */
-    #[serde(default)]
-    pub serves_luau: bool,
-}
-
-impl LspDecl {
-    pub fn is_empty(&self) -> bool {
-        !self.resolve && !self.declarations && self.respond.is_empty() && !self.serves_luau
-    }
-}
-
 /// One lint that a worm declares, so `[lint.rules]` can set its level by name
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -303,9 +269,14 @@ pub struct Manifest {
     /// The settings this worm takes in `[worms.<name>.config]`
     #[serde(default)]
     pub options: BTreeMap<String, OptionDecl>,
-    /// What this worm does for the language server, see [`LspDecl`]
+    /*
+    The language server hooks, which left with the analyzer in 0.10.
+
+    The table still parses, whatever it holds, so a manifest from before
+    keeps loading. Larvae says once per worm that it does nothing.
+    */
     #[serde(default)]
-    pub lsp: LspDecl,
+    pub lsp: Option<toml::Value>,
     /*
     The format options this worm adds to the `[fmt]` table of larvae.
 
@@ -324,6 +295,10 @@ impl Manifest {
 
         manifest.validate()?;
 
+        if manifest.lsp.is_some() {
+            retired_lsp(&manifest.name);
+        }
+
         Ok(manifest)
     }
 
@@ -333,20 +308,6 @@ impl Manifest {
     }
 
     fn validate(&self) -> Result<()> {
-        /*
-        The LSP hooks run on the analyzer's hot path, resident and
-        synchronous. The luau and wasm forms spin an interpreter per call,
-        which that path cannot afford, so a manifest that declares [lsp]
-        on those forms is refused at load and not at the first request.
-        */
-        if !self.lsp.is_empty() && self.form != Form::Native {
-            bail!(
-                "worm `{}`: [lsp] hooks need the native form; the {:?} form cannot answer them",
-                self.name,
-                self.form
-            );
-        }
-
         if self.name.is_empty() {
             bail!("worm.toml: name is empty");
         }
@@ -380,9 +341,9 @@ impl Manifest {
             );
         }
 
-        if self.frontend.is_none() && !self.has_rules() && self.lsp.is_empty() && !self.lints_luau {
+        if self.frontend.is_none() && !self.has_rules() && !self.lints_luau {
             bail!(
-                "worm `{}` declares no frontend, no rules, no [lsp] hooks, and no lints_luau, so it would never run",
+                "worm `{}` declares no frontend, no rules, and no lints_luau, so it would never run",
                 self.name
             );
         }
@@ -668,11 +629,12 @@ entry = "init.luau"
 }
 
 #[cfg(test)]
-mod serves_luau_tests {
+mod retired_lsp_tests {
     use super::Manifest;
 
+    /// A manifest from before 0.10 keeps loading, `[lsp]` and all.
     #[test]
-    fn a_worm_can_declare_that_it_serves_plain_luau() {
+    fn a_retired_lsp_table_still_parses() {
         let m = Manifest::parse(concat!(
             "name = \"data\"\napi = 1\nform = \"native\"\nentry = \"worm\"\n",
             "[frontend]\nclaims = [\".json\"]\n",
@@ -680,7 +642,25 @@ mod serves_luau_tests {
         ))
         .unwrap();
 
-        assert!(m.lsp.serves_luau);
-        assert!(!m.lsp.is_empty());
+        assert!(m.lsp.is_some());
+    }
+}
+
+/*
+Say once per worm that its `[lsp]` table does nothing.
+
+A manifest parses more than once in one run, ex: at fetch and again at
+load, and one note per worm is what a reader needs.
+*/
+fn retired_lsp(name: &str) {
+    static SAID: std::sync::Mutex<std::collections::BTreeSet<String>> =
+        std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+    if let Ok(mut said) = SAID.lock()
+        && said.insert(name.to_owned())
+    {
+        eprintln!(
+            "note: worm `{name}` declares [lsp] hooks, which do nothing since larvae 0.10; luau-lsp serves the types"
+        );
     }
 }

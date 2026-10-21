@@ -3,7 +3,6 @@ resolver = "3"
 members = [
   "crates/eclipse_luau",
   "crates/larvae",
-  "crates/larvae-lsp",
   "crates/larvae-worm",
 ]
 default-members = ["crates/larvae"]

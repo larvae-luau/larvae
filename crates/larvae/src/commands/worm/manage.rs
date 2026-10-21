@@ -649,7 +649,6 @@ pub fn claims(config: Option<PathBuf>) -> Result<ExitCode> {
         worms.push(serde_json::json!({
             "name": spec.manifest.name,
             "claims": frontend.claims,
-            "serves_luau": spec.manifest.lsp.serves_luau,
         }));
     }
 

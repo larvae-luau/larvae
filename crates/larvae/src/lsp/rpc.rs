@@ -23,14 +23,11 @@ use serde_json::Value;
 pub struct Message {
     /// Absent on a notification; a notification expects no reply
     pub id: Option<Value>,
-    /// Empty on a response, which carries `result` instead
+    /// Empty on a response, which the server reads and ignores
     #[serde(default)]
     pub method: String,
     #[serde(default)]
     pub params: Value,
-    /// What a response answers with; the dispatch routes it by id
-    #[serde(default)]
-    pub result: Value,
 }
 
 #[derive(Serialize)]
@@ -105,50 +102,13 @@ pub fn read(input: &mut impl BufRead) -> Result<Option<Message>> {
         The server skips a body it cannot read at all, and does not stop.
         `None` used to mean both "the stream ended" and "this body did not
         parse", and the loop above read the second as the first. A response
-        has no `method` and parses to one with an empty method now, because
-        a dialog's answer is a response and the dispatch routes it by id.
+        has no `method` and parses to one with an empty method, which the
+        dispatch ignores.
         */
         if let Ok(message) = serde_json::from_slice(&body) {
             return Ok(Some(message));
         }
     }
-}
-
-/*
-Ask the editor for something, ex: `workspace/inlayHint/refresh`.
-
-The id only has to be unique among the requests this server sends, and the
-reply is skipped by [`read`], because every request the server makes is
-fire-and-forget: a refresh either happens or the editor does not support it,
-and neither answer changes what the server does next.
-*/
-pub fn request(out: &mut impl Write, method: &str, params: Value) -> Result<()> {
-    ask(out, method, params).map(|_| ())
-}
-
-/*
-The same send, and the id comes back so a caller can wait for the answer.
-
-The dialog is the caller that needs it: the reply names the button, and
-only the id says which question it answers.
-*/
-pub fn ask(out: &mut impl Write, method: &str, params: Value) -> Result<Value> {
-    use std::sync::atomic::{AtomicI64, Ordering};
-
-    static NEXT: AtomicI64 = AtomicI64::new(1);
-
-    let id = Value::from(format!("larvae:{}", NEXT.fetch_add(1, Ordering::Relaxed)));
-
-    let body = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "method": method,
-        "params": params,
-    });
-
-    send(out, body)?;
-
-    Ok(id)
 }
 
 pub fn respond(out: &mut impl Write, id: &Value, result: Value) -> Result<()> {
@@ -285,34 +245,6 @@ impl Lines {
     pub fn whole(&self, src: &str) -> Value {
         self.range(src, (0, src.len() as u32))
     }
-
-    /*
-    The byte offset for a protocol position, the inverse of `position`.
-
-    The character counts UTF-16 code units, like everything the protocol
-    sends. A character past the end of the line clamps to the end, because
-    an editor sends one for a cursor at the end of a line.
-    */
-    pub fn byte_of(&self, src: &str, line: u32, character: u32) -> u32 {
-        let start = self
-            .starts
-            .get(line as usize)
-            .copied()
-            .unwrap_or(src.len() as u32);
-
-        let rest = &src[start as usize..];
-        let mut units = 0u32;
-
-        for (at, c) in rest.char_indices() {
-            if c == '\n' || units >= character {
-                return start + at as u32;
-            }
-
-            units += c.len_utf16() as u32;
-        }
-
-        src.len() as u32
-    }
 }
 
 #[cfg(test)]
@@ -398,12 +330,10 @@ mod tests {
     }
 
     /*
-    A reply to a request the server sent is skipped the same way.
+    A response arrives with an empty method, and the stream goes on.
 
-    A response carries no `method`, and the server sends
-    `workspace/inlayHint/refresh`, so responses arrive in the middle of a
-    session and must not read as the end of one; it carries the answer to
-    a question the server asked, and the dispatch routes it by id.
+    A response carries no `method`. An editor can send one in the middle of
+    a session, and it must not read as the end of one.
     */
     #[test]
     fn a_response_from_the_editor_arrives_with_an_empty_method() {
@@ -418,7 +348,6 @@ mod tests {
 
         assert_eq!(response.method, "");
         assert_eq!(response.id, Some(serde_json::json!("larvae:1")));
-        assert_eq!(response.result["title"], "Update requires");
 
         assert_eq!(read(&mut input).unwrap().unwrap().method, "ok");
     }
