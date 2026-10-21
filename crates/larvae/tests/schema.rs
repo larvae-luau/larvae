@@ -220,6 +220,37 @@ fn bundle_keys_match_the_config() {
     );
 }
 
+/*
+A profile merges over the raw toml before the type checks, so it takes every
+root key. The two exceptions resolve before the merge: `extends` loads the
+chain first, and `apply` removes `profile` itself.
+*/
+#[test]
+fn a_profile_takes_every_root_key() {
+    let schema = schema();
+    let root = schema["properties"].as_object().expect("an object");
+    let profile = &schema["properties"]["profile"]["additionalProperties"]["properties"];
+
+    for (key, entry) in root {
+        if key == "extends" || key == "profile" {
+            assert!(profile.get(key).is_none(), "a profile cannot set {key}");
+
+            continue;
+        }
+
+        assert_eq!(
+            &profile[key], entry,
+            "[profile] does not take {key} as the root does"
+        );
+    }
+
+    assert_eq!(
+        keys(profile).len(),
+        root.len() - 2,
+        "[profile] takes a key the root does not"
+    );
+}
+
 /// A ref to a def that does not exist documents nothing, and gives no error.
 #[test]
 fn every_ref_resolves() {
