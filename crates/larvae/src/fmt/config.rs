@@ -824,10 +824,12 @@ fn default_min_calls() -> usize {
 #[serde(rename_all = "kebab-case")]
 pub enum TypeExpansion {
     /*
-    Leave the chain to the replay, which is the layout larvae always had.
+    One line while the chain fits `column_width`, and one member per line
+    past it, as stylua does.
 
-    The operator breaks no line here, so a chain wider than `column_width`
-    runs past it.
+    A table type inside follows `table_types.width`. One that opens keeps
+    the chain on the lines the table gives it, and the operators break no
+    line of their own.
     */
     #[default]
     Auto,

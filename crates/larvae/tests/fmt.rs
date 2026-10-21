@@ -2393,17 +2393,29 @@ fn operators(expand: TypeExpansion) -> FmtConfig {
 const LONG_UNION: &str =
     "type Long = AlphaAlphaAlpha | BetaBetaBetaBeta | GammaGammaGamma | DeltaDeltaDelta\n";
 
-/// `auto` is the layout larvae always had: one line, past the column and all.
+/// `auto` keeps one line while the chain fits the column.
 #[test]
-fn auto_replays_a_chain_on_one_line() {
+fn auto_keeps_a_chain_that_fits_on_one_line() {
     assert_eq!(fmt(LONG_UNION), LONG_UNION);
+}
 
-    let narrow = FmtConfig {
-        column_width: 40,
-        ..Default::default()
-    };
+/// Issue 45: past `column_width`, `auto` opens one member per line.
+#[test]
+fn auto_opens_a_chain_past_the_column() {
+    assert_eq!(
+        fmt_with(LONG_UNION, narrow(40)),
+        "type Long =\n\t| AlphaAlphaAlpha\n\t| BetaBetaBetaBeta\n\t| GammaGammaGamma\n\t| DeltaDeltaDelta\n"
+    );
 
-    assert_eq!(fmt_with(LONG_UNION, narrow), LONG_UNION);
+    let src = "type AddFunction =\n\t& (<Ps..., Rs...>(self: any, trackable: (Ps...) -> Rs..., Ps...) -> (Ps...) -> Rs...)\n\t& (<T>(self: any, trackable: T & {}) -> T)\n\t& ((self: any, trackable: thread) -> thread)\n";
+    assert_eq!(fmt(src), src);
+}
+
+/// A table type that opened keeps the chain on the lines it gives.
+#[test]
+fn auto_keeps_an_open_table_in_its_chain() {
+    let src = "type P = {\n\talpha: number,\n\tbeta: string,\n\tgamma: boolean,\n\tdelta: Vector3,\n} & Base\n";
+    assert_eq!(fmt(src), src);
 }
 
 /// `always` gives every member a line, with the operator leading it.
