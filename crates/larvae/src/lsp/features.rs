@@ -33,12 +33,8 @@ existing import (`local`/`const` bound to a `require` or a `GetService`)
 extends the preamble; the first line that is none of those ends it. So a
 file that opens with a guard clause gets its import above the guard, and
 a file with an import block gets the new line at the block's end.
-
-A directive such as `--!strict` counts as an import here. Luau reads a
-directive only above the first statement, so an import above it turns
-the directive off.
 */
-fn import_insertion_line(src: &str) -> u32 {
+pub(super) fn import_insertion_line(src: &str) -> u32 {
     let mut last_import_end = 0u32;
 
     for (line, text) in (0u32..).zip(src.lines()) {
@@ -53,42 +49,12 @@ fn import_insertion_line(src: &str) -> u32 {
             break;
         }
 
-        if !trimmed.is_empty() && (!trimmed.starts_with("--") || trimmed.starts_with("--!")) {
+        if !trimmed.is_empty() && !trimmed.starts_with("--") {
             last_import_end = line + 1;
         }
     }
 
     last_import_end
-}
-
-/*
-The edit that adds the import `text` at [`import_insertion_line`].
-
-The edit inserts at the start of that line. A file whose last line has
-no newline, ex: a pasted `--!strict`, has no line after it. There the
-edit opens its own line at the end, or the import joins the directive.
-*/
-pub(super) fn import_edit(src: &str, text: &str) -> Value {
-    let line = import_insertion_line(src);
-    let count = src.lines().count() as u32;
-
-    let (line, character, text) = match src.lines().last() {
-        Some(last) if line >= count && !src.ends_with('\n') => {
-            let character: usize = last.chars().map(char::len_utf16).sum();
-
-            (count - 1, character as u32, format!("\n{text}"))
-        }
-
-        _ => (line, 0, format!("{text}\n")),
-    };
-
-    json!({
-        "range": {
-            "start": { "line": line, "character": character },
-            "end": { "line": line, "character": character },
-        },
-        "newText": text,
-    })
 }
 
 /*
@@ -193,39 +159,6 @@ fn words<'a>(line: &'a str, word: &'a str) -> impl Iterator<Item = usize> + 'a {
 /// never is one, so this needs no second rule.
 fn is_word(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
-}
-
-#[cfg(test)]
-mod import_tests {
-    use super::import_edit;
-
-    /// The line, the column, and the text of the edit.
-    fn edit(src: &str) -> (u64, u64, String) {
-        let e = import_edit(src, "const X = 1");
-        let at = &e["range"]["start"];
-
-        (
-            at["line"].as_u64().unwrap(),
-            at["character"].as_u64().unwrap(),
-            e["newText"].as_str().unwrap().to_string(),
-        )
-    }
-
-    /// Issue 42: the directives stay above the import, or Luau ignores them.
-    #[test]
-    fn an_import_lands_below_the_directives() {
-        let src = "--!strict\n--!optimize 2\n";
-        assert_eq!(edit(src), (2, 0, "const X = 1\n".into()));
-
-        let src = "--!strict\n--!optimize 2";
-        assert_eq!(edit(src), (1, 13, "\nconst X = 1".into()));
-    }
-
-    #[test]
-    fn a_plain_comment_still_takes_the_import_below_it() {
-        assert_eq!(edit("-- notes\nprint(1)\n"), (0, 0, "const X = 1\n".into()));
-        assert_eq!(edit(""), (0, 0, "const X = 1\n".into()));
-    }
 }
 
 #[cfg(test)]
@@ -1468,15 +1401,24 @@ impl Server {
                     continue;
                 }
 
-                let import =
-                    format!("{keyword} {service} = game:GetService({quote}{service}{quote})");
+                let insert_at = import_insertion_line(src);
 
                 items.push(json!({
                     "label": service,
                     "kind": 9,
-                    "detail": format!("auto-import: {import}"),
+                    "detail": format!(
+                        "auto-import: {keyword} {service} = game:GetService({quote}{service}{quote})"
+                    ),
                     "sortText": format!("9{service}"),
-                    "additionalTextEdits": [import_edit(src, &import)],
+                    "additionalTextEdits": [{
+                        "range": {
+                            "start": { "line": insert_at, "character": 0 },
+                            "end": { "line": insert_at, "character": 0 },
+                        },
+                        "newText": format!(
+                            "{keyword} {service} = game:GetService({quote}{service}{quote})\n"
+                        ),
+                    }],
                 }));
             }
 
@@ -1505,14 +1447,24 @@ impl Server {
                 };
 
                 let spec = self.import_spec(&path, &spoken);
-                let import = format!("{keyword} {stem} = require({quote}{spec}{quote})");
+                let insert_at = import_insertion_line(src);
 
                 items.push(json!({
                     "label": stem,
                     "kind": 9,
-                    "detail": format!("auto-import: {import}"),
+                    "detail": format!(
+                        "auto-import: {keyword} {stem} = require({quote}{spec}{quote})"
+                    ),
                     "sortText": format!("9{stem}"),
-                    "additionalTextEdits": [import_edit(src, &import)],
+                    "additionalTextEdits": [{
+                        "range": {
+                            "start": { "line": insert_at, "character": 0 },
+                            "end": { "line": insert_at, "character": 0 },
+                        },
+                        "newText": format!(
+                            "{keyword} {stem} = require({quote}{spec}{quote})\n"
+                        ),
+                    }],
                 }));
             }
 

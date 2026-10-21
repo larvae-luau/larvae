@@ -818,13 +818,13 @@ fn insertable_type(label: &str) -> bool {
 
 impl Server {
     /*
-    The edit that adds the alias an accept writes. The alias goes with
-    the imports, above the first statement, where an auto-import lands too.
+    Where an alias the accept adds goes: with the imports, above the
+    first statement, which is where an auto-import lands too.
     */
-    pub(super) fn import_edit(&self, uri: &str, text: &str) -> Option<Value> {
+    pub(super) fn import_line(&self, uri: &str) -> Option<u32> {
         self.documents
             .get(uri)
-            .map(|src| super::features::import_edit(src, text))
+            .map(|src| super::features::import_insertion_line(src))
     }
 
     /*
