@@ -683,15 +683,9 @@ impl Server {
                         false => match self.imported_insert(&uri, &insert) {
                             Some((written, alias)) => {
                                 if let Some(alias) = alias
-                                    && let Some(line) = self.import_line(&uri)
+                                    && let Some(edit) = self.import_edit(&uri, &alias)
                                 {
-                                    edits.push(json!({
-                                        "range": {
-                                            "start": { "line": line, "character": 0 },
-                                            "end": { "line": line, "character": 0 },
-                                        },
-                                        "newText": format!("{alias}\n"),
-                                    }));
+                                    edits.push(edit);
                                 }
 
                                 Some(written)
