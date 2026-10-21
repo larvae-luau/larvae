@@ -541,6 +541,70 @@ fn collapse_simple_statement_folds_a_one_line_body() {
     );
 }
 
+fn preserve() -> FmtConfig {
+    FmtConfig {
+        collapse_simple_statement: CollapseSimpleStatement::Preserve,
+        ..Default::default()
+    }
+}
+
+/// Issue 46: `preserve` keeps each simple statement in the shape it was written.
+#[test]
+fn preserve_keeps_the_shape_the_author_wrote() {
+    for src in [
+        "if a then return end\n",
+        "if a then\n\treturn\nend\n",
+        "local function f(a) return a end\n",
+        "local function f(a)\n\treturn a\nend\n",
+        "local f = function() return 1 end\n",
+        "local f = function()\n\treturn 1\nend\n",
+    ] {
+        assert_eq!(fmt_with(src, preserve()), src);
+    }
+}
+
+/// A one-line statement that does not fit the column opens as usual.
+#[test]
+fn preserve_opens_a_one_line_statement_past_the_column() {
+    assert_eq!(
+        fmt_with(
+            "if alpha then return beta end",
+            FmtConfig {
+                column_width: 20,
+                ..preserve()
+            }
+        ),
+        "if alpha then\n\treturn beta\nend\n"
+    );
+}
+
+/*
+A hugged call keeps its shape under `preserve`, past the column too.
+
+This is stylua issue 1175: its `Input` mode measured an opened callback
+as one line, and the call around it opened. Here `hug-last` reads the
+kind of the last argument and no width, so the body cannot move the call.
+*/
+#[test]
+fn preserve_keeps_a_hugged_call_hugged() {
+    let cfg = FmtConfig {
+        function_call: FunctionCall {
+            style: CallStyle::HugLast,
+            ..Default::default()
+        },
+        ..preserve()
+    };
+
+    let long = "a".repeat(100);
+
+    for src in [
+        format!("foo(1, function()\n\treturn {long} == b\nend)\n"),
+        "foo(1, function() return 1 end)\n".to_string(),
+    ] {
+        assert_eq!(fmt_with(&src, cfg.clone()), src);
+    }
+}
+
 #[test]
 fn collapsing_never_swallows_a_comment() {
     let cfg = FmtConfig {

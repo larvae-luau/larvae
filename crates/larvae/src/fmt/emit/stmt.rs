@@ -229,7 +229,7 @@ impl<'a> Emitter<'a> {
     fn if_stmt(&self, n: &If) -> Doc<'a> {
         let mut parts = Vec::with_capacity(n.branches.len() * 4 + 3);
         let collapse =
-            self.collapse_conditionals() && n.branches.len() == 1 && n.else_block.is_none();
+            self.collapse_conditionals(n.span) && n.branches.len() == 1 && n.else_block.is_none();
 
         for (i, (local, cond, block)) in n.branches.iter().enumerate() {
             parts.push(Doc::text(if i == 0 { "if " } else { "elseif " }));
@@ -453,7 +453,7 @@ impl<'a> Emitter<'a> {
             parts.push(self.type_doc(ret));
         }
 
-        parts.push(self.collapsible(&body.block, self.collapse_functions()));
+        parts.push(self.collapsible(&body.block, self.collapse_functions(body.span)));
         parts.push(Doc::text("end"));
 
         Doc::group(Doc::concat(parts))

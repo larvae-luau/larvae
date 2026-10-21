@@ -442,18 +442,33 @@ impl<'a> Emitter<'a> {
         ])
     }
 
-    pub(super) fn collapse_functions(&self) -> bool {
-        matches!(
-            self.cfg.collapse_simple_statement,
-            CollapseSimpleStatement::FunctionOnly | CollapseSimpleStatement::Always
-        )
+    /// Reports if the function whose body spans `span` may collapse.
+    pub(super) fn collapse_functions(&self, span: TokSpan) -> bool {
+        match self.cfg.collapse_simple_statement {
+            CollapseSimpleStatement::FunctionOnly | CollapseSimpleStatement::Always => true,
+
+            CollapseSimpleStatement::Preserve => self.one_line(span),
+
+            _ => false,
+        }
     }
 
-    pub(super) fn collapse_conditionals(&self) -> bool {
-        matches!(
-            self.cfg.collapse_simple_statement,
-            CollapseSimpleStatement::ConditionalOnly | CollapseSimpleStatement::Always
-        )
+    /// Reports if the `if` statement at `span` may collapse.
+    pub(super) fn collapse_conditionals(&self, span: TokSpan) -> bool {
+        match self.cfg.collapse_simple_statement {
+            CollapseSimpleStatement::ConditionalOnly | CollapseSimpleStatement::Always => true,
+
+            CollapseSimpleStatement::Preserve => self.one_line(span),
+
+            _ => false,
+        }
+    }
+
+    /// Reports if the author wrote `span` on one line.
+    fn one_line(&self, span: TokSpan) -> bool {
+        let (lo, hi) = self.byte_span(span);
+
+        !self.src[lo as usize..hi as usize].contains('\n')
     }
 }
 

@@ -917,10 +917,12 @@
             "never",
             "function-only",
             "conditional-only",
-            "always"
+            "always",
+            "preserve",
+            "input"
           ],
           "default": "never",
-          "description": "Which one-line bodies may stay on one line.\n\n[collapse_simple_statement \u2192](https://larvae-luau.github.io/docs/reference/formatting#collapse-simple-statement)"
+          "description": "Which one-line bodies may stay on one line. \"preserve\" keeps the shape the author wrote, for functions and conditionals both: one written on one line stays there while it fits column_width, and one written over several lines stays open. \"input\" is the same setting under the name stylua uses. A hugged call keeps its shape under every value, because hug-last reads the last argument and not a width.\n\n[collapse_simple_statement \u2192](https://larvae-luau.github.io/docs/reference/formatting#collapse-simple-statement)"
         },
         "column_width": {
           "type": "integer",

@@ -105,6 +105,17 @@ pub enum CollapseSimpleStatement {
     FunctionOnly,
     ConditionalOnly,
     Always,
+    /*
+    Keep the shape the author wrote, for functions and conditionals both.
+    One written on one line stays there while it fits `column_width`. One
+    written over several lines stays open, even where it fits.
+
+    `input` is the name stylua gives this mode, so a pasted `stylua.toml`
+    keeps working. The choice decides nothing about a call around a
+    function: `hug-last` reads the shape of the last argument, not a width.
+    */
+    #[serde(alias = "input")]
+    Preserve,
 }
 
 /// Selects if the blank lines that an author left at the edge of a block survive.
@@ -1458,6 +1469,24 @@ call_parentheses = "NoSingleTable"
         assert_eq!(c.indent_width, 2);
         assert_eq!(c.quote_style, QuoteStyle::ForceSingle);
         assert_eq!(c.call_parentheses, CallParens::NoSingleTable);
+    }
+
+    /// Issue 46: stylua's `Input` is larvae's `preserve`.
+    #[test]
+    fn a_stylua_input_collapse_reads_as_preserve() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("stylua.toml"),
+            "collapse_simple_statement = \"Input\"\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            FmtConfig::discover(dir.path(), None)
+                .unwrap()
+                .collapse_simple_statement,
+            CollapseSimpleStatement::Preserve
+        );
     }
 
     #[test]
