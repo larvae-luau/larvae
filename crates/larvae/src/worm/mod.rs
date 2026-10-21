@@ -314,53 +314,6 @@ impl Worm {
     }
 
     /*
-    The LSP hooks run on the analyzer's hot path, so only the resident
-    native form answers them. A luau or wasm worm that declares [lsp] in
-    its manifest is refused at load, not here, so this arm is for the
-    manifest that lied.
-    */
-    pub fn lsp_resolve(&mut self, from: &str, spec: &str) -> Result<Option<String>> {
-        match &mut self.backend {
-            Backend::Native(worm) => worm.lsp_resolve(from, spec),
-
-            _ => anyhow::bail!("only a native worm answers the lsp hooks"),
-        }
-        .with_context(|| format!("worm `{}`", self.manifest.name))
-    }
-
-    pub fn lsp_load(&mut self, path: &str) -> Result<proto::LspLoadReply> {
-        match &mut self.backend {
-            Backend::Native(worm) => worm.lsp_load(path),
-
-            _ => anyhow::bail!("only a native worm answers the lsp hooks"),
-        }
-        .with_context(|| format!("worm `{}`", self.manifest.name))
-    }
-
-    pub fn lsp_declarations(&mut self) -> Result<Vec<proto::LspDeclaration>> {
-        match &mut self.backend {
-            Backend::Native(worm) => worm.lsp_declarations(),
-
-            _ => anyhow::bail!("only a native worm answers the lsp hooks"),
-        }
-        .with_context(|| format!("worm `{}`", self.manifest.name))
-    }
-
-    pub fn lsp_respond(
-        &mut self,
-        kind: &str,
-        context_json: &str,
-        response_json: &str,
-    ) -> Result<Option<serde_json::Value>> {
-        match &mut self.backend {
-            Backend::Native(worm) => worm.lsp_respond(kind, context_json, response_json),
-
-            _ => anyhow::bail!("only a native worm answers the lsp hooks"),
-        }
-        .with_context(|| format!("worm `{}`", self.manifest.name))
-    }
-
-    /*
     The code actions this worm offers over a byte range of one file.
 
     Every form answers, and a form that has nothing to offer answers with an
@@ -374,25 +327,6 @@ impl Worm {
             Backend::Wasm(worm) => worm.actions(source, span),
 
             Backend::Luau(worm) => worm.actions(source, span),
-        }
-        .with_context(|| format!("worm `{}`", self.manifest.name))
-    }
-
-    /*
-    The Luau type definitions this worm supplies for the code of the project.
-
-    A worm that teaches larvae a new kind of module states what that module
-    is. A worm that makes a data file requirable is the case this exists for:
-    `require("./items.json")` has a type, the worm knows it, and neither
-    larvae nor luau-lsp can work it out alone.
-    */
-    pub fn definitions(&mut self) -> Result<proto::DefinitionsReply> {
-        match &mut self.backend {
-            Backend::Native(worm) => worm.definitions(),
-
-            Backend::Wasm(worm) => worm.definitions(),
-
-            Backend::Luau(worm) => worm.definitions(),
         }
         .with_context(|| format!("worm `{}`", self.manifest.name))
     }

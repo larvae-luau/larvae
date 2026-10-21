@@ -472,7 +472,6 @@ version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
- "crc32fast",
  "miniz_oxide",
  "zlib-rs",
 ]
@@ -866,21 +865,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "larvae-lsp"
-version = "0.9.0"
-dependencies = [
- "anyhow",
- "cc",
- "flate2",
- "json5",
- "larvae",
- "libloading",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "larvae-worm"
 version = "0.9.0"
 dependencies = [
@@ -893,16 +877,6 @@ name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
-
-[[package]]
-name = "libloading"
-version = "0.8.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
-dependencies = [
- "cfg-if",
- "windows-link",
-]
 
 [[package]]
 name = "libm"

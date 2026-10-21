@@ -71,25 +71,6 @@ enum Request<'a> {
     Lint {
         source: &'a str,
     },
-    /// Resolve one require spec for the analyzer; pass answers nothing
-    LspResolve {
-        from: &'a str,
-        spec: &'a str,
-    },
-    /// The lowered Luau of one module the worm resolved, with its maps
-    LspLoad {
-        path: &'a str,
-    },
-    /// The .d.luau declarations this worm injects at load
-    LspDeclarations {},
-    /// Transform one response before the editor sees it
-    LspRespond {
-        kind: &'a str,
-        /// The request as JSON: the path, the document text, and the byte
-        /// offset of the cursor when the kind has one
-        context: &'a str,
-        response: &'a str,
-    },
     /*
     The actions this worm offers over a byte range of a claimed file.
 
@@ -101,8 +82,6 @@ enum Request<'a> {
         start: u32,
         end: u32,
     },
-    /// The Luau type definitions this worm supplies for the project
-    Definitions {},
     /*
     Run the enabled rules over the matched nodes of one file.
 
@@ -144,30 +123,9 @@ struct Response {
     /// The findings of a `lint` reply
     #[serde(default)]
     findings: Option<Vec<proto::WireFinding>>,
-    /// The resolved path of an `lsp_resolve` reply; absent means pass
-    #[serde(default)]
-    path: Option<String>,
-    /// The lowered source of an `lsp_load` reply
-    #[serde(default)]
-    source: Option<String>,
-    /// The span map of an `lsp_load` reply
-    #[serde(default)]
-    span_map: Option<proto::SpanMap>,
-    /// The claimed byte ranges of an `lsp_load` reply
-    #[serde(default)]
-    claims: Option<Vec<(u32, u32)>>,
-    /// The declarations of an `lsp_declarations` reply
-    #[serde(default)]
-    declarations: Option<Vec<proto::LspDeclaration>>,
-    /// The transformed response of an `lsp_respond` reply
-    #[serde(default)]
-    response: Option<serde_json::Value>,
     /// The actions of an `actions` reply
     #[serde(default)]
     actions: Option<Vec<proto::WireAction>>,
-    /// The type definitions of a `definitions` reply
-    #[serde(default)]
-    definitions: Option<String>,
     /// The comment spans, from `format` (the survival backstop) and `lint`
     /// (suppression)
     #[serde(default)]
@@ -325,14 +283,6 @@ impl NativeWorm {
         })
     }
 
-    pub fn definitions(&mut self) -> Result<proto::DefinitionsReply> {
-        let response = self.call(&Request::Definitions {})?;
-
-        Ok(proto::DefinitionsReply {
-            definitions: response.definitions.unwrap_or_default(),
-        })
-    }
-
     /*
     Make one round trip.
 
@@ -342,86 +292,6 @@ impl NativeWorm {
     session. The pool drops a failed instance, so the next file on this worker
     starts a new child.
     */
-    /*
-    Tier 1 of the LSP hooks: one require spec, resolved or passed.
-
-    The reply's absent path is a pass and not an error, so a worm answers
-    only for the specs it claims and default resolution covers the rest.
-    */
-    pub fn lsp_resolve(&mut self, from: &str, spec: &str) -> Result<Option<String>> {
-        let response = self.call(&Request::LspResolve { from, spec })?;
-
-        if !response.ok {
-            anyhow::bail!(
-                response
-                    .error
-                    .unwrap_or_else(|| "lsp_resolve failed".into())
-            );
-        }
-
-        Ok(response.path)
-    }
-
-    /// The lowered Luau of one module, with the maps the host applies
-    pub fn lsp_load(&mut self, path: &str) -> Result<proto::LspLoadReply> {
-        let response = self.call(&Request::LspLoad { path })?;
-
-        if !response.ok {
-            anyhow::bail!(response.error.unwrap_or_else(|| "lsp_load failed".into()));
-        }
-
-        Ok(proto::LspLoadReply {
-            source: response.source.unwrap_or_default(),
-            span_map: response.span_map.unwrap_or_default(),
-            claims: response.claims.unwrap_or_default(),
-        })
-    }
-
-    /// Tier 2: the .d.luau text this worm injects
-    pub fn lsp_declarations(&mut self) -> Result<Vec<proto::LspDeclaration>> {
-        let response = self.call(&Request::LspDeclarations {})?;
-
-        if !response.ok {
-            anyhow::bail!(
-                response
-                    .error
-                    .unwrap_or_else(|| "lsp_declarations failed".into())
-            );
-        }
-
-        Ok(response.declarations.unwrap_or_default())
-    }
-
-    /*
-    Tier 3: one response, transformed before the editor sees it.
-
-    The worm receives the response as JSON and returns the JSON to send
-    instead. It cannot touch analyzer state from here, which is the point:
-    this is the escape hatch, not a type system.
-    */
-    pub fn lsp_respond(
-        &mut self,
-        kind: &str,
-        context_json: &str,
-        response_json: &str,
-    ) -> Result<Option<serde_json::Value>> {
-        let response = self.call(&Request::LspRespond {
-            kind,
-            context: context_json,
-            response: response_json,
-        })?;
-
-        if !response.ok {
-            anyhow::bail!(
-                response
-                    .error
-                    .unwrap_or_else(|| "lsp_respond failed".into())
-            );
-        }
-
-        Ok(response.response)
-    }
-
     fn call(&mut self, request: &Request<'_>) -> Result<Response> {
         let body = serde_json::to_vec(request).expect("a request always serialises");
 

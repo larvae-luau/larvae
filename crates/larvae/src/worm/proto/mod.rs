@@ -172,19 +172,6 @@ pub struct ActionsReply {
     pub actions: Vec<WireAction>,
 }
 
-/*
-A definitions reply, assembled by the transport.
-
-A worm that teaches larvae a new kind of module states what that module is,
-as Luau definition text, because that is what luau-lsp reads. A worm that
-makes a data file requirable is the case this exists for.
-*/
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct DefinitionsReply {
-    #[serde(default)]
-    pub definitions: String,
-}
-
 /// A lint reply, assembled by the transport
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct LintReply {
@@ -284,30 +271,6 @@ impl SpanMap {
             .min_by_key(|(gs, ge, _, _)| ge - gs)
             .map(|(_, _, os, oe)| (*os, *oe))
     }
-}
-
-/// The reply to `lsp_load`: lowered source with its maps
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct LspLoadReply {
-    pub source: String,
-    #[serde(default)]
-    pub span_map: SpanMap,
-    /*
-    The byte ranges of the original that this worm owns.
-
-    A mixed file is plain Luau outside these spans. The host routes a
-    request inside a claimed span through the worm's response hooks, and
-    a request outside them takes the default path.
-    */
-    #[serde(default)]
-    pub claims: Vec<(u32, u32)>,
-}
-
-/// One declaration a worm injects, `.d.luau` text under a name
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct LspDeclaration {
-    pub name: String,
-    pub source: String,
 }
 
 #[cfg(test)]

@@ -625,9 +625,6 @@ return {
                 fixes = "bad",
             } } }
         end,
-        definitions = function()
-            return { definitions = "declare thing: number\n" }
-        end,
     },
 }
 "#;
@@ -640,13 +637,6 @@ return {
         assert_eq!(reply.actions[0].title, "Trim");
         assert_eq!(reply.actions[0].edits[0].span, (1, 4));
         assert_eq!(reply.actions[0].fixes.as_deref(), Some("bad"));
-    }
-
-    #[test]
-    fn a_luau_worm_supplies_definitions() {
-        let reply = worm(FRONTEND).definitions().unwrap();
-
-        assert!(reply.definitions.contains("declare thing"), "{reply:?}");
     }
 
     /*
@@ -662,6 +652,5 @@ return { frontend = { compile = function(s) return { output = s } end } }
 "#;
 
         assert!(worm(BARE).actions("x", (0, 1)).unwrap().actions.is_empty());
-        assert!(worm(BARE).definitions().unwrap().definitions.is_empty());
     }
 }

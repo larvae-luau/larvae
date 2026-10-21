@@ -1,4 +1,0 @@
-[submodule "crates/larvae-lsp/luau"]
-	path = crates/larvae-lsp/luau
-	url = https://github.com/luau-lang/luau
-	ignore = dirty
