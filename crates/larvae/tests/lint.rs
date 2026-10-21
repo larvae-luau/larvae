@@ -2789,6 +2789,33 @@ fn collapsible_if_needs_the_switch() {
     );
 }
 
+/// `if local x` binds `x` in its own branch, and not in an `elseif` or `else`.
+#[test]
+fn an_if_local_binds_for_its_own_branch() {
+    let src = "if local x = tonumber(\"1\") then\n\tprint(x)\nend\n";
+    assert!(!fires("undefined_variable", src));
+
+    let src = "if local x = tonumber(\"1\") then\nelse\n\tprint(x)\nend\n";
+    assert!(fires("undefined_variable", src));
+
+    let src = "print(if local x = tonumber(\"1\") then x else 0)\n";
+    assert!(!fires("undefined_variable", src));
+
+    assert!(fires(
+        "unused_variable",
+        "if local x = tonumber(\"1\") then\nend\n"
+    ));
+}
+
+/// The inner test can read the binding, so no `and` can join the two.
+#[test]
+fn an_if_local_is_not_collapsible() {
+    let cfg = with("collapsible_if", Level::Warn);
+    let src = "if local a = tonumber(\"1\") then\n\tif a > 0 then\n\t\tprint(a)\n\tend\nend\n";
+
+    assert!(!fired(src, &cfg).iter().any(|n| n == "collapsible_if"));
+}
+
 /// Anything beside the inner if, or an else on either, blocks the merge.
 #[test]
 fn an_if_that_holds_more_than_one_if_stays() {

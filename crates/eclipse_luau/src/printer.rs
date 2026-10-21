@@ -120,7 +120,7 @@ fn nested_blocks(stmt: &Stmt) -> Vec<&Block> {
             .collect(),
 
         Stmt::If(n) => {
-            let mut v: Vec<&Block> = n.branches.iter().map(|(_, b)| b).collect();
+            let mut v: Vec<&Block> = n.branches.iter().map(|(_, _, b)| b).collect();
 
             if let Some(e) = &n.else_block {
                 v.push(e);

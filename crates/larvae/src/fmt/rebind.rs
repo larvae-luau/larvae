@@ -432,7 +432,7 @@ fn stmt<'a>(s: &'a Stmt, out: &mut Vec<&'a Local>) {
         }
 
         Stmt::If(n) => {
-            for (cond, body) in &n.branches {
+            for (_, cond, body) in &n.branches {
                 expr(cond, out);
                 block(body, out);
             }
@@ -522,7 +522,7 @@ fn expr<'a>(e: &'a Expr, out: &mut Vec<&'a Local>) {
             else_value,
             ..
         } => {
-            for (cond, value) in branches {
+            for (_, cond, value) in branches {
                 expr(cond, out);
                 expr(value, out);
             }

@@ -48,7 +48,7 @@ pub fn remove_if_expression(ctx: &RuleCtx, edits: &mut Vec<Edit>) {
 
 fn build_and_or(
     ctx: &RuleCtx,
-    branches: &[(Expr, Expr)],
+    branches: &[(Option<IfLocal>, Expr, Expr)],
     else_value: &Expr,
     idx: usize,
 ) -> Option<String> {
@@ -56,7 +56,10 @@ fn build_and_or(
         return Some(support::operand_text(ctx, else_value));
     }
 
-    let (cond, value) = &branches[idx];
+    // A bound branch has no and/or form, since its value can read the local.
+    let (None, cond, value) = &branches[idx] else {
+        return None;
+    };
 
     if !support::is_never_falsy(value) {
         return None;
@@ -328,6 +331,13 @@ fn is_math_sqrt(ctx: &RuleCtx, func: &Expr) -> bool {
 mod tests {
     use super::super::testing::{assert_lines_kept, run};
     use super::*;
+
+    /// The value reads the local, and the and/or form has no place to bind it.
+    #[test]
+    fn a_bound_if_expression_stays() {
+        let src = "local y = if local x = f() then x else 0\n";
+        assert_eq!(run(src, remove_if_expression), src);
+    }
 
     #[test]
     fn if_expressions_become_and_or() {

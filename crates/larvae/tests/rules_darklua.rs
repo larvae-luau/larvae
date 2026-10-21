@@ -505,3 +505,18 @@ fn rename_variables() {
     assert!(!after.contains("counter"), "{after}");
     assert!(after.contains("local a = 1"), "{after}");
 }
+
+/// The binding and every read of it in its branch take the same new name.
+#[test]
+fn rename_variables_follows_an_if_local() {
+    let after = transform(
+        "rename_variables = true",
+        "if local counter = tonumber(\"1\") then\n    print(counter)\nend\n",
+    );
+
+    assert!(!after.contains("counter"), "{after}");
+    assert!(
+        after.contains("if local a = tonumber(\"1\") then\n    print(a)"),
+        "{after}"
+    );
+}

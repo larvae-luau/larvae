@@ -1,8 +1,9 @@
 # The Luau conformance corpus
 
 These files come from `luau-lang/luau`, `tests/conformance`, as of
-2026-08-17. Luau is MIT licensed; see the upstream repository for the
-license text. The files are test data here and larvae never ships them.
+2026-08-17. `iflocal.luau` comes from the same place as of 2026-10-20.
+Luau is MIT licensed; see the upstream repository for the license text.
+The files are test data here and larvae never ships them.
 
 The suite in `tests/luau_conformance.rs` demands that every file lexes,
 parses, tiles its token stream with no holes, and prints back exactly.

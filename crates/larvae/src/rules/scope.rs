@@ -344,6 +344,14 @@ impl<'src> Binder<'_, 'src> {
         self.scopes.pop();
     }
 
+    /// `if local x = f()` binds `x` in the scope of its own branch.
+    fn if_local(&mut self, local: &Option<IfLocal>) {
+        if let Some(l) = local {
+            self.maybe_type(&l.binding.ty);
+            self.bind(l.binding.name, Origin::Local);
+        }
+    }
+
     fn block(&mut self, b: &Block) {
         self.open();
 
@@ -467,9 +475,16 @@ impl<'src> Binder<'_, 'src> {
             }
 
             Stmt::If(n) => {
-                for (cond, body) in &n.branches {
+                for (local, cond, body) in &n.branches {
                     self.expr(cond);
-                    self.block(body);
+                    self.open();
+                    self.if_local(local);
+
+                    for s in &body.stmts {
+                        self.stmt(s);
+                    }
+
+                    self.close();
                 }
 
                 if let Some(e) = &n.else_block {
@@ -597,9 +612,12 @@ impl<'src> Binder<'_, 'src> {
                 else_value,
                 ..
             } => {
-                for (c, val) in branches {
+                for (local, c, val) in branches {
                     self.expr(c);
+                    self.open();
+                    self.if_local(local);
                     self.expr(val);
+                    self.close();
                 }
 
                 self.expr(else_value);

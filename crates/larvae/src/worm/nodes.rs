@@ -287,7 +287,7 @@ impl NodeTable {
             }
 
             Stmt::If(n) => {
-                for (cond, block) in &n.branches {
+                for (_, cond, block) in &n.branches {
                     self.push_expr(cond, id, bytes);
                     self.push_block(block, Some(id), bytes);
                 }
@@ -418,7 +418,7 @@ impl NodeTable {
                 else_value,
                 ..
             } => {
-                for (cond, value) in branches {
+                for (_, cond, value) in branches {
                     self.push_expr(cond, id, bytes);
                     self.push_expr(value, id, bytes);
                 }

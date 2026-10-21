@@ -143,7 +143,7 @@ pub fn folding_ranges(src: &str) -> Vec<FoldRange> {
             Stmt::LocalFunction(n) => region(&mut out, &s, n.span),
 
             Stmt::If(n) => {
-                for (cond, block) in &n.branches {
+                for (_, cond, block) in &n.branches {
                     // The branch keyword sits one token before its condition.
                     let head = cond.span().start.saturating_sub(1);
                     region(&mut out, &s, closed(head, block.span.end, &s));
@@ -457,7 +457,7 @@ fn stmt_symbols(s: &Src, stmt: &Stmt, out: &mut Vec<Symbol>) {
         Stmt::GenericFor(n) => out.extend(block_symbols(s, &n.block)),
 
         Stmt::If(n) => {
-            for (_, block) in &n.branches {
+            for (_, _, block) in &n.branches {
                 out.extend(block_symbols(s, block));
             }
 

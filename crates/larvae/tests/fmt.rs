@@ -40,6 +40,8 @@ const SAMPLES: &[&str] = &[
     "local f = function(a, b) return a + b end\n",
     "function M.thing:method(a: number): string\n\treturn tostring(a)\nend\n",
     "if a then\n\tb()\nelseif c then\n\td()\nelse\n\te()\nend\n",
+    "if local x: number? = f() then\n\tprint(x)\nelseif const y = g() then\n\tprint(y)\nend\n",
+    "local y = if local x = f() then x elseif local z = g() then z else 0\n",
     "for i = 1, 10, 2 do\n\tprint(i)\nend\n",
     "for k, v in pairs(t) do\n\tprint(k, v)\nend\n",
     "while true do\n\tbreak\nend\n",
@@ -1503,6 +1505,19 @@ fn a_lint_marker_does_not_hold_the_formatter() {
 }
 
 // --- if expressions ---------------------------------------------------------
+
+/// The binding prints as written, in both the statement and the expression form.
+#[test]
+fn an_if_local_keeps_its_binding() {
+    assert_eq!(
+        fmt("if   local x:number? =f() then print(x) end"),
+        "if local x: number? = f() then\n\tprint(x)\nend\n"
+    );
+    assert_eq!(
+        fmt("local y = if const x=1 then x else 0"),
+        "local y = if const x = 1 then x else 0\n"
+    );
+}
 
 fn if_cfg(expand: IfExpansion) -> FmtConfig {
     FmtConfig {

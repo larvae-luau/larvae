@@ -148,10 +148,24 @@ pub struct Repeat {
 
 #[derive(Debug)]
 pub struct If {
-    /// The `if` and every `elseif`. Each entry is a condition and a body.
-    pub branches: Vec<(Expr, Block)>,
+    /// The `if` and every `elseif`. Each entry is a binding, a condition, and a body.
+    pub branches: Vec<(Option<IfLocal>, Expr, Block)>,
     pub else_block: Option<Block>,
     pub span: TokSpan,
+}
+
+/*
+The `local x: T =` of `if local x = f() then`, or its `const` form.
+
+The condition is the value of the binding. The binding is visible in the
+body of its own branch only, and not in a later `elseif` or `else`.
+*/
+#[derive(Debug)]
+pub struct IfLocal {
+    /// The `local` or `const` keyword.
+    pub keyword: TokSpan,
+    pub is_const: bool,
+    pub binding: Binding,
 }
 
 #[derive(Debug)]
@@ -335,9 +349,9 @@ pub enum Expr {
         span: TokSpan,
     },
 
-    /// `if c then a else b` as an expression.
+    /// `if c then a else b` as an expression. A branch can bind its condition.
     IfElse {
-        branches: Vec<(Expr, Expr)>,
+        branches: Vec<(Option<IfLocal>, Expr, Expr)>,
         else_value: Box<Expr>,
         span: TokSpan,
     },

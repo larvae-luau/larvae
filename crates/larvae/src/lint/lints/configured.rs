@@ -627,7 +627,7 @@ fn branches_in(ctx: &LintCtx<'_>, block: &Block) -> u32 {
                 n.branches.len() as u32
                     + n.branches
                         .iter()
-                        .map(|(c, b)| conditions_in(ctx, c) + branches_in(ctx, b))
+                        .map(|(_, c, b)| conditions_in(ctx, c) + branches_in(ctx, b))
                         .sum::<u32>()
                     + n.else_block.as_ref().map_or(0, |b| branches_in(ctx, b))
             }

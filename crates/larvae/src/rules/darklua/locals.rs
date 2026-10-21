@@ -258,7 +258,7 @@ fn descend(s: &Stmt, v: &mut Sweeper) {
         Stmt::LocalFunction(n) => walk_block(&n.body.block, v),
 
         Stmt::If(n) => {
-            for (_, body) in &n.branches {
+            for (_, _, body) in &n.branches {
                 walk_block(body, v);
             }
 

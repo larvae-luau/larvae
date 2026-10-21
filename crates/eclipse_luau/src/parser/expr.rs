@@ -363,16 +363,18 @@ impl<'a> Parser<'a> {
         self.expect("if")?;
 
         let mut branches = Vec::new();
+        let local = self.if_local()?;
         let cond = self.expr()?;
 
         self.expect("then")?;
-        branches.push((cond, self.expr()?));
+        branches.push((local, cond, self.expr()?));
 
         while self.at("elseif") {
             self.bump();
+            let local = self.if_local()?;
             let cond = self.expr()?;
             self.expect("then")?;
-            branches.push((cond, self.expr()?));
+            branches.push((local, cond, self.expr()?));
         }
 
         self.expect("else")?;
