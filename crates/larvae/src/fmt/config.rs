@@ -105,6 +105,17 @@ pub enum CollapseSimpleStatement {
     FunctionOnly,
     ConditionalOnly,
     Always,
+    /*
+    Keep the shape the author wrote, for functions and conditionals both.
+    One written on one line stays there while it fits `column_width`. One
+    written over several lines stays open, even where it fits.
+
+    `input` is the name stylua gives this mode, so a pasted `stylua.toml`
+    keeps working. The choice decides nothing about a call around a
+    function: `hug-last` reads the shape of the last argument, not a width.
+    */
+    #[serde(alias = "input")]
+    Preserve,
 }
 
 /// Selects if the blank lines that an author left at the edge of a block survive.
@@ -824,10 +835,12 @@ fn default_min_calls() -> usize {
 #[serde(rename_all = "kebab-case")]
 pub enum TypeExpansion {
     /*
-    Leave the chain to the replay, which is the layout larvae always had.
+    One line while the chain fits `column_width`, and one member per line
+    past it, as stylua does.
 
-    The operator breaks no line here, so a chain wider than `column_width`
-    runs past it.
+    A table type inside follows `table_types.width`. One that opens keeps
+    the chain on the lines the table gives it, and the operators break no
+    line of their own.
     */
     #[default]
     Auto,
@@ -1456,6 +1469,24 @@ call_parentheses = "NoSingleTable"
         assert_eq!(c.indent_width, 2);
         assert_eq!(c.quote_style, QuoteStyle::ForceSingle);
         assert_eq!(c.call_parentheses, CallParens::NoSingleTable);
+    }
+
+    /// Issue 46: stylua's `Input` is larvae's `preserve`.
+    #[test]
+    fn a_stylua_input_collapse_reads_as_preserve() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("stylua.toml"),
+            "collapse_simple_statement = \"Input\"\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            FmtConfig::discover(dir.path(), None)
+                .unwrap()
+                .collapse_simple_statement,
+            CollapseSimpleStatement::Preserve
+        );
     }
 
     #[test]

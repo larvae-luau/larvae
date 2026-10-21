@@ -135,6 +135,21 @@ impl<'a> Emitter<'a> {
         }
     }
 
+    /// The condition of an `if` branch, with its `local x =` in front
+    pub(super) fn if_cond(&self, local: &Option<IfLocal>, cond: &Expr) -> Doc<'a> {
+        match local {
+            Some(l) => Doc::concat([
+                Doc::text(self.one(l.keyword)),
+                Doc::text(" "),
+                self.binding(&l.binding),
+                Doc::text(" = "),
+                self.expr(cond),
+            ]),
+
+            None => self.expr(cond),
+        }
+    }
+
     fn local(&self, n: &Local) -> Doc<'a> {
         // `require_binding` can decide that this declaration says the other keyword.
         let keyword = self
@@ -214,11 +229,11 @@ impl<'a> Emitter<'a> {
     fn if_stmt(&self, n: &If) -> Doc<'a> {
         let mut parts = Vec::with_capacity(n.branches.len() * 4 + 3);
         let collapse =
-            self.collapse_conditionals() && n.branches.len() == 1 && n.else_block.is_none();
+            self.collapse_conditionals(n.span) && n.branches.len() == 1 && n.else_block.is_none();
 
-        for (i, (cond, block)) in n.branches.iter().enumerate() {
+        for (i, (local, cond, block)) in n.branches.iter().enumerate() {
             parts.push(Doc::text(if i == 0 { "if " } else { "elseif " }));
-            parts.push(self.expr(cond));
+            parts.push(self.if_cond(local, cond));
             parts.push(Doc::text(" then"));
             parts.push(self.collapsible(block, collapse));
         }
@@ -438,7 +453,7 @@ impl<'a> Emitter<'a> {
             parts.push(self.type_doc(ret));
         }
 
-        parts.push(self.collapsible(&body.block, self.collapse_functions()));
+        parts.push(self.collapsible(&body.block, self.collapse_functions(body.span)));
         parts.push(Doc::text("end"));
 
         Doc::group(Doc::concat(parts))

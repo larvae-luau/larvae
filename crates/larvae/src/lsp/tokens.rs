@@ -496,6 +496,19 @@ impl<'a> Painter<'a> {
         }
     }
 
+    /// The `local x: T =` or `const x =` in front of an `if` condition
+    fn if_local(&mut self, local: &Option<IfLocal>) {
+        let Some(l) = local else { return };
+
+        self.declaration_words(l.binding.name.start);
+
+        if l.is_const {
+            self.consts.insert(l.binding.name.start);
+        }
+
+        self.add_type(l.binding.ty);
+    }
+
     /// `@native` and its siblings. Each span holds the `@` and the name.
     fn attributes(&mut self, spans: &[TokSpan]) {
         for span in spans {
@@ -558,7 +571,8 @@ impl<'a> Painter<'a> {
             }
 
             Stmt::If(n) => {
-                for (cond, block) in &n.branches {
+                for (local, cond, block) in &n.branches {
+                    self.if_local(local);
                     self.walk_expr(cond);
                     self.walk_block(block);
                 }
@@ -882,7 +896,8 @@ impl<'a> Painter<'a> {
                 else_value,
                 ..
             } => {
-                for (cond, value) in branches {
+                for (local, cond, value) in branches {
+                    self.if_local(local);
                     self.walk_expr(cond);
                     self.walk_expr(value);
                 }

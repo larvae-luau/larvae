@@ -269,7 +269,7 @@ fn returns_a_value(block: &Block) -> bool {
         Stmt::Return(n) => !n.values.is_empty(),
 
         Stmt::If(n) => {
-            n.branches.iter().any(|(_, b)| returns_a_value(b))
+            n.branches.iter().any(|(_, _, b)| returns_a_value(b))
                 || n.else_block.as_ref().is_some_and(returns_a_value)
         }
 
@@ -311,7 +311,7 @@ fn always_exits(ctx: &LintCtx<'_>, block: &Block) -> bool {
         // Only an if with an else covers every path.
         Stmt::If(n) => {
             n.else_block.as_ref().is_some_and(|b| always_exits(ctx, b))
-                && n.branches.iter().all(|(_, b)| always_exits(ctx, b))
+                && n.branches.iter().all(|(_, _, b)| always_exits(ctx, b))
         }
 
         Stmt::While(n) => matches!(&n.cond, Expr::True(_)) && !has_break(&n.block),
@@ -326,7 +326,7 @@ fn has_break(block: &Block) -> bool {
         Stmt::Break(_) => true,
 
         Stmt::If(n) => {
-            n.branches.iter().any(|(_, b)| has_break(b))
+            n.branches.iter().any(|(_, _, b)| has_break(b))
                 || n.else_block.as_ref().is_some_and(has_break)
         }
 

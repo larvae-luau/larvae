@@ -199,7 +199,7 @@ pub fn walk_stmt(s: &Stmt, v: &mut impl Visit) {
         }
 
         Stmt::If(n) => {
-            for (cond, body) in &n.branches {
+            for (_, cond, body) in &n.branches {
                 walk_expr(cond, v);
                 walk_block(body, v);
             }
@@ -316,7 +316,7 @@ pub fn walk_expr(e: &Expr, v: &mut impl Visit) {
             else_value,
             ..
         } => {
-            for (c, val) in branches {
+            for (_, c, val) in branches {
                 walk_expr(c, v);
                 walk_expr(val, v);
             }

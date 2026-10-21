@@ -21,7 +21,9 @@ tool can use it.
 
 Shipped Luau plus the merged RFCs: classes (`class`/`open`/`extends`,
 `public` fields, the metamethod whitelist), export by value (`export
-local/const/function`), and integer literals (`123i`, `0xABi`, `0b1010i`).
+local/const/function`), integer literals (`123i`, `0xABi`, `0b1010i`), and
+a bound condition (`if local x = f() then`, `if const`, in the statement and
+the expression form).
 The contextual keywords stay contextual, so code that uses those words as
 names parses as it always did.
 

@@ -149,7 +149,7 @@ impl<'a> Emitter<'a> {
     decides by width alone, and it cannot know that a user asked for the open
     layout at every width.
     */
-    fn if_else(&self, branches: &[(Expr, Expr)], else_value: &Expr) -> Doc<'a> {
+    fn if_else(&self, branches: &[(Option<IfLocal>, Expr, Expr)], else_value: &Expr) -> Doc<'a> {
         let cfg = &self.cfg.if_expression;
 
         let nested = self.if_depth.get() > 0;
@@ -165,9 +165,9 @@ impl<'a> Emitter<'a> {
         if cfg.expand == IfExpansion::Never {
             let mut parts = Vec::with_capacity(branches.len() * 5 + 2);
 
-            for (i, (cond, value)) in branches.iter().enumerate() {
+            for (i, (local, cond, value)) in branches.iter().enumerate() {
                 parts.push(Doc::text(if i == 0 { "if " } else { "elseif " }));
-                parts.push(self.expr(cond));
+                parts.push(self.if_cond(local, cond));
                 parts.push(Doc::text(" then "));
                 parts.push(self.expr(value));
                 parts.push(Doc::Line);
@@ -192,7 +192,7 @@ impl<'a> Emitter<'a> {
         */
         let parts: Vec<(Doc<'a>, Doc<'a>)> = branches
             .iter()
-            .map(|(cond, value)| (self.expr(cond), self.expr(value)))
+            .map(|(local, cond, value)| (self.if_cond(local, cond), self.expr(value)))
             .collect();
 
         let other = self.expr(else_value);

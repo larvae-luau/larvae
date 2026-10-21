@@ -162,7 +162,7 @@ fn scan_level(b: &Block, continues: &mut Vec<TokSpan>, has_break: &mut bool) {
             Stmt::Do(d) => scan_level(&d.block, continues, has_break),
 
             Stmt::If(n) => {
-                for (_, body) in &n.branches {
+                for (_, _, body) in &n.branches {
                     scan_level(body, continues, has_break);
                 }
 
@@ -209,23 +209,33 @@ fn branch_keyword(ctx: &RuleCtx, n: &If, i: usize) -> Option<u32> {
         return (ctx.tok_text(n.span.start) == "if").then_some(n.span.start);
     }
 
-    let idx = n.branches[i].0.span().start.checked_sub(1)?;
+    let idx = n.branches[i].1.span().start.checked_sub(1)?;
 
     (ctx.tok_text(idx) == "elseif").then_some(idx)
 }
 
 /// The token index of the `then` that closes the condition of branch `i`.
 fn branch_then(ctx: &RuleCtx, n: &If, i: usize) -> Option<u32> {
-    let idx = n.branches[i].1.span.start.checked_sub(1)?;
+    let idx = n.branches[i].2.span.start.checked_sub(1)?;
 
     (ctx.tok_text(idx) == "then").then_some(idx)
 }
 
 fn prune(ctx: &RuleCtx, n: &If, edits: &mut Vec<Edit>) {
+    /*
+    An `if local` keeps the whole statement. An unwrap would drop the
+    binding its body reads, and the keyword lookups below expect the
+    condition to follow `if` or `elseif` directly. A pruned bound branch
+    is rare enough that the rule does not handle it.
+    */
+    if n.branches.iter().any(|(local, _, _)| local.is_some()) {
+        return;
+    }
+
     let mut falsy = vec![false; n.branches.len()];
     let mut truthy_at = None;
 
-    for (i, (cond, _)) in n.branches.iter().enumerate() {
+    for (i, (_, cond, _)) in n.branches.iter().enumerate() {
         match eval::eval(ctx, cond) {
             Some(v) if v.truthy() => {
                 truthy_at = Some(i);
@@ -289,7 +299,7 @@ fn prune(ctx: &RuleCtx, n: &If, edits: &mut Vec<Edit>) {
     {
         unwrap_block(
             ctx,
-            &n.branches[t].1,
+            &n.branches[t].2,
             if_start,
             tok_bytes(ctx, then_tok).1,
             end_tok,
@@ -309,7 +319,7 @@ fn prune(ctx: &RuleCtx, n: &If, edits: &mut Vec<Edit>) {
             continue;
         };
 
-        let to = ctx.bytes(n.branches[i].1.span).1;
+        let to = ctx.bytes(n.branches[i].2.span).1;
         ctx.delete_bytes_keep_lines(tok_bytes(ctx, kw).0, to, edits);
     }
 
@@ -412,6 +422,13 @@ mod tests {
         // No statement follows, so there is nothing to remove.
         let src = "do return end\n";
         assert_eq!(run(src, filter_after_early_return), src);
+    }
+
+    /// An unwrap would strand `print(x)` without the local it reads.
+    #[test]
+    fn a_bound_if_stays() {
+        let src = "if local x = 1 then\n    print(x)\nend\n";
+        assert_eq!(run(src, remove_unused_if_branch), src);
     }
 
     #[test]

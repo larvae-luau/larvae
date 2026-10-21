@@ -232,7 +232,7 @@ impl<'a> Collected<'a> {
             }
 
             Stmt::If(n) => {
-                for (cond, block) in &n.branches {
+                for (_, cond, block) in &n.branches {
                     self.expr(cond);
                     self.block(block);
                 }
@@ -347,7 +347,7 @@ impl<'a> Collected<'a> {
                 else_value,
                 ..
             } => {
-                for (cond, value) in branches {
+                for (_, cond, value) in branches {
                     self.expr(cond);
                     self.expr(value);
                 }

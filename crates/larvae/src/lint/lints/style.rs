@@ -44,7 +44,7 @@ impl EmptyIf {
             let bodies = n
                 .branches
                 .iter()
-                .map(|(_, b)| b)
+                .map(|(_, _, b)| b)
                 .chain(n.else_block.as_ref());
 
             for body in bodies {
@@ -191,7 +191,7 @@ impl ParentheseConditions {
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         each_stmt(ctx, out, |ctx, s, out| {
             let conds: Vec<&Expr> = match s {
-                Stmt::If(n) => n.branches.iter().map(|(c, _)| c).collect(),
+                Stmt::If(n) => n.branches.iter().map(|(_, c, _)| c).collect(),
 
                 Stmt::While(n) => vec![&n.cond],
 

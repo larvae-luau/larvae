@@ -290,8 +290,8 @@ impl IfsSameCond {
                 return;
             };
 
-            for (i, (cond, _)) in n.branches.iter().enumerate() {
-                for (earlier, _) in &n.branches[..i] {
+            for (i, (_, cond, _)) in n.branches.iter().enumerate() {
+                for (_, earlier, _) in &n.branches[..i] {
                     if ctx.same_text(earlier.span(), cond.span()) {
                         out.push(
                             Finding::new(
@@ -320,7 +320,7 @@ impl IfSameThenElse {
                 return;
             };
 
-            let mut bodies: Vec<&Block> = n.branches.iter().map(|(_, b)| b).collect();
+            let mut bodies: Vec<&Block> = n.branches.iter().map(|(_, _, b)| b).collect();
 
             if let Some(block) = &n.else_block {
                 bodies.push(block);

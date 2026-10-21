@@ -93,6 +93,43 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "exclude": {
+            "$ref": "#/$defs/exclude",
+            "description": "Paths that every command skips, as globs relative to the project root, ex: [\"gen/**\"]. Naming a directory is enough. The include of an area wins over this list for that area, and a file named on the command line is still read."
+          },
+          "include": {
+            "$ref": "#/$defs/exclude",
+            "description": "Paths that come back in over the root `exclude`, as globs relative to the project root. This list cancels the root `exclude` and only that; the exclude of an area still applies."
+          },
+          "input": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ],
+            "default": "src",
+            "description": "Short form of `[process] input`. Source directory, or a list of them. Writing both spellings is an error."
+          },
+          "output": {
+            "type": "string",
+            "default": "dist",
+            "description": "Short form of `[process] output`. Writing both spellings is an error."
+          },
+          "target": {
+            "enum": [
+              "roblox-string",
+              "path",
+              "roblox-instance"
+            ],
+            "default": "roblox-string",
+            "description": "Short form of `[requires] target`. roblox-string: native @game/./@self string requires. path: relative filesystem paths (Lune). roblox-instance: Instance expressions like script.Parent:FindFirstChild(\"x\") (see indexing_style). Writing both spellings is an error."
+          },
           "aliases": {
             "$ref": "#/$defs/aliases"
           },
@@ -101,6 +138,9 @@
           },
           "requires": {
             "$ref": "#/$defs/requires"
+          },
+          "rojo": {
+            "$ref": "#/$defs/rojo"
           },
           "defines": {
             "$ref": "#/$defs/defines"
@@ -114,11 +154,20 @@
           "lint": {
             "$ref": "#/$defs/lint"
           },
+          "worms": {
+            "$ref": "#/$defs/worms"
+          },
           "bundle": {
             "$ref": "#/$defs/bundle"
           },
           "minify": {
             "$ref": "#/$defs/minify"
+          },
+          "lsp": {
+            "$ref": "#/$defs/lsp"
+          },
+          "check": {
+            "$ref": "#/$defs/check"
           }
         }
       }
@@ -868,10 +917,12 @@
             "never",
             "function-only",
             "conditional-only",
-            "always"
+            "always",
+            "preserve",
+            "input"
           ],
           "default": "never",
-          "description": "Which one-line bodies may stay on one line.\n\n[collapse_simple_statement \u2192](https://larvae-luau.github.io/docs/reference/formatting#collapse-simple-statement)"
+          "description": "Which one-line bodies may stay on one line. \"preserve\" keeps the shape the author wrote, for functions and conditionals both: one written on one line stays there while it fits column_width, and one written over several lines stays open. \"input\" is the same setting under the name stylua uses. A hugged call keeps its shape under every value, because hug-last reads the last argument and not a width.\n\n[collapse_simple_statement \u2192](https://larvae-luau.github.io/docs/reference/formatting#collapse-simple-statement)"
         },
         "column_width": {
           "type": "integer",
@@ -1249,7 +1300,7 @@
                 "never"
               ],
               "default": "auto",
-              "description": "When the chain is opened over several lines. \"auto\" leaves it to the replay, which is the layout larvae always had, so a chain wider than \"column_width\" runs past it. \"always\" puts every member on a line of its own, with the operator leading the line. \"never\" holds one line whatever table_types.width says about a table inside it, and opens one member per line only where the line passes \"column_width\": the order is column_width first, then type_operators, then table_types.width.\n\n[type_operators.expand \u2192](https://larvae-luau.github.io/docs/reference/formatting#type-operators-expand)"
+              "description": "When the chain is opened over several lines. \"auto\" keeps one line while the chain fits \"column_width\" and opens one member per line past it, as stylua does; a table type inside follows table_types.width, and one that opens keeps the chain on its lines. \"always\" puts every member on a line of its own, with the operator leading the line. \"never\" holds one line whatever table_types.width says about a table inside it, and opens one member per line only where the line passes \"column_width\": the order is column_width first, then type_operators, then table_types.width.\n\n[type_operators.expand \u2192](https://larvae-luau.github.io/docs/reference/formatting#type-operators-expand)"
             }
           }
         },

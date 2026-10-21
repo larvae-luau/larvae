@@ -400,6 +400,29 @@ fn export_by_value_forms_parse() {
     round_trip("@native\nexport function fast()\nend\n");
 }
 
+#[test]
+fn if_local_forms_parse() {
+    round_trip("if local x = f() then\n\tprint(x)\nend\n");
+    round_trip("if local x: number? = f() then\nelseif const y = g() then\nelse\nend\n");
+    round_trip("local y = if local x = f() then x elseif local z = g() then z else 0\n");
+    round_trip("local y = if const x = 100 then x else 0\n");
+}
+
+/// `const` binds only before a name, so a variable named const still reads.
+#[test]
+fn if_const_stays_contextual() {
+    round_trip("if const then\nend\n");
+    round_trip("if const == 3 then\nend\n");
+    round_trip("local y = if const then const else false\n");
+}
+
+#[test]
+fn if_local_takes_one_binding() {
+    rejects("if local a, b = f() then\nend\n");
+    rejects("if local x then\nend\n");
+    rejects("local y = if local x = f() then x\n");
+}
+
 /// A variable named export keeps parsing as an expression.
 #[test]
 fn export_stays_contextual() {

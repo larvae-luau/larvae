@@ -446,16 +446,18 @@ impl<'a> Parser<'a> {
         self.expect("if")?;
 
         let mut branches = Vec::new();
+        let local = self.if_local()?;
         let cond = self.expr()?;
 
         self.expect("then")?;
-        branches.push((cond, self.block()?));
+        branches.push((local, cond, self.block()?));
 
         while self.at("elseif") {
             self.bump();
+            let local = self.if_local()?;
             let cond = self.expr()?;
             self.expect("then")?;
-            branches.push((cond, self.block()?));
+            branches.push((local, cond, self.block()?));
         }
 
         let else_block = if self.eat("else") {
@@ -469,6 +471,37 @@ impl<'a> Parser<'a> {
             branches,
             else_block,
             span: TokSpan::new(start, self.pos),
+        }))
+    }
+
+    /*
+    The `local x =` or `const x =` after an `if` or `elseif`, in both the
+    statement and the expression form.
+
+    `const` is the keyword only before a name, the rule upstream Luau uses.
+    So `if const then` still reads a variable named const. The RFC allows
+    one binding, so a `,` after the name is an error.
+    */
+    pub(super) fn if_local(&mut self) -> Result<Option<IfLocal>, ParseError> {
+        let is_const = self.at("const") && self.name_at(1);
+
+        if !self.at("local") && !is_const {
+            return Ok(None);
+        }
+
+        let i = self.bump();
+        let binding = self.binding()?;
+
+        if self.at(",") {
+            return Err(self.err("`if local` takes one binding, found `,`"));
+        }
+
+        self.expect("=")?;
+
+        Ok(Some(IfLocal {
+            keyword: TokSpan::new(i, i + 1),
+            is_const,
+            binding,
         }))
     }
 

@@ -292,6 +292,17 @@ impl<'a> Binder<'a> {
         }
     }
 
+    /// `if local x = f()` binds `x` in the scope of its own branch.
+    fn if_local(&mut self, local: &Option<IfLocal>) {
+        let Some(l) = local else { return };
+
+        if let Some(ty) = l.binding.ty {
+            self.type_reads(ty);
+        }
+
+        self.declare(l.binding.name, Origin::Local);
+    }
+
     /// A block with its own scope. Every block has one, except a repeat's block.
     fn scoped_block(&mut self, block: &'a Block) {
         self.push_scope();
@@ -366,9 +377,12 @@ impl<'a> Binder<'a> {
             }
 
             Stmt::If(n) => {
-                for (cond, block) in &n.branches {
+                for (local, cond, block) in &n.branches {
                     self.expr(cond);
-                    self.scoped_block(block);
+                    self.push_scope();
+                    self.if_local(local);
+                    self.block(block);
+                    self.pop_scope();
                 }
 
                 if let Some(block) = &n.else_block {
@@ -602,9 +616,12 @@ impl<'a> Binder<'a> {
                 else_value,
                 ..
             } => {
-                for (cond, value) in branches {
+                for (local, cond, value) in branches {
                     self.expr(cond);
+                    self.push_scope();
+                    self.if_local(local);
                     self.expr(value);
+                    self.pop_scope();
                 }
 
                 self.expr(else_value);

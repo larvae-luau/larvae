@@ -36,7 +36,7 @@ lints! {
 /// Every condition slot of a statement, which is where a truthiness bug lives
 fn conditions(s: &Stmt) -> Vec<&Expr> {
     match s {
-        Stmt::If(n) => n.branches.iter().map(|(cond, _)| cond).collect(),
+        Stmt::If(n) => n.branches.iter().map(|(_, cond, _)| cond).collect(),
 
         Stmt::While(n) => vec![&n.cond],
 
@@ -512,7 +512,7 @@ fn accumulating_concats(ctx: &LintCtx<'_>, block: &Block, loop_start: u32) -> Ve
     for stmt in &block.stmts {
         match stmt {
             Stmt::If(n) => {
-                for (_, inner) in &n.branches {
+                for (_, _, inner) in &n.branches {
                     out.extend(accumulating_concats(ctx, inner, loop_start));
                 }
 
@@ -724,7 +724,7 @@ fn walk_exprs_shallow(stmt: &Stmt, f: &mut impl FnMut(&Expr)) {
         }
 
         Stmt::If(n) => {
-            for (cond, block) in &n.branches {
+            for (_, cond, block) in &n.branches {
                 walk_expr_shallow(cond, f);
 
                 for inner in &block.stmts {

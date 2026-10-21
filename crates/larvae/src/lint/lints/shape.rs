@@ -44,7 +44,7 @@ impl ConstantCondition {
     fn check(ctx: &LintCtx<'_>, out: &mut Vec<Finding>) {
         each_stmt(ctx, out, |ctx, s, out| {
             let conds: Vec<&Expr> = match s {
-                Stmt::If(n) => n.branches.iter().map(|(c, _)| c).collect(),
+                Stmt::If(n) => n.branches.iter().map(|(_, c, _)| c).collect(),
 
                 // The exempt loops, which are the two standard forms.
                 Stmt::While(n) if constant_truth(&n.cond) == Some(true) => return,
@@ -109,7 +109,7 @@ impl ElseAfterReturn {
                 return;
             };
 
-            if !n.branches.iter().all(|(_, b)| jumps(b)) {
+            if !n.branches.iter().all(|(_, _, b)| jumps(b)) {
                 return;
             }
 
@@ -149,7 +149,7 @@ impl CollapsibleIf {
                 return;
             }
 
-            let [Stmt::If(inner)] = &outer.branches[0].1.stmts[..] else {
+            let [Stmt::If(inner)] = &outer.branches[0].2.stmts[..] else {
                 return;
             };
 
@@ -192,7 +192,10 @@ impl NegatedCondition {
                 return;
             }
 
-            let cond = &n.branches[0].0;
+            // A bound condition stays: its local is visible in the first body only.
+            let (None, cond, _) = &n.branches[0] else {
+                return;
+            };
 
             if !matches!(unwrap_parens(cond), Expr::Unary { op, .. } if ctx.text(*op) == "not") {
                 return;
@@ -234,9 +237,14 @@ fn jumps(block: &Block) -> bool {
         .is_some_and(|s| matches!(s, Stmt::Return(_) | Stmt::Break(_) | Stmt::Continue(_)))
 }
 
-/// Returns true if an if is one test over one body, which a merge can hold.
+/*
+Returns true if an if is one test over one body, which a merge can hold.
+
+A bound test is not plain: `if local x = f()` has no `and` form, and the
+inner test can read `x`.
+*/
 fn one_plain_branch(n: &If) -> bool {
-    n.branches.len() == 1 && n.else_block.is_none()
+    n.branches.len() == 1 && n.else_block.is_none() && n.branches[0].0.is_none()
 }
 
 /*

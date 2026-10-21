@@ -40,6 +40,8 @@ const SAMPLES: &[&str] = &[
     "local f = function(a, b) return a + b end\n",
     "function M.thing:method(a: number): string\n\treturn tostring(a)\nend\n",
     "if a then\n\tb()\nelseif c then\n\td()\nelse\n\te()\nend\n",
+    "if local x: number? = f() then\n\tprint(x)\nelseif const y = g() then\n\tprint(y)\nend\n",
+    "local y = if local x = f() then x elseif local z = g() then z else 0\n",
     "for i = 1, 10, 2 do\n\tprint(i)\nend\n",
     "for k, v in pairs(t) do\n\tprint(k, v)\nend\n",
     "while true do\n\tbreak\nend\n",
@@ -537,6 +539,70 @@ fn collapse_simple_statement_folds_a_one_line_body() {
         fmt_with("if a then\n\treturn\nend", cfg),
         "if a then return end\n"
     );
+}
+
+fn preserve() -> FmtConfig {
+    FmtConfig {
+        collapse_simple_statement: CollapseSimpleStatement::Preserve,
+        ..Default::default()
+    }
+}
+
+/// Issue 46: `preserve` keeps each simple statement in the shape it was written.
+#[test]
+fn preserve_keeps_the_shape_the_author_wrote() {
+    for src in [
+        "if a then return end\n",
+        "if a then\n\treturn\nend\n",
+        "local function f(a) return a end\n",
+        "local function f(a)\n\treturn a\nend\n",
+        "local f = function() return 1 end\n",
+        "local f = function()\n\treturn 1\nend\n",
+    ] {
+        assert_eq!(fmt_with(src, preserve()), src);
+    }
+}
+
+/// A one-line statement that does not fit the column opens as usual.
+#[test]
+fn preserve_opens_a_one_line_statement_past_the_column() {
+    assert_eq!(
+        fmt_with(
+            "if alpha then return beta end",
+            FmtConfig {
+                column_width: 20,
+                ..preserve()
+            }
+        ),
+        "if alpha then\n\treturn beta\nend\n"
+    );
+}
+
+/*
+A hugged call keeps its shape under `preserve`, past the column too.
+
+This is stylua issue 1175: its `Input` mode measured an opened callback
+as one line, and the call around it opened. Here `hug-last` reads the
+kind of the last argument and no width, so the body cannot move the call.
+*/
+#[test]
+fn preserve_keeps_a_hugged_call_hugged() {
+    let cfg = FmtConfig {
+        function_call: FunctionCall {
+            style: CallStyle::HugLast,
+            ..Default::default()
+        },
+        ..preserve()
+    };
+
+    let long = "a".repeat(100);
+
+    for src in [
+        format!("foo(1, function()\n\treturn {long} == b\nend)\n"),
+        "foo(1, function() return 1 end)\n".to_string(),
+    ] {
+        assert_eq!(fmt_with(&src, cfg.clone()), src);
+    }
 }
 
 #[test]
@@ -1504,6 +1570,19 @@ fn a_lint_marker_does_not_hold_the_formatter() {
 
 // --- if expressions ---------------------------------------------------------
 
+/// The binding prints as written, in both the statement and the expression form.
+#[test]
+fn an_if_local_keeps_its_binding() {
+    assert_eq!(
+        fmt("if   local x:number? =f() then print(x) end"),
+        "if local x: number? = f() then\n\tprint(x)\nend\n"
+    );
+    assert_eq!(
+        fmt("local y = if const x=1 then x else 0"),
+        "local y = if const x = 1 then x else 0\n"
+    );
+}
+
 fn if_cfg(expand: IfExpansion) -> FmtConfig {
     FmtConfig {
         if_expression: IfExpression {
@@ -2378,17 +2457,29 @@ fn operators(expand: TypeExpansion) -> FmtConfig {
 const LONG_UNION: &str =
     "type Long = AlphaAlphaAlpha | BetaBetaBetaBeta | GammaGammaGamma | DeltaDeltaDelta\n";
 
-/// `auto` is the layout larvae always had: one line, past the column and all.
+/// `auto` keeps one line while the chain fits the column.
 #[test]
-fn auto_replays_a_chain_on_one_line() {
+fn auto_keeps_a_chain_that_fits_on_one_line() {
     assert_eq!(fmt(LONG_UNION), LONG_UNION);
+}
 
-    let narrow = FmtConfig {
-        column_width: 40,
-        ..Default::default()
-    };
+/// Issue 45: past `column_width`, `auto` opens one member per line.
+#[test]
+fn auto_opens_a_chain_past_the_column() {
+    assert_eq!(
+        fmt_with(LONG_UNION, narrow(40)),
+        "type Long =\n\t| AlphaAlphaAlpha\n\t| BetaBetaBetaBeta\n\t| GammaGammaGamma\n\t| DeltaDeltaDelta\n"
+    );
 
-    assert_eq!(fmt_with(LONG_UNION, narrow), LONG_UNION);
+    let src = "type AddFunction =\n\t& (<Ps..., Rs...>(self: any, trackable: (Ps...) -> Rs..., Ps...) -> (Ps...) -> Rs...)\n\t& (<T>(self: any, trackable: T & {}) -> T)\n\t& ((self: any, trackable: thread) -> thread)\n";
+    assert_eq!(fmt(src), src);
+}
+
+/// A table type that opened keeps the chain on the lines it gives.
+#[test]
+fn auto_keeps_an_open_table_in_its_chain() {
+    let src = "type P = {\n\talpha: number,\n\tbeta: string,\n\tgamma: boolean,\n\tdelta: Vector3,\n} & Base\n";
+    assert_eq!(fmt(src), src);
 }
 
 /// `always` gives every member a line, with the operator leading it.

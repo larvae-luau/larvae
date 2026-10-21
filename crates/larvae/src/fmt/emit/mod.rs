@@ -220,7 +220,10 @@ impl<'a> Emitter<'a> {
 
     /// The tokens of one type stretch: the operator chain first, then the tables
     fn type_region(&self, from: u32, to: u32, fit: Fit) -> Doc<'a> {
-        if self.cfg.type_operators.expand != TypeExpansion::Auto
+        // A flat parent holds an `auto` chain to the replay, the one line it had.
+        let auto = self.cfg.type_operators.expand == TypeExpansion::Auto;
+
+        if !(auto && fit == Fit::Flat)
             && let Some(chain) = self.operator_chain(from, to, fit)
         {
             return chain;
@@ -686,7 +689,20 @@ impl<'a> Emitter<'a> {
             */
             TypeExpansion::Never => Some(Doc::group(Doc::if_break(flat(), broken()))),
 
-            TypeExpansion::Auto => None,
+            /*
+            The replay while it fits `column_width`, and one member per line
+            past it. A table type inside that already opened keeps the
+            replay, because the chain then has no one line to give up.
+            */
+            TypeExpansion::Auto => {
+                let replay = self.type_run(from, to, fit);
+
+                match replay.flat_width() {
+                    Some(_) => Some(Doc::group(Doc::if_break(replay, broken()))),
+
+                    None => Some(replay),
+                }
+            }
         }
     }
 
