@@ -4,6 +4,74 @@ Notable changes land here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow
 [semver](https://semver.org/spec/v2.0.0.html).
 
+## 0.10.0
+
+larvae stops serving types. `larvae lsp` keeps the lints, the format, and
+the fixes, and [luau-lsp](https://github.com/JohnnyMorganz/luau-lsp) beside
+it serves types, hover, completion, and navigation. The sections below
+list what goes and what a project or a worm has to change.
+
+### Added
+
+- `if local x = f() then` and `if const x = f() then` parse in the
+  statement and in the if expression, as Luau 0.743 does. The binding is
+  visible in its own branch only. The lints, the rules, and the formatter
+  read it, and the rules that would drop the binding leave a bound branch
+  alone
+- `[fmt] collapse_simple_statement = "preserve"` keeps the shape the
+  author wrote, for functions and conditionals both: a statement on one
+  line stays there while it fits `column_width`, and one written over
+  several lines stays open. `input` is the same setting under the name
+  stylua uses, so a stylua.toml with `CollapseSimpleStatement = "Input"`
+  reads as `preserve`. A hugged call keeps its shape under every value
+  (#46)
+- `larvae self install` and `larvae self update` delete a `larvae-lsp`
+  binary and its `eclipse_analysis` library that an older release left in
+  the bin directory, so an older editor extension cannot start them
+
+### Changed
+
+- **Breaking.** `larvae lsp` publishes the lint findings, the findings of
+  worms, and the cross-realm requires, formats, and offers the fixes of
+  the lints and the worms. It advertises nothing that luau-lsp answers, so
+  the two servers never compete. A worm still claims its files, so a
+  `.luaux` file keeps its diagnostics and its layout
+- **Breaking.** `[lsp]` keeps `enabled`, `claim_only`, and the
+  `[lsp.<worm>]` settings. A project that still sets another key loads,
+  and the editor shows one warning per key that names luau-lsp
+- `[fmt] type_operators.expand = "auto"` keeps a union or an intersection
+  on one line while it fits `column_width`, and opens one member per line
+  under its operator past it, as stylua does. A table type inside follows
+  `table_types.width`, and one that opens keeps the chain on its lines
+  (#45)
+- eclipse_luau is 0.2.0. Each branch of `If` and of `Expr::IfElse` now
+  holds an `Option<IfLocal>` before its condition. The release publishes
+  eclipse_luau before larvae
+- `larvae worm claims` no longer reports `serves_luau`
+
+### Removed
+
+- The `larvae-lsp` crate and binary: the Luau analyzer, the vendored Luau
+  submodule, the C++ shim, and the bundled Roblox types. The crate stays
+  at 0.9.0 on crates.io
+- `larvae analyze`
+- Hover, completion, inlay hints, signature help, semantic tokens,
+  rename, references, go to definition, symbols, folding, colours,
+  auto-import, the Studio link, and the sourcemap watch of `larvae lsp`
+- The worm `[lsp]` hooks (`resolve`, `declarations`, `respond`,
+  `serves_luau`) and the worm `definitions` op. A manifest that declares
+  `[lsp]` still loads, with one note per worm, and the hooks do nothing
+- **Breaking for worm authors.** The `larvae-worm` `Handler` trait loses
+  `lsp_resolve`, `lsp_load`, `lsp_declarations`, and `lsp_respond`, and
+  the `LspLoad` and `LspDeclaration` types go with them. A native worm
+  that implements one fails to compile until the implementation goes
+
+### Fixed
+
+- A `[profile.<name>]` table takes every root key in the schema, so an
+  editor no longer refuses `rojo.project`, `input`, `worms`, or `lsp` in
+  a profile. A test keeps the profile keys and the root keys equal (#41)
+
 ## 0.9.0
 
 ### Added
