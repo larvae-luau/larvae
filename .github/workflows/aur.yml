@@ -69,7 +69,14 @@ jobs:
             makepkg --printsrcinfo > .SRCINFO
             makepkg -f --noconfirm
             # The package must hold a binary that runs and knows its version.
-            "pkg/$2/usr/bin/$3" --version | tee /dev/stderr | grep -qF "$1"
+            # No tee to /dev/stderr: the build user cannot open it in the
+            # container, where root owns the stderr of the job.
+            out="$("pkg/$2/usr/bin/$3" --version)"
+            echo "$out"
+            case "$out" in
+              *"$1"*) ;;
+              *) echo "expected $1 in the --version output" >&2; exit 1 ;;
+            esac
           ' _ "$version" "$PKG" "$BIN"
 
       - name: Push to the AUR
