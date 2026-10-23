@@ -152,6 +152,15 @@ larvae self install
 add to the shell profile. Run `larvae self update` later to get the latest
 release.
 
+### Arch Linux (AUR)
+
+```bash
+paru -S larvae-bin    # or: yay -S larvae-bin
+```
+
+The package puts `larvae` in `/usr/bin`, and pacman updates it with each
+release.
+
 ## Getting started
 
 ```bash

@@ -1,0 +1,28 @@
+# Maintainer: savruun <https://github.com/savruun>
+#
+# The template for the AUR package. .github/workflows/aur.yml sets pkgver and
+# the checksums for each release and pushes the result to the AUR.
+
+pkgname=larvae-bin
+pkgver=0.10.0
+pkgrel=1
+pkgdesc="Format, lint, and ship Luau"
+arch=('x86_64' 'aarch64')
+url="https://github.com/larvae-luau/larvae"
+license=('MIT')
+depends=('gcc-libs' 'glibc')
+provides=('larvae')
+conflicts=('larvae')
+# the release binary ships without debug info, so a -debug package would be empty
+options=('!debug')
+source=("LICENSE-$pkgver.md::https://raw.githubusercontent.com/larvae-luau/larvae/v$pkgver/LICENSE.md")
+source_x86_64=("larvae-linux-x86_64-$pkgver.zip::$url/releases/download/v$pkgver/larvae-linux-x86_64.zip")
+source_aarch64=("larvae-linux-aarch64-$pkgver.zip::$url/releases/download/v$pkgver/larvae-linux-aarch64.zip")
+sha256sums=('1dc91984cdd7e62945a1948e97a0b7df4d3485c25d05c8ac1c41bb95e0e4306e')
+sha256sums_x86_64=('c77b62c0bb5115d1e4edd347970debef8823a6f357c4aae052fa5ff9c5b39c47')
+sha256sums_aarch64=('a291f9e4ec33a4f82d094ddde8787ad286e357798c7536309630a190a8d69604')
+
+package() {
+  install -Dm755 larvae "$pkgdir/usr/bin/larvae"
+  install -Dm644 "LICENSE-$pkgver.md" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

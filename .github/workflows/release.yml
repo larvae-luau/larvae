@@ -215,3 +215,13 @@ jobs:
               sleep 10
             done
           done
+
+  # The release job uploads the assets, so the AUR job waits for it.
+  # aur.yml skips a prerelease tag with a notice.
+  aur:
+    name: AUR
+    needs: [verify, release]
+    uses: ./.github/workflows/aur.yml
+    with:
+      version: ${{ needs.verify.outputs.tag }}
+    secrets: inherit

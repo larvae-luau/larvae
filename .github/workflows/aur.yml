@@ -1,0 +1,106 @@
+name: AUR
+
+# Publishes larvae-bin to the AUR. release.yml calls this workflow once the release
+# assets are up. A release that GITHUB_TOKEN makes fires no `release` event, so
+# a workflow that waits for that event would never run. workflow_dispatch is
+# for a manual run, for example after AUR_SSH_PRIVATE_KEY is first set.
+#
+# The job runs in Arch Linux: it sets the version in packaging/aur/PKGBUILD,
+# fills the checksums, builds the package, and runs the binary in it. It then
+# pushes PKGBUILD and .SRCINFO to the AUR. When AUR_SSH_PRIVATE_KEY is unset,
+# the job stops after the test with a notice.
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: The released version, with or without the leading v
+        required: true
+        type: string
+    secrets:
+      AUR_SSH_PRIVATE_KEY:
+        required: false
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The released version, with or without the leading v
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  aur:
+    name: Publish larvae-bin
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    env:
+      PKG: larvae-bin
+      BIN: larvae
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Build and test the package
+        id: build
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version="${VERSION#v}"
+          # An AUR pkgver cannot hold a '-', and a prerelease is not for
+          # everyone, so the AUR package stays at the last stable release.
+          if [[ "$version" == *-* ]]; then
+            echo "::notice::$version is a prerelease, so $PKG stays as it is on the AUR."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          pacman -Syu --noconfirm --needed git openssh pacman-contrib
+
+          # makepkg refuses to run as root.
+          useradd -m builder
+          cp -r packaging/aur /home/builder/pkg
+          chown -R builder: /home/builder/pkg
+          runuser -u builder -- env HOME=/home/builder bash -euo pipefail -c '
+            cd /home/builder/pkg
+            sed -i -e "s/^pkgver=.*/pkgver=$1/" -e "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+            grep -qx "pkgver=$1" PKGBUILD
+            updpkgsums
+            makepkg --printsrcinfo > .SRCINFO
+            makepkg -f --noconfirm
+            # The package must hold a binary that runs and knows its version.
+            "pkg/$2/usr/bin/$3" --version | tee /dev/stderr | grep -qF "$1"
+          ' _ "$version" "$PKG" "$BIN"
+
+      - name: Push to the AUR
+        if: steps.build.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.build.outputs.version }}
+          AUR_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${AUR_KEY:-}" ]; then
+            echo "::notice::AUR_SSH_PRIVATE_KEY is not set, so $PKG $VERSION was built and tested but not pushed."
+            exit 0
+          fi
+
+          ssh_dir="$(mktemp -d)"
+          printf '%s\n' "$AUR_KEY" > "$ssh_dir/key"
+          chmod 600 "$ssh_dir/key"
+          # The AUR's Ed25519 host key. Its fingerprint, published on
+          # https://aur.archlinux.org, is
+          # SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4.
+          echo 'aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN' > "$ssh_dir/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $ssh_dir/key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$ssh_dir/known_hosts"
+
+          # The first push to a new name makes the AUR package.
+          git clone "ssh://aur@aur.archlinux.org/$PKG.git" aur
+          cp /home/builder/pkg/PKGBUILD /home/builder/pkg/.SRCINFO aur/
+          cd aur
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then
+            echo "::notice::The AUR already has $PKG $VERSION."
+            exit 0
+          fi
+          git -c user.name=savruun -c user.email=savruun@users.noreply.github.com commit -q -m "Update to $VERSION"
+          git push origin HEAD:master
