@@ -5,6 +5,7 @@ pub mod detect;
 pub mod fmt;
 pub mod init;
 pub mod lint;
+pub mod migrate;
 pub mod process;
 pub mod self_cmd;
 pub mod sync_luaurc;

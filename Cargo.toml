@@ -39,6 +39,8 @@ opt-level = "z"
 opt-level = "z"
 [profile.release.package.json5]
 opt-level = "z"
+[profile.release.package.toml_edit]
+opt-level = "z"
 [profile.release.package.pest]
 opt-level = "z"
 [profile.release.package.self-replace]

@@ -191,6 +191,7 @@ live Studio session.
 | `larvae lsp` | diagnostics and formatting over stdio, for any editor |
 | `larvae worm` | develop an extension: `run`, `run --fmt`, `run --lint`, `info`, `types` |
 | `larvae init` | scaffold a config with every default written out |
+| `larvae migrate` | move StyLua, selene, and darklua settings into larvae.toml |
 | `larvae self code` | set up editor completion for larvae.toml |
 | `larvae self install` | manage the install, with `update` and `uninstall` |
 

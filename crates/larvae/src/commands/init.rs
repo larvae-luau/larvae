@@ -130,8 +130,8 @@ fn hand_over_linting(root: &Path) {
 }
 
 /// The formatter and linter configs that another tool can leave; larvae reads them unchanged
-const STYLUA: [&str; 2] = ["stylua.toml", ".stylua.toml"];
-const SELENE: [&str; 1] = ["selene.toml"];
+pub(crate) const STYLUA: [&str; 2] = ["stylua.toml", ".stylua.toml"];
+pub(crate) const SELENE: [&str; 1] = ["selene.toml"];
 
 /*
 The template writes only the options that users change often, because no
@@ -224,7 +224,7 @@ fn existing<'a>(root: &Path, names: &[&'a str]) -> Option<&'a str> {
 fn report_existing(root: &Path) {
     for name in STYLUA.iter().chain(SELENE.iter()) {
         if root.join(name).exists() {
-            eprintln!("  found {name}, larvae reads it as it is");
+            eprintln!("  found {name}, larvae reads it as it is; `larvae migrate` moves it here");
         }
     }
 }
