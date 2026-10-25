@@ -4,7 +4,11 @@ Notable changes land here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow
 [semver](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.11.0
+
+`larvae migrate` moves a project's StyLua, selene, and darklua settings into
+`larvae.toml`, and larvae now reads the lint levels of a selene.toml. The
+formatter decides empty bodies with a new option.
 
 ### Added
 
