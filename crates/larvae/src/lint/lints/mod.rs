@@ -25,6 +25,33 @@ The order decides only which finding larvae lists first when two findings
 land on the same byte. Thus the order follows the severity of the
 consequence: a wrong thing comes before an untidy thing.
 */
+/*
+Reports if a lint reads these settings, ex: `{ parameters = true }` for
+`unused_variable`. `larvae migrate` asks before it moves a selene setting,
+so a setting that no larvae lint reads stays in selene.toml.
+*/
+pub fn takes_options(lint: &str, value: &toml::Value) -> bool {
+    fn fits<T: serde::de::DeserializeOwned>(value: &toml::Value) -> bool {
+        value.clone().try_into::<T>().is_ok()
+    }
+
+    match lint {
+        "deprecated" => fits::<configured::DeprecatedOptions>(value),
+
+        "restricted_module_paths" => fits::<configured::RestrictedOptions>(value),
+
+        "restricted_globals" => fits::<configured::RestrictedGlobalsOptions>(value),
+
+        "high_cyclomatic_complexity" => fits::<configured::ComplexityOptions>(value),
+
+        "prefer_const" => fits::<configured::PreferConstOptions>(value),
+
+        "unused_variable" => fits::<names::UnusedOptions>(value),
+
+        _ => false,
+    }
+}
+
 pub static ALL: &[&dyn Lint] = &[
     // Correctness.
     &correctness::AlmostSwapped,

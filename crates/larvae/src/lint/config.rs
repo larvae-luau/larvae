@@ -291,7 +291,7 @@ impl LintConfig {
     /*
     Read `selene.toml` if it exists, then apply `[lint]` over it.
 
-    selene puts levels under `[rules]` and per-lint settings under
+    selene puts levels under `[lints]` and per-lint settings under
     `[config]`. This is the same information under different names. Thus
     larvae translates the file instead of parsing it into a second type.
     */
@@ -335,8 +335,9 @@ read none.
 */
 #[derive(Deserialize)]
 struct SeleneFile {
-    #[serde(default)]
-    rules: BTreeMap<String, Level>,
+    /// selene's levels table; `rules` is an older spelling larvae still reads
+    #[serde(default, alias = "rules")]
+    lints: BTreeMap<String, Level>,
     #[serde(default)]
     config: BTreeMap<String, toml::Value>,
     #[serde(default)]
@@ -376,7 +377,7 @@ fn selene_file(root: &Path) -> Result<Option<LintConfig>> {
         enabled: None,
         // selene has no groups either, so a selene.toml sets none
         groups: BTreeMap::new(),
-        rules: file.rules,
+        rules: file.lints,
         options: file.config,
         std,
         globals: Vec::new(),
@@ -457,7 +458,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("selene.toml"),
-            "std = \"roblox\"\n\n[rules]\nunused_variable = \"allow\"\nshadowing = \"deny\"\n",
+            "std = \"roblox\"\n\n[lints]\nunused_variable = \"allow\"\nshadowing = \"deny\"\n",
         )
         .unwrap();
 
@@ -465,6 +466,21 @@ mod tests {
 
         assert_eq!(cfg.std, StdLib::Roblox);
         assert_eq!(cfg.rules["unused_variable"], Level::Allow);
+        assert_eq!(cfg.rules["shadowing"], Level::Deny);
+    }
+
+    /// selene names the levels table `[lints]`; the older `[rules]` still reads.
+    #[test]
+    fn a_selene_rules_table_still_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("selene.toml"),
+            "[rules]\nshadowing = \"deny\"\n",
+        )
+        .unwrap();
+
+        let cfg = LintConfig::discover(dir.path(), None).unwrap();
+
         assert_eq!(cfg.rules["shadowing"], Level::Deny);
     }
 

@@ -10,6 +10,11 @@ Notable changes land here. Format follows
 
 - `[fmt] collapse_empty_block` decides which empty bodies stay on one line,
   with the values of `collapse_simple_statement`
+- `larvae migrate` moves the settings of StyLua, selene, and darklua into
+  `larvae.toml`. A checklist with every config checked picks the files,
+  and `--yes` takes them all. A setting larvae reads leaves its source
+  file, a setting it does not read stays, and a file with nothing left is
+  deleted
 
 ### Changed
 
@@ -22,6 +27,9 @@ Notable changes land here. Format follows
 - A body with a trailing `;`, or a blank line under
   `block_newline_gaps = "never"`, collapses on the first format instead of
   the second
+- larvae reads the lint levels of a selene.toml from `[lints]`, the table
+  selene uses. It read `[rules]` before, so the levels never arrived;
+  `[rules]` still works
 
 ## 0.10.0
 

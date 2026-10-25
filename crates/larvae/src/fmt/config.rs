@@ -1391,12 +1391,10 @@ fn lower_enum_values(text: &str) -> String {
 
         let value = &rest[..close];
 
-        if value.chars().next().is_some_and(|c| {
-            c.is_ascii_uppercase() && value.chars().all(|c| c.is_ascii_alphabetic())
-        }) {
-            out.push_str(&kebab(value));
-        } else {
-            out.push_str(value);
+        match stylua_spelling(value) {
+            Some(kebab) => out.push_str(&kebab),
+
+            None => out.push_str(value),
         }
 
         out.push('"');
@@ -1406,6 +1404,14 @@ fn lower_enum_values(text: &str) -> String {
     out.push_str(rest);
 
     out
+}
+
+/// The larvae spelling of a stylua enum value, ex: `"Tabs"` is `"tabs"`. None for any other string.
+pub(crate) fn stylua_spelling(value: &str) -> Option<String> {
+    let pascal = value.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+        && value.chars().all(|c| c.is_ascii_alphabetic());
+
+    pascal.then(|| kebab(value))
 }
 
 fn kebab(s: &str) -> String {

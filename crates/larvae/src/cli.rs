@@ -108,6 +108,13 @@ enum Command {
     /// Create a starter larvae.toml for this project
     Init,
 
+    /// Move the settings of StyLua, selene, and darklua into larvae.toml
+    Migrate {
+        /// Move every config found, without the checklist
+        #[arg(long)]
+        yes: bool,
+    },
+
     /// Add, install, and remove worms, and develop one before publication
     Worm {
         #[command(subcommand)]
@@ -220,6 +227,8 @@ fn run() -> Result<ExitCode> {
         }
 
         Command::Init => commands::init::run(&root),
+
+        Command::Migrate { yes } => commands::migrate::run(&root, yes),
 
         Command::Worm { command } => commands::worm::run(command),
 
