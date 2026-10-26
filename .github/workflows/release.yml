@@ -48,11 +48,19 @@ jobs:
         include:
           # asset is what `self update` looks for, it is larvae-{os}-{arch}
           # spelled exactly as std::env::consts reports them at runtime
+          #
+          # The Linux targets build with cargo-zigbuild against glibc 2.17
+          # (`zig`). A plain build links the runner's glibc, 2.39 on
+          # ubuntu-24.04, and the binary then fails to start on Debian 12
+          # (2.36), Ubuntu 22.04 (2.35), and older. Zig also compiles the C++
+          # of Luau under mlua and the C of `ring`.
           - asset: larvae-linux-x86_64
             target: x86_64-unknown-linux-gnu
+            zig: x86_64-unknown-linux-gnu.2.17
             runs-on: ubuntu-latest
           - asset: larvae-linux-aarch64
             target: aarch64-unknown-linux-gnu
+            zig: aarch64-unknown-linux-gnu.2.17
             runs-on: ubuntu-24.04-arm
           - asset: larvae-macos-x86_64
             target: x86_64-apple-darwin
@@ -100,8 +108,35 @@ jobs:
           '
 
       - name: Build
-        if: ${{ !contains(matrix.target, 'musl') }}
+        if: ${{ !contains(matrix.target, 'musl') && !matrix.zig }}
         run: cargo build --release --locked --target ${{ matrix.target }} -p larvae
+
+      - name: Install zig and cargo-zigbuild
+        if: matrix.zig
+        run: |
+          # A venv, since the runner's Python refuses a global pip install.
+          python3 -m venv "$RUNNER_TEMP/zig"
+          "$RUNNER_TEMP/zig/bin/pip" install --quiet cargo-zigbuild==0.24.0 ziglang==0.17.0
+          echo "$RUNNER_TEMP/zig/bin" >> "$GITHUB_PATH"
+
+      # The output still goes to target/<target>/release: zigbuild drops the
+      # glibc version from the folder name.
+      - name: Build (zig, old glibc)
+        if: matrix.zig
+        run: cargo zigbuild --release --locked --target ${{ matrix.zig }} -p larvae
+
+      - name: Check the glibc the binary needs
+        if: matrix.zig
+        run: |
+          path="target/${{ matrix.target }}/release/larvae"
+          need=$(objdump -T "$path" | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1)
+          echo "larvae needs $need"
+          # Above 2.17 means the build linked the runner's glibc.
+          if [ "$(printf '%s\nGLIBC_2.17\n' "$need" | sort -V | tail -1)" != "GLIBC_2.17" ]; then
+            echo "::error::larvae needs $need, newer than GLIBC_2.17"
+            exit 1
+          fi
+          "$path" --version
 
       # The archive takes the asset name, the binary inside keeps its own, so
       # `self update` knows what to pull out no matter which one it downloaded.
